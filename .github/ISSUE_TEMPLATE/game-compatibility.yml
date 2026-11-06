@@ -1,5 +1,5 @@
 name: Game compatibility report
-description: Report a game that does not work correctly with Universal RTX 40 MFG Unlock
+description: Report a game that does not work correctly with MFG Unlocker
 title: "[Compatibility] "
 labels:
   - compatibility
@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use one report per game. Confirm that the game has native DLSS Frame Generation before testing the mod. Do not upload NVIDIA or game DLL files.
+        Use one report per game. First check the [Game compatibility](https://github.com/dashdogy/MFG-Unlocker/blob/main/docs/compatibility.md) page for the filename that works in your game. For DLSS MFG, confirm that the game has native DLSS Frame Generation before testing the mod. Do not upload NVIDIA or game DLL files.
 
   - type: input
     id: game
@@ -34,16 +34,25 @@ body:
     attributes:
       label: Mod version
       description: State the release version or commit used.
-      placeholder: v1.2
+      placeholder: v1.7.0
+    validations:
+      required: true
+
+  - type: input
+    id: install_name
+    attributes:
+      label: Filename and folder
+      description: The name you gave MFGUnlocker.dll (or OptiScaler plugin), and the folder it is in. If you tried other names, list them and what happened.
+      placeholder: version.dll in Phoenix\Binaries\Win64 (winmm.dll showed no menu)
     validations:
       required: true
 
   - type: textarea
     id: system
     attributes:
-      label: System and loader
-      description: Include GPU model, NVIDIA driver, Windows version, ReShade version, Ultimate ASI Loader proxy filename, and any other DLSS or Frame Generation mods.
-      placeholder: RTX 4070, driver 000.00, Windows 11, ReShade 6.8.0, version.dll
+      label: System and other mods
+      description: Include GPU model, driver, Windows version, ReShade version, and any other DLSS, Frame Generation or loader mods (OptiScaler, REFramework, CET, ASI loaders) with their filenames.
+      placeholder: RTX 4070, driver 000.00, Windows 11, ReShade 6.8.0 as dxgi.dll
     validations:
       required: true
 
@@ -65,6 +74,7 @@ body:
       label: Observed result
       options:
         - Game crashes during launch
+        - Menu does not appear
         - Frame Generation is unavailable
         - Mod remains waiting or not ready
         - Native 2X works but a higher multiplier fails
@@ -125,7 +135,7 @@ body:
       options:
         - label: I reproduced the issue after a full game restart.
           required: true
-        - label: I removed older RTX40MFG Universal and Bridge ASI files before testing.
+        - label: I removed older MFG Unlocker and RTX40MFG files before testing (see Upgrade in the install guide).
           required: true
         - label: I listed any NVIDIA OTA override, OptiScaler, DLL swapper, or other Frame Generation mod above.
           required: true
