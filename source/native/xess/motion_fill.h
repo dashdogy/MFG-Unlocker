@@ -11,10 +11,10 @@
 
 namespace xess_motion_fill
 {
-// dev.43: Witcher's own XeFG motion vectors (RGBA16F, render resolution) hold a (2,2,0,0) marker
-// wherever the game wrote no velocity: all sky and some near geometry (35-57% of the screen in the
-// dev.38/42 captures). XeFG reads it as two screen widths of motion and presents copies of the
-// nearest real frame. Its valid vectors are pure camera motion (dev.42 capture fit, corr 1.0000):
+// Witcher's own XeFG motion vectors (RGBA16F, render resolution) hold a (2,2,0,0) marker
+// wherever the game wrote no velocity: all sky and some near geometry (35-57% of the screen in
+// captures). XeFG reads it as two screen widths of motion and presents copies of the
+// nearest real frame. Its valid vectors are pure camera motion (capture fit, corr 1.0000):
 //   MV.x = 0.5 * (cur_ndc.x - prev_ndc.x),  MV.y = 0.5 * (prev_ndc.y - cur_ndc.y),  w = 1.
 // The filler gives marker pixels that camera motion, from the depth and the view/projection
 // matrices XeFG receives (row-vector convention: clip = [x y z 1] * View * Projection; depth 0 =
@@ -36,13 +36,7 @@ bool Invert(const float (&m)[16], double (&out)[16]) noexcept;
 // cur NDC + depth -> previous clip: inverse(P) * inverse(V) * prevV * prevP.
 bool Reprojection(const float (&view)[16], const float (&projection)[16], const float (&prevView)[16],
     const float (&prevProjection)[16], float (&out)[16]) noexcept;
-// The motion vector for pixel (x, y) of a w x h target at depth d: false when it has no previous
-// position (behind the previous camera).
-bool CameraMotion(const float (&reprojection)[16], uint32_t x, uint32_t y, uint32_t w, uint32_t h, float depth,
-    float& mvX, float& mvY) noexcept;
-// The (2,2) marker test the shader uses.
-bool IsMarker(float x, float y) noexcept;
-// Witcher's matrix slots after the dev.38 slot fix: a rigid view and a perspective projection.
+// Witcher's matrix slots: a rigid view and a perspective projection.
 bool UsableMatrices(const float (&view)[16], const float (&projection)[16]) noexcept;
 
 class Filler

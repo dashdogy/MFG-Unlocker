@@ -11,6 +11,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] inline const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 namespace harness
 {
@@ -156,5 +158,15 @@ inline Stats Compare(const std::vector<float>& a, const std::vector<float>& b)
     }
     s.meanAbs /= double(pixels) * 3; s.changed = double(changed) / (double(pixels) * 3); s.meanLuma /= double(pixels);
     return s;
+}
+
+// The read-back output's halfs as floats into `texels`; with `dump`, the halfs also go to output-<name>.rgba16f beside
+// the exe.
+inline void Decode(const uint16_t* halfs, std::vector<float>& texels, bool dump, const char* name)
+{
+    for (size_t i = 0; i < texels.size(); ++i) texels[i] = Float(halfs[i]);
+    if (!dump) return;
+    std::ofstream out(Directory() + L"\\output-" + std::wstring(name, name + strlen(name)) + L".rgba16f", std::ios::binary);
+    out.write(reinterpret_cast<const char*>(halfs), std::streamsize(texels.size() * 2));
 }
 }

@@ -7,12 +7,21 @@
 #include <vector>
 
 namespace single_module { void Log(const wchar_t*) noexcept {} bool OverlayAllowed() noexcept { return true; } }
+namespace optiscaler_host { bool Detected() noexcept { return false; } }
+// latmon.2: the latency monitor never records here (its recorder is latency_probe.cpp).
+namespace latency_probe {
+bool Recording() noexcept { return false; }
+int64_t Now() noexcept { return 0; }
+void GamePresent(const void*,int64_t,int64_t,HRESULT,UINT,UINT,uint16_t) noexcept {}
+void OutputPresent(const void*,IDXGISwapChain*,int64_t,int64_t,HRESULT,UINT,UINT,uint16_t) noexcept {}
+}
 namespace single_overlay::install {
 void FactoryReady() noexcept {}
+void D3D11Ready() noexcept {}
 bool PrepareInput() noexcept { return false; }
 }
 namespace single_overlay::dx12 {
-Session* CreateSession(IDXGISwapChain*,IUnknown*,HMODULE,bool) noexcept { return nullptr; }
+Session* CreateSession(IDXGISwapChain*,IUnknown*,HMODULE,bool,bool) noexcept { return nullptr; }
 bool WindowSession(HWND) noexcept { return false; }
 bool OutputSwapchainWanted() noexcept { return false; }
 bool RetireSession(Session*) noexcept { return true; }
@@ -24,6 +33,15 @@ bool BeginResize(Session*) noexcept { return false; }
 void EndResize(Session*,HRESULT) noexcept {}
 void ObserveColorSpace(Session*,DXGI_COLOR_SPACE_TYPE) noexcept {}
 void VerifyResizeQueues(Session*,UINT,IUnknown* const*) noexcept {}
+}
+namespace single_overlay::dx11 {
+Session* CreateSession(IDXGISwapChain*,IUnknown*) noexcept { return nullptr; }
+void DestroySession(Session*) noexcept {}
+bool BeginPresent(Session*,UINT,bool) noexcept { return false; }
+void EndPresent(Session*,HRESULT,UINT) noexcept {}
+bool BeginResize(Session*) noexcept { return true; }
+void EndResize(Session*,HRESULT) noexcept {}
+void ObserveColorSpace(Session*,DXGI_COLOR_SPACE_TYPE) noexcept {}
 }
 namespace vsync_control {
 Submission BeforeApplicationPresent(uint32_t interval,uint32_t,bool) noexcept {
@@ -102,6 +120,14 @@ public:
     HRESULT STDMETHODCALLTYPE EnumAdapterByGpuPreference(UINT,DXGI_GPU_PREFERENCE,REFIID,void**) override { return Track(17); }
     HRESULT STDMETHODCALLTYPE RegisterAdaptersChangedEvent(HANDLE,DWORD*) override { return Track(18); }
     HRESULT STDMETHODCALLTYPE UnregisterAdaptersChangedEvent(DWORD) override { return Track(19); }
+};
+// A layer that forwards every interface to the object beneath it, as Streamline's proxies do.
+struct Forwarder final : IUnknown {
+    IUnknown* below;
+    explicit Forwarder(IUnknown* p) : below(p) {}
+    ULONG STDMETHODCALLTYPE AddRef() override { return 2; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** output) override { return below->QueryInterface(iid,output); }
 };
 thread_local Fixture* creating=nullptr;
 HRESULT WINAPI CreateFixture(REFIID iid,void** output) { return creating->QueryInterface(iid,output); }
@@ -212,6 +238,24 @@ int main() {
         Check(succeeded==count&&fixture.calls[3]==count&&fixture.queries[1]==count&&fixture.refs==3,
             "concurrent first use publishes one cache entry and releases losing queries");
         proxy.Reset(); Check(fixture.refs==1,"concurrent cache retirement releases exactly one acquired reference");
+    }
+    {
+        // menuout.1: Streamline's proxy over a base proxy forwards our IID and still gets our layer above it;
+        // a layer over an ordinary proxy is ours already.
+        using namespace single_overlay::proxy;
+        Fixture fixture; fixture.AddRef();
+        ComPtr<IDXGIFactory> root; root.Attach(static_cast<IDXGIFactory7*>(&fixture));
+        ++liveFactories;
+        auto* lower=new FactoryProxy(std::move(root),0);
+        Forwarder above(static_cast<IDXGIFactory7*>(lower));
+        lower->streamlineBase=true;
+        Check(!Wrapped(&above,factoryId)&&Wrapped(static_cast<IDXGIFactory7*>(lower),factoryId),
+            "a layer over Streamline's base proxy is wrapped; the base proxy itself is not");
+        lower->streamlineBase=false;
+        Check(Wrapped(&above,factoryId),"a layer over an ordinary proxy counts as wrapped");
+        Check(!Wrapped(static_cast<IDXGIFactory7*>(&fixture),factoryId),"a foreign factory is not wrapped");
+        lower->Release();
+        Check(fixture.refs==1,"base proxy retirement releases its factory");
     }
     MfgSingleModuleStatus status{}; single_overlay::proxy::ReadStatus(status);
     Check(status.liveFactoryWrappers==0&&status.liveSwapchainWrappers==0,"all fixture proxies retired");

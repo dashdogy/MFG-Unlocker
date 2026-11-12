@@ -14,11 +14,6 @@
 #include <vector>
 #include <psapi.h>
 #include <dxgi1_4.h>
-#if WITCHER_DOTS_HARNESS
-#define DOTS_TRACE(...) std::printf(__VA_ARGS__)
-#else
-#define DOTS_TRACE(...) ((void)0)
-#endif
 namespace witcher_dots {
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -127,13 +122,13 @@ bool VerifiedRuntimeImage(HMODULE module,const wchar_t* path,const char* hash,si
     image.file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
     LARGE_INTEGER size{};
     if(image.file==INVALID_HANDLE_VALUE||!GetFileSizeEx(image.file,&size)
-        ||size.QuadPart<sizeof(IMAGE_NT_HEADERS64)||size.QuadPart>static_cast<LONGLONG>(limit)) {DOTS_TRACE("Native file bounds/open rejected error %lu\n",GetLastError());return false;}
+        ||size.QuadPart<sizeof(IMAGE_NT_HEADERS64)||size.QuadPart>static_cast<LONGLONG>(limit))return false;
     image.mapping=CreateFileMappingW(image.file,nullptr,PAGE_READONLY,0,0,nullptr);
     if(!image.mapping)return false;
     image.view=MapViewOfFile(image.mapping,FILE_MAP_READ,0,0,0);
     // A null hash admits any content; the loaded image must still match the
     // file's PE headers (only the header pages of the mapping are read).
-    if(!image.view||(hash&&!HashEquals({static_cast<const std::byte*>(image.view),static_cast<size_t>(size.QuadPart)},hash))) {DOTS_TRACE("Native file hash rejected\n");return false;}
+    if(!image.view||(hash&&!HashEquals({static_cast<const std::byte*>(image.view),static_cast<size_t>(size.QuadPart)},hash)))return false;
     IMAGE_DOS_HEADER diskDos{},loadedDos{};IMAGE_NT_HEADERS64 diskNt{},loadedNt{};
     if(!Read(image.view,0,diskDos)||diskDos.e_magic!=IMAGE_DOS_SIGNATURE||diskDos.e_lfanew<0
         ||static_cast<size_t>(diskDos.e_lfanew)>static_cast<size_t>(size.QuadPart)-sizeof(diskNt)
@@ -142,10 +137,7 @@ bool VerifiedRuntimeImage(HMODULE module,const wchar_t* path,const char* hash,si
         ||diskNt.OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC
         ||!Read(module,0,loadedDos)||loadedDos.e_magic!=diskDos.e_magic||loadedDos.e_lfanew!=diskDos.e_lfanew
         ||!Read(module,static_cast<size_t>(diskDos.e_lfanew),loadedNt)
-        ||!SameRuntimeHeaders(diskNt,loadedNt,module)) {
-        DOTS_TRACE("Native PE identity rejected disk base %llx loaded base %llx disk size %lu loaded size %lu\n",
-            diskNt.OptionalHeader.ImageBase,loadedNt.OptionalHeader.ImageBase,diskNt.OptionalHeader.SizeOfImage,loadedNt.OptionalHeader.SizeOfImage);return false;
-    }
+        ||!SameRuntimeHeaders(diskNt,loadedNt,module))return false;
     if(!expectedSdk)return true;
     const auto version=GetProcAddress(module,"D3D12SDKVersion");
     const auto versionAddress=reinterpret_cast<uintptr_t>(version),base=reinterpret_cast<uintptr_t>(module);
@@ -155,7 +147,7 @@ bool VerifiedRuntimeImage(HMODULE module,const wchar_t* path,const char* hash,si
         ||VirtualQuery(version,&memory,sizeof(memory))!=sizeof(memory)||memory.AllocationBase!=module
         ||memory.Type!=MEM_IMAGE||memory.State!=MEM_COMMIT
         ||(memory.Protect&(PAGE_GUARD|PAGE_NOACCESS|PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))
-        ||!Read(version,0,sdkVersion)||sdkVersion!=expectedSdk) {DOTS_TRACE("Agility SDK export rejected version %u protection %lu\n",sdkVersion,memory.Protect);return false;}
+        ||!Read(version,0,sdkVersion)||sdkVersion!=expectedSdk)return false;
     return true;
 }
 bool VerifiedAgilityRuntime(HMODULE module,const wchar_t* path,const wchar_t* leaf) {
@@ -173,7 +165,6 @@ bool VerifiedAgilityRuntime(HMODULE module,const wchar_t* path,const wchar_t* le
     verifiedAgility[profile]=module;
     wchar_t message[512]{};swprintf_s(message,L"WITCHER_DOTS native_runtime=verified_agility sdk=619 module=%s",path);
     single_module::Log(message);
-    DOTS_TRACE("Verified game Agility SDK 619 profile %zu\n",profile);
     return true;
 }
 bool NativeRuntime(HMODULE module) {
@@ -357,8 +348,13 @@ constexpr std::array<size_t,14> kTrackedListMethods{9,10,11,25,26,28,29,31,33,35
 // created): Dispatch is also instrumented, so a device-removal report names
 // the pipeline, thread groups and calling module of the dispatch that hung.
 constexpr std::array<size_t,15> kDiagnosticListMethods{9,10,11,14,25,26,28,29,31,33,35,37,39,41,75};
+// rtxhair.1 universal tracking: BuildRaytracingAccelerationStructure (72) as well, for the
+// hair instances' culling flag (SetInstancePatch).
+constexpr std::array<size_t,15> kUniversalListMethods{9,10,11,25,26,28,29,31,33,35,37,39,41,72,75};
 std::atomic<bool> dispatchDiagnostics{};
+std::atomic<bool> universalTracking{};
 std::span<const size_t> TrackedListMethods() noexcept {
+    if(universalTracking.load(std::memory_order_relaxed))return kUniversalListMethods;
     if(dispatchDiagnostics.load(std::memory_order_relaxed))return kDiagnosticListMethods;
     return kTrackedListMethods;
 }
@@ -426,7 +422,7 @@ bool PrivateNativeList(ID3D12GraphicsCommandList4* list,PrivateListTable& permit
         }
         if(!PrivateCallable(method,owner)) {
             wchar_t path[MAX_PATH]{};GetModuleFileNameW(owner,path,_countof(path));
-            DOTS_TRACE("Private native list rejected method %zu pointer %p owner %p path %ls\n",index,method,owner,path);return false;
+            return false;
         }
         permit.native[index]=method;
     }
@@ -440,7 +436,7 @@ bool Publish(void* object,size_t index,void* hook,Kind kind,const PrivateListTab
     else table=Table(object);
     if(!table||index>=kCanonicalSlots)return false;
     const auto slot=reinterpret_cast<uintptr_t>(table+index);
-    if(slot%sizeof(void*)) {DOTS_TRACE("Publish unaligned slot %p index %zu\n",table+index,index);return false;}
+    if(slot%sizeof(void*))return false;
     std::lock_guard guard(publicationLock);
     if(permit&&(index>=kList4Methods||table!=permit->table))return false;
     if(const auto* existing=FindPublication(slot))
@@ -449,11 +445,11 @@ bool Publish(void* object,size_t index,void* hook,Kind kind,const PrivateListTab
     if(!(permit?ReadFast(table,index*sizeof(void*),previous):Read(table,index*sizeof(void*),previous))
         ||(!permit&&!ImageMethod(table+index,dataOwner,true)))return false;
     void* forward=permit?permit->native[index]:previous;
-    if((permit&&previous!=forward&&previous!=hook)||(permit?!PrivateCallable(forward,callOwner):!ImageMethod(forward,callOwner))) {DOTS_TRACE("Publish image ownership failed index %zu\n",index);return false;}
+    if((permit&&previous!=forward&&previous!=hook)||(permit?!PrivateCallable(forward,callOwner):!ImageMethod(forward,callOwner)))return false;
     // Reject addon/proxy-owned tables. Public unwrapping establishes the native
     // object first; only system D3D12 or the exact verified Agility runtime's
     // methods are instrumented. Foreign callable/table owners remain rejected.
-    if(!permit&&(!NativeRuntime(dataOwner)||!NativeRuntime(callOwner))) {DOTS_TRACE("Publish native runtime ownership failed index %zu\n",index);return false;}
+    if(!permit&&(!NativeRuntime(dataOwner)||!NativeRuntime(callOwner)))return false;
     // A private table's protection (committed private PAGE_READWRITE covering
     // every slot) was proven by PrivateTableMatches above and is re-proven
     // after the exchange; an image table slot is queried individually.
@@ -479,7 +475,6 @@ bool Publish(void* object,size_t index,void* hook,Kind kind,const PrivateListTab
     }
     entry->protection=protection;
     // Never discard a forwarding binding after even ambiguous publication.
-    DOTS_TRACE("Publish slot %p index %zu protection %lu success %u\n",table+index,index,protection,unsigned(published));
     return published&&(permit||protected_pointer::ProtectionMatches(slot,protection,sizeof(void*)));
 }
 struct RootInfo { uint32_t count{};std::array<D3D12_ROOT_PARAMETER_TYPE,64> type{};std::array<uint32_t,64> constants{};ComPtr<ID3D12RootSignature> keep; };
@@ -565,6 +560,7 @@ struct Context {
     ComPtr<ID3D12RootSignature> converterRoot;
     ComPtr<ID3D12PipelineState> converterPso;
     std::atomic<ShaderCache*> shaders{};
+    std::atomic<ShaderRewrite> rewrite{}; // rtxhair.1 universal hair (InitializeTracking); never with shaders
     std::unordered_map<ID3D12GraphicsCommandList4*,std::unique_ptr<ListState>> lists;
     std::unordered_map<ID3D12CommandQueue*,QueueState> queues;
     std::unordered_map<ID3D12RootSignature*,RootInfo> roots;
@@ -873,7 +869,7 @@ bool UnwrapList(IUnknown* input,ComPtr<ID3D12GraphicsCommandList4>& output) {
 }
 void Reject() { ++C().stats.rejected; }
 // Caller holds C().lock. Stops new conversions for the rest of the process;
-// the reason that first stopped them is logged so a tester log names it.
+// the reason that first stopped them is logged so the log names it.
 std::atomic<uint32_t> lostLogs{};
 void Lost(const char* reason) {
     if(!C().stats.lost&&lostLogs.fetch_add(1,std::memory_order_relaxed)<8) {
@@ -1185,9 +1181,11 @@ void STDMETHODCALLTYPE DispatchHook(ID3D12GraphicsCommandList* self,UINT x,UINT 
     probe.Before();original(self,x,y,z);probe.After();
     if(auto* s=List(self))LogDispatch(*s,x,y,z);
 }
+void STDMETHODCALLTYPE BuildAs(ID3D12GraphicsCommandList4* self,const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* desc,
+    UINT count,const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC* post);
 const std::array<void*,kList4Methods>& ListHooks() {
     static const auto hooks=[] {
-        std::array<void*,kList4Methods> h{};h[14]=reinterpret_cast<void*>(&DispatchHook);
+        std::array<void*,kList4Methods> h{};h[14]=reinterpret_cast<void*>(&DispatchHook);h[72]=reinterpret_cast<void*>(&BuildAs);
         h[9]=reinterpret_cast<void*>(&Close);h[10]=reinterpret_cast<void*>(&Reset);h[11]=reinterpret_cast<void*>(&Clear);
         h[25]=reinterpret_cast<void*>(&Pso);h[26]=reinterpret_cast<void*>(&Barriers);h[28]=reinterpret_cast<void*>(&Heaps);
         h[29]=reinterpret_cast<void*>(&Root);h[31]=reinterpret_cast<void*>(&Descriptor);h[33]=reinterpret_cast<void*>(&Word);
@@ -1248,7 +1246,7 @@ void TakeReleasedLists(std::vector<std::unique_ptr<ListState>>& released) {
     ctx.stats.releasedLists+=released.size();
 }
 bool TrackList(ID3D12GraphicsCommandList4* list,bool open,ID3D12PipelineState* pso) noexcept try {
-    if(!Child(list)) {DOTS_TRACE("TrackList child device mismatch\n");return false;}
+    if(!Child(list))return false;
     const auto type=list->GetType();
     if(type!=D3D12_COMMAND_LIST_TYPE_DIRECT&&type!=D3D12_COMMAND_LIST_TYPE_COMPUTE)return true;
     auto& ctx=C();
@@ -1340,9 +1338,9 @@ bool TrackQueue(ID3D12CommandQueue* queue) noexcept try {
     if(ctx.queues.contains(queue))return true;
     // Overlays (Steam, ReShade add-ons) create queues of their own on the
     // game's device. Beyond capacity a queue stays untracked, like a list:
-    // only hair submitted on it stops conversions (Execute). Before dev.43 one
-    // more queue, such as the Steam overlay's on its first notification (a
-    // controller connecting, a screenshot), stopped them all for the session.
+    // only hair submitted on it stops conversions (Execute), not one more
+    // queue such as the Steam overlay's on its first notification (a
+    // controller connecting, a screenshot).
     if(ctx.queues.size()>=kMaxQueues) {
         if(!queueCapacityLogged.exchange(true))single_module::Log(L"WITCHER_DOTS queue tracking capacity reached; further queues stay untracked");
         // Its submissions must still reach Execute (normally the runtime table
@@ -1440,9 +1438,84 @@ HRESULT STDMETHODCALLTYPE CreateRoot(ID3D12Device* self,UINT node,const void* da
     return hr;
     } catch(...) {StopConversions();return hr;}
 }
+// rtxhair.1 universal hair: a state object description with its DXIL libraries
+// through the universal rewrite. Associations into the copied subobject array are
+// re-pointed at the copy; one outside it keeps the game's pointer.
+struct LibraryCopy {
+    D3D12_STATE_OBJECT_DESC desc{};
+    std::vector<D3D12_STATE_SUBOBJECT> objects;
+    std::vector<D3D12_DXIL_LIBRARY_DESC> libraries;
+    std::vector<D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION> associations;
+    std::vector<std::vector<std::byte>> code;
+    uint32_t replaced{};
+};
+bool RewriteLibraries(ShaderRewrite rewrite,const D3D12_STATE_OBJECT_DESC* original,LibraryCopy& c) {
+    if(!CopyChecked(&c.desc,original,sizeof(c.desc))||!c.desc.NumSubobjects||c.desc.NumSubobjects>4096
+        ||!Readable(c.desc.pSubobjects,size_t(c.desc.NumSubobjects)*sizeof(D3D12_STATE_SUBOBJECT)))return false;
+    const UINT n=c.desc.NumSubobjects;
+    c.objects.assign(c.desc.pSubobjects,c.desc.pSubobjects+n);
+    c.libraries.resize(n);c.associations.resize(n);c.code.resize(n);
+    for(UINT i=0;i<n;++i)if(c.objects[i].Type==D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY) {
+        if(!CopyChecked(&c.libraries[i],c.objects[i].pDesc,sizeof(c.libraries[i])))return false;
+        const auto code=c.libraries[i].DXILLibrary;
+        if(!code.pShaderBytecode||!code.BytecodeLength||code.BytecodeLength>64ull*1024*1024
+            ||!Readable(code.pShaderBytecode,code.BytecodeLength))continue;
+        if(!rewrite(code.pShaderBytecode,code.BytecodeLength,c.code[i])||c.code[i].empty())continue;
+        c.libraries[i].DXILLibrary={c.code[i].data(),c.code[i].size()};c.objects[i].pDesc=&c.libraries[i];++c.replaced;
+    }
+    if(!c.replaced)return true;
+    const uintptr_t begin=reinterpret_cast<uintptr_t>(c.desc.pSubobjects),end=begin+size_t(n)*sizeof(D3D12_STATE_SUBOBJECT);
+    for(UINT i=0;i<n;++i)if(c.objects[i].Type==D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION) {
+        if(!CopyChecked(&c.associations[i],c.objects[i].pDesc,sizeof(c.associations[i])))return false;
+        const uintptr_t p=reinterpret_cast<uintptr_t>(c.associations[i].pSubobjectToAssociate);
+        if(p<begin||p>=end)continue;
+        if((p-begin)%sizeof(D3D12_STATE_SUBOBJECT))return false;
+        c.associations[i].pSubobjectToAssociate=&c.objects[(p-begin)/sizeof(D3D12_STATE_SUBOBJECT)];
+        c.objects[i].pDesc=&c.associations[i];
+    }
+    c.desc.pSubobjects=c.objects.data();
+    return true;
+}
+std::atomic<uint32_t> universalStateLogs{};
+// Created with the rewritten libraries; a driver refusal is created again with the
+// game's own, which is what this GPU would have been given without universal hair.
+std::atomic<RewriteRefused> rewriteRefused{};
+template<class Create> HRESULT UniversalState(ShaderRewrite rewrite,const D3D12_STATE_OBJECT_DESC* original,Create&& create,void** output,const wchar_t* what) {
+    LibraryCopy copy;
+    if(!RewriteLibraries(rewrite,original,copy)||!copy.replaced)return create(original);
+    HRESULT hr=create(&copy.desc);const HRESULT translated=hr;
+    bool retried=false;
+    if(FAILED(hr)) {
+        if(output)*output=nullptr;
+        // Once more with what the rewrite produces now (Witcher 3's look fixes off), if it
+        // says that changed; then the game's own libraries.
+        if(const auto refused=rewriteRefused.load(std::memory_order_acquire);refused&&refused()) {
+            LibraryCopy retry;
+            if(RewriteLibraries(rewrite,original,retry)&&retry.replaced) {
+                retried=true;hr=create(&retry.desc);
+                if(FAILED(hr)&&output)*output=nullptr;
+            }
+        }
+        if(FAILED(hr))hr=create(original);
+    }
+    if(SUCCEEDED(translated)) {std::lock_guard lock(C().lock);C().stats.shaderLibraries+=copy.replaced;}
+    if(universalStateLogs.fetch_add(1,std::memory_order_relaxed)<32) {
+        wchar_t line[300]{};
+        swprintf_s(line,L"RTX_HAIR %s: %u of %u subobjects rewritten, result 0x%08X%s",
+            what,copy.replaced,copy.desc.NumSubobjects,static_cast<unsigned>(translated),
+            SUCCEEDED(translated)?L"":retried&&SUCCEEDED(hr)?L"; created again without the Witcher 3 look fixes"
+                :L"; created again with the game's own libraries");
+        single_module::Log(line);
+    }
+    return hr;
+}
 using StateFn=HRESULT(STDMETHODCALLTYPE*)(ID3D12Device5*,const D3D12_STATE_OBJECT_DESC*,REFIID,void**);
 HRESULT STDMETHODCALLTYPE CreateState(ID3D12Device5* self,const D3D12_STATE_OBJECT_DESC* original,REFIID iid,void** output) try {
     const auto call=Original<StateFn>(self,62,Kind::Device);
+    if(const auto rewrite=C().rewrite.load(std::memory_order_acquire)) {
+        if(!original||!OwnedDevice(self))return call(self,original,iid,output);
+        return UniversalState(rewrite,original,[&](const D3D12_STATE_OBJECT_DESC* d) {return call(self,d,iid,output);},output,L"state object");
+    }
     auto* const shaders=C().shaders.load(std::memory_order_acquire);
     if(!OwnedDevice(self)||!shaders||!original)return call(self,original,iid,output);
     D3D12_STATE_OBJECT_DESC desc{};
@@ -1501,6 +1574,42 @@ HRESULT STDMETHODCALLTYPE CreateState(ID3D12Device5* self,const D3D12_STATE_OBJE
 } catch(...) {
     if(output)*output=nullptr;
     StopConversions();return E_OUTOFMEMORY;
+}
+using AddStateFn=HRESULT(STDMETHODCALLTYPE*)(ID3D12Device7*,const D3D12_STATE_OBJECT_DESC*,ID3D12StateObject*,REFIID,void**);
+HRESULT STDMETHODCALLTYPE AddToState(ID3D12Device7* self,const D3D12_STATE_OBJECT_DESC* addition,ID3D12StateObject* from,REFIID iid,void** output) try {
+    const auto call=Original<AddStateFn>(self,66,Kind::Device);
+    const auto rewrite=C().rewrite.load(std::memory_order_acquire);
+    if(!rewrite||!addition||!OwnedDevice(self))return call(self,addition,from,iid,output);
+    return UniversalState(rewrite,addition,[&](const D3D12_STATE_OBJECT_DESC* d) {return call(self,d,from,iid,output);},output,L"state object addition");
+} catch(...) {
+    if(output)*output=nullptr;
+    return E_OUTOFMEMORY;
+}
+using ComputeFn=HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*,const D3D12_COMPUTE_PIPELINE_STATE_DESC*,REFIID,void**);
+std::atomic<uint32_t> universalComputeLogs{};
+// A ray-query compute shader with NVAPI LSS ops. A cached blob belongs to the game's
+// own shader, so the rewritten one is compiled without it.
+HRESULT STDMETHODCALLTYPE CreateCompute(ID3D12Device* self,const D3D12_COMPUTE_PIPELINE_STATE_DESC* original,REFIID iid,void** output) try {
+    const auto call=Original<ComputeFn>(self,11,Kind::Device);
+    const auto rewrite=C().rewrite.load(std::memory_order_acquire);
+    D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};std::vector<std::byte> code;
+    if(!rewrite||!original||!CopyChecked(&desc,original,sizeof(desc))||!desc.CS.pShaderBytecode||!desc.CS.BytecodeLength
+        ||desc.CS.BytecodeLength>64ull*1024*1024||!Readable(desc.CS.pShaderBytecode,desc.CS.BytecodeLength)||!OwnedDevice(self)
+        ||!rewrite(desc.CS.pShaderBytecode,desc.CS.BytecodeLength,code)||code.empty())
+        return call(self,original,iid,output);
+    desc.CS={code.data(),code.size()};desc.CachedPSO={};
+    HRESULT hr=call(self,&desc,iid,output);const HRESULT translated=hr;
+    if(FAILED(hr)) {if(output)*output=nullptr;hr=call(self,original,iid,output);}
+    if(universalComputeLogs.fetch_add(1,std::memory_order_relaxed)<32) {
+        wchar_t line[200]{};
+        swprintf_s(line,L"RTX_HAIR compute pipeline rewritten (NVAPI LSS ops), result 0x%08X%s",static_cast<unsigned>(translated),
+            FAILED(translated)?L"; created again with the game's own shader":L"");
+        single_module::Log(line);
+    }
+    return hr;
+} catch(...) {
+    if(output)*output=nullptr;
+    return E_OUTOFMEMORY;
 }
 // A null root/pipeline means none was bound since Reset/ClearState: the game
 // must bind its own before the next dispatch or draw, so nothing is restored.
@@ -1600,7 +1709,7 @@ bool InitializeGpu(ID3D12Device5* device,ShaderCache* shaders,std::string& error
 }
 bool AbortGpuPreparation() noexcept {
     try {
-        {std::lock_guard lock(C().lock);C().shaders=nullptr;}
+        {std::lock_guard lock(C().lock);C().shaders=nullptr;C().rewrite=nullptr;}
         std::lock_guard lock(publicationLock);bool restored=true;
         for(auto& entry:publications) {
             const auto slot=entry.slot.load(std::memory_order_acquire);
@@ -1621,6 +1730,200 @@ bool AbortGpuPreparation() noexcept {
 }
 void StopConversions() noexcept {
     try {std::lock_guard lock(C().lock);Lost("stopped by hook validation (see the raster-fallback reason)");} catch(...) {}
+}
+bool InitializeTracking(ID3D12Device5* device,ShaderRewrite rewrite,std::string& error) {
+    auto& ctx=C();
+    if(!device||!rewrite) {error="universal tracking needs a device and a shader rewrite";return false;}
+    if(ctx.device||ctx.shaders.load(std::memory_order_acquire)) {error="device tracking already prepared";return false;}
+    // Before any list is instrumented: lists carry BuildRaytracingAccelerationStructure too.
+    universalTracking.store(true,std::memory_order_release);
+    ctx.device=device;
+    if(FAILED(device->QueryInterface(IID_PPV_ARGS(&ctx.identity)))) {error="device identity unavailable";return false;}
+    ctx.rewrite.store(rewrite,std::memory_order_release);
+    std::vector<std::pair<size_t,void*>> hooks{
+        {8,reinterpret_cast<void*>(&CreateQueue)},{11,reinterpret_cast<void*>(&CreateCompute)},{12,reinterpret_cast<void*>(&CreateList)},
+        {16,reinterpret_cast<void*>(&CreateRoot)},{51,reinterpret_cast<void*>(&CreateList1)},{62,reinterpret_cast<void*>(&CreateState)}};
+    ComPtr<ID3D12Device7> seven;
+    if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&seven))))hooks.push_back({66,reinterpret_cast<void*>(&AddToState)});
+    for(const auto& [index,hook]:hooks)if(!Publish(device,index,hook,Kind::Device)) {
+        error="native D3D12 method publication failed at device slot "+std::to_string(index);return false;
+    }
+    // As InitializeGpu: the real CreateCommandList1 -> Reset transition must reach a
+    // tracked list on its current (possibly private Agility) table.
+    ComPtr<ID3D12CommandAllocator> allocator;ComPtr<ID3D12GraphicsCommandList4> probe;
+    if(FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator)))
+        ||FAILED(device->CreateCommandList1(0,D3D12_COMMAND_LIST_TYPE_DIRECT,D3D12_COMMAND_LIST_FLAG_NONE,IID_PPV_ARGS(&probe)))
+        ||FAILED(probe->Reset(allocator.Get(),nullptr))||FAILED(probe->Close())) {
+        error="native D3D12 command-list preparation failed";return false;
+    }
+    std::lock_guard lock(ctx.lock);auto* tracked=List(probe.Get());
+    if(ctx.stats.lost||!tracked||!VerifyListTable(*tracked)||!CurrentListTable(*tracked)) {
+        error="native D3D12 command-list Reset publication failed";return false;
+    }
+    return true;
+}
+namespace {
+// Caller holds C().lock. The tracked state of `native` when its compute bindings can be
+// handed back after this runtime's own dispatch (as BuildTriangles requires), else null
+// with `error`.
+ListState* Restorable(ID3D12GraphicsCommandList4* native,const RootInfo*& bound,std::string& error) {
+    auto& ctx=C();
+    auto* list=List(native);
+    // As BuildTriangles: no compute root signature since Reset leaves nothing to
+    // restore; a bound but unregistered one cannot be restored and is refused.
+    const bool rootBound=list&&list->bindings->root;
+    bound=rootBound?FindRoot(list->bindings->root.Get()):nullptr;
+    if(ctx.stats.lost||!list||!CurrentListTable(*list)||!list->open||!list->bindings->valid||!list->bindings->pipelineKnown
+        ||(rootBound&&(!list->bindings->rootKnown||!bound))||(!rootBound&&list->bindings->used)) {
+        error=ctx.stats.lost?"command-list tracking lost":!list?"build on an untracked command list":!CurrentListTable(*list)?"build list table not instrumented"
+            :!list->open?"build list not recording":!list->bindings->valid?"build list bindings unreadable"
+            :!list->bindings->pipelineKnown?"build list pipeline unknown"
+            :rootBound?"build list compute root signature unknown":"build list root arguments without root signature";
+        return nullptr;
+    }
+    const auto& values=list->bindings->values;
+    for(uint32_t i=0;bound&&i<values.size();++i) {
+        const auto& root=*bound;
+        const auto kind=values[i].kind;
+        if(kind==ValueKind::None)continue;
+        if(i>=root.count||(kind==ValueKind::Table&&root.type[i]!=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+            ||(kind==ValueKind::Cbv&&root.type[i]!=D3D12_ROOT_PARAMETER_TYPE_CBV)
+            ||(kind==ValueKind::Srv&&root.type[i]!=D3D12_ROOT_PARAMETER_TYPE_SRV)
+            ||(kind==ValueKind::Uav&&root.type[i]!=D3D12_ROOT_PARAMETER_TYPE_UAV)
+            ||(kind==ValueKind::Constants&&(root.type[i]!=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS
+                ||(root.constants[i]<64&&(values[i].wordsKnown>>root.constants[i]))))) {
+            error="compute bindings disagree with root signature";return nullptr;
+        }
+    }
+    return list;
+}
+std::atomic<TopLevelPatch> instancePatch{};
+std::atomic<uint64_t> topLevelPatched{},topLevelUnpatched{};
+std::atomic<uint32_t> topLevelLogs{};
+uint64_t lastLeaseSweep{};
+// Caller holds C().lock. A lease buffer (NON_PIXEL_SHADER_RESOURCE between uses) of at
+// least `bytes` for this recording of `list`: its queue fence keeps it from reuse until
+// the submission that reads it completes (Execute). Idle leases are released after 5 s.
+Lease* RecordingLease(ListState& list,ID3D12GraphicsCommandList4* native,uint64_t bytes) {
+    auto& ctx=C();const uint64_t now=GetTickCount64();
+    bytes=(bytes+0xFFFF)&~0xFFFFull;
+    if(now-lastLeaseSweep>=1000) {
+        lastLeaseSweep=now;
+        for(auto& lease:ctx.leases)if(lease.vertices&&Available(lease)&&now-lease.lastUsed>=kIdleReleaseMs) {
+            lease.vertices.Reset();ctx.stats.geometryBytes-=lease.capacity;lease.capacity=0;++ctx.stats.poolReleases;
+        }
+    }
+    size_t chosen=kMaxLeases;
+    for(size_t i=0;i<ctx.leases.size();++i) {
+        const auto& l=ctx.leases[i];
+        if(Available(l)&&l.vertices&&l.capacity>=bytes&&(chosen==kMaxLeases||l.capacity<ctx.leases[chosen].capacity))chosen=i;
+    }
+    for(size_t i=0;chosen==kMaxLeases&&i<ctx.leases.size();++i) {
+        auto& l=ctx.leases[i];
+        if(!Available(l)||(l.vertices&&l.capacity>=bytes))continue;
+        if(l.vertices) {l.vertices.Reset();ctx.stats.geometryBytes-=l.capacity;l.capacity=0;++ctx.stats.poolReleases;}
+        if(!Buffer(ctx.device.Get(),bytes,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,l.vertices))return nullptr;
+        l.vertices->SetName(L"RTX hair instance copy");
+        l.capacity=bytes;ctx.stats.geometryBytes+=bytes;++ctx.stats.poolAllocations;chosen=i;
+    }
+    if(chosen==kMaxLeases)return nullptr;
+    auto& lease=ctx.leases[chosen];
+    lease.queue=nullptr;lease.fenceValue=0;lease.lastUsed=now;lease.list=native;lease.generation=list.generation;
+    list.leases.push_back(chosen);list.hasLeases.store(true,std::memory_order_release);
+    return &lease;
+}
+// The patched copy of a top-level build's instances on the native list, or 0 with `error`.
+D3D12_GPU_VIRTUAL_ADDRESS PatchInstances(ID3D12GraphicsCommandList4* native,D3D12_GPU_VIRTUAL_ADDRESS input,uint32_t count,std::string& error) {
+    const auto patch=instancePatch.load(std::memory_order_acquire);
+    if(!patch||!native||!input||!count) {error="no instance patch";return 0;}
+    if(count>(1u<<24)) {error="too many instances";return 0;}
+    auto& ctx=C();BuildLock lock(ctx.lock);
+    const RootInfo* bound=nullptr;
+    auto* list=Restorable(native,bound,error);
+    if(!list)return 0;
+    auto* lease=RecordingLease(*list,native,uint64_t(count)*sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
+    if(!lease) {error="instance copy buffer unavailable";return 0;}
+    injecting=true;
+    struct Injection {~Injection(){injecting=false;}} injection;
+    D3D12_RESOURCE_BARRIER transition{};transition.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    transition.Transition={lease->vertices.Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+    Original<BarrierFn>(native,26)(native,1,&transition);
+    const auto output=lease->vertices->GetGPUVirtualAddress();
+    const bool recorded=patch(native,input,count,output);
+    D3D12_RESOURCE_BARRIER after[2]{};
+    after[0].Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;after[0].UAV.pResource=lease->vertices.Get();
+    after[1]=transition;after[1].Transition.StateBefore=D3D12_RESOURCE_STATE_UNORDERED_ACCESS;after[1].Transition.StateAfter=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    Original<BarrierFn>(native,26)(native,2,after);
+    Restore(native,*list->bindings,bound);
+    if(!recorded) {error="instance patch declined";return 0;}
+    return output;
+}
+void NoteUnpatched(const std::string& error) {
+    topLevelUnpatched.fetch_add(1,std::memory_order_relaxed);
+    if(topLevelLogs.fetch_add(1,std::memory_order_relaxed)<16) {
+        wchar_t line[256]{};
+        swprintf_s(line,L"RTX_HAIR top-level build left unpatched (hair there keeps its back faces culled): %S",error.c_str());
+        single_module::Log(line);
+    }
+}
+using BuildAsFn=void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList4*,const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC*,UINT,
+    const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC*);
+void STDMETHODCALLTYPE BuildAs(ID3D12GraphicsCommandList4* self,const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* desc,
+    UINT count,const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC* post) {
+    ListProbe probe;const auto original=Original<BuildAsFn>(self,72);
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC copy{};
+    if(!injecting&&desc&&instancePatch.load(std::memory_order_acquire)&&desc->Inputs.Type==D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL
+        &&desc->Inputs.DescsLayout==D3D12_ELEMENTS_LAYOUT_ARRAY&&desc->Inputs.NumDescs&&desc->Inputs.InstanceDescs) {
+        try {
+            std::string error;
+            if(const auto patched=PatchInstances(self,desc->Inputs.InstanceDescs,desc->Inputs.NumDescs,error)) {
+                copy=*desc;copy.Inputs.InstanceDescs=patched;desc=&copy;topLevelPatched.fetch_add(1,std::memory_order_relaxed);
+            } else NoteUnpatched(error);
+        } catch(...) {NoteUnpatched("exception");}
+    }
+    probe.Before();original(self,desc,count,post);probe.After();
+}
+}
+void SetInstancePatch(TopLevelPatch patch) noexcept {instancePatch.store(patch,std::memory_order_release);}
+void SetRewriteRefused(RewriteRefused refused) noexcept {rewriteRefused.store(refused,std::memory_order_release);}
+D3D12_GPU_VIRTUAL_ADDRESS PatchTopLevel(ID3D12GraphicsCommandList4* supplied,D3D12_GPU_VIRTUAL_ADDRESS input,uint32_t count,std::string& error) noexcept {
+    try {
+        ComPtr<ID3D12GraphicsCommandList4> native;
+        if(!instancePatch.load(std::memory_order_acquire)) {error="no instance patch";return 0;}
+        if(!UnwrapList(supplied,native)) {error="native command list unwrapping unavailable";NoteUnpatched(error);return 0;}
+        const auto patched=PatchInstances(native.Get(),input,count,error);
+        if(patched)topLevelPatched.fetch_add(1,std::memory_order_relaxed);
+        else NoteUnpatched(error);
+        return patched;
+    } catch(...) {error="exception";return 0;}
+}
+TopLevelStats ReadTopLevelStats() noexcept {
+    TopLevelStats s;s.patched=topLevelPatched.load(std::memory_order_relaxed);s.unpatched=topLevelUnpatched.load(std::memory_order_relaxed);
+    try {
+        std::lock_guard lock(C().lock);
+        for(const auto& lease:C().leases)if(lease.vertices) {++s.leases;s.leaseBytes+=lease.capacity;}
+    } catch(...) {}
+    return s;
+}
+bool InjectCompute(ID3D12GraphicsCommandList4* supplied,const ComputeInjection& inject,std::string& error) try {
+    ComPtr<ID3D12GraphicsCommandList4> native;
+    if(!C().rewrite.load(std::memory_order_acquire)) {error="universal tracking not prepared";return false;}
+    if(!UnwrapList(supplied,native)) {error="native command list unwrapping unavailable";return false;}
+    auto& ctx=C();BuildLock lock(ctx.lock);
+    const RootInfo* bound=nullptr;
+    auto* list=Restorable(native.Get(),bound,error);
+    if(!list) {Reject();return false;}
+    injecting=true;
+    struct Injection {~Injection(){injecting=false;}} injection;
+    const auto* bindings=list->bindings.get();auto* const target=native.Get();
+    inject(target,[target,bindings,bound] {Restore(target,*bindings,bound);});
+    ++ctx.stats.builds;ctx.stats.lastBuildTick=GetTickCount64();
+    return true;
+} catch(...) {
+    error="compute injection failed";return false;
+}
+bool TrackedDevice(ID3D12Device* device) noexcept {
+    try {return C().rewrite.load(std::memory_order_acquire)&&OwnedDevice(device);} catch(...) {return false;}
 }
 namespace {
 struct OwnerLayout { uint32_t scratch{0x4e0},blas{0x4e8},positions{0x4f8},indices{0x508}; } ownerLayout;
@@ -2213,14 +2516,4 @@ bool ArmRemovalReport(ID3D12Device5* device,const std::wstring& path) noexcept t
     removalReportArmed.store(true,std::memory_order_release);
     return true;
 } catch(...) {return false;}
-#if WITCHER_DOTS_HARNESS
-// Only an actual GPU fault/hang fills DRED breadcrumbs, so the harness feeds
-// the formatter a synthetic chain.
-std::string FormatBreadcrumbsForHarness(const D3D12_AUTO_BREADCRUMB_NODE1* head) {ReportText r;Breadcrumbs(r,head);return r.text;}
-uint32_t DispatchCountForHarness(const void* list) {
-    std::lock_guard lock(C().lock);const auto* s=List(list);if(!s)return 0;
-    const auto* log=s->dispatchLogs[s->dispatchCursor.load(std::memory_order_acquire)].load(std::memory_order_acquire);
-    return log?log->count.load(std::memory_order_acquire):0;
-}
-#endif
 }

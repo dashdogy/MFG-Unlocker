@@ -1,6 +1,7 @@
 // Root signature (RTS0) parsing and the embedded SPIR-V program set (generate_xvk_programs.py).
 #include "xvk_internal.h"
 #include "embedded_xvk_programs.generated.h"
+#include "xvk_programs.packed.h"
 #include <set>
 
 namespace xvk {
@@ -129,10 +130,10 @@ const Program* ProgramSet::Find(const std::string& requested)
     if (row == index_.end()) return nullptr;
     const embedded::ProgramAsset& asset = embedded::programs[row->second];
     std::unique_ptr<Program> program;
-    const HRSRC resource = FindResourceW(module_, MAKEINTRESOURCEW(asset.resource), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
-    const HGLOBAL handle = resource ? LoadResource(module_, resource) : nullptr;
-    const auto* bytes = handle ? static_cast<const uint8_t*>(LockResource(handle)) : nullptr;
-    const DWORD size = resource ? SizeofResource(module_, resource) : 0;
+    const auto payload = embedded_payload::Find(module_, embedded_payload::packed::xvk_programs,
+        embedded_payload::packed::xvk_programs_items, asset.resource);
+    const auto* bytes = payload.data();
+    const DWORD size = static_cast<DWORD>(payload.size());
     if (!bytes || size != asset.spirvBytes || size % 4 || Sha256(bytes, size) != asset.spirvSha256) {
         Log("program set: embedded program %.16s failed verification (resource %u, %lu bytes)", asset.dxilSha256, asset.resource, size);
     } else {
@@ -165,20 +166,7 @@ void NoteMissingProgram(const std::string& sha256, const void* dxil, size_t byte
         if (seen.size() > 256 || !seen.insert(sha256).second) return;
     }
     Log("CreateComputePipelineState: no SPIR-V for program %s (%zu bytes); failing closed", sha256.c_str(), bytes);
-#if MFG_UNLOCK_XVK_CAPTURE
-    // Diagnostic builds only: XVK_DUMP_MISSING=<dir> keeps the program's DXIL container (root signature inside).
-    wchar_t folder[MAX_PATH]{};
-    if (dxil && GetEnvironmentVariableW(L"XVK_DUMP_MISSING", folder, MAX_PATH)) {
-        const std::wstring path = std::wstring(folder) + L"\\" + std::wstring(sha256.begin(), sha256.end()) + L".dxil";
-        FILE* file = nullptr;
-        if (_wfopen_s(&file, path.c_str(), L"wb") == 0 && file) {
-            fwrite(dxil, 1, bytes, file);
-            fclose(file);
-        }
-    }
-#else
     (void)dxil;
-#endif
 }
 
 size_t EmbeddedProgramCount(HMODULE) noexcept { return std::size(embedded::programs); }

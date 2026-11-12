@@ -1,4 +1,4 @@
-// GPU name override in the shipping DLL (gpuname.1). The runner's case directory
+// GPU name override in the shipping DLL. The runner's case directory
 // holds RTX40MFG-UI.ini beside this executable; the mode adds the setting before
 // the DLL loads. Off and unrecognized values must leave dxgi.dll untouched. On
 // must publish the detours from the worker before startup status, and on a GPU
@@ -15,6 +15,8 @@
 #include <vector>
 #include "diagnostic_paths.h"
 #include "ui_status_json.h"
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 namespace
 {

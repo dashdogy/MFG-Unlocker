@@ -20,7 +20,6 @@ param(
     [switch]$SkipOverlayGpuWork,
     [switch]$EnableNgxCreateResultDiagnostics,
     [switch]$EnableSessionDiagnostics,
-    [switch]$EnableXvkCapture,
     [switch]$EnableXefgVkStandalone,
     [switch]$DisableSingleOverlay,
     [switch]$EnableBoundedOverlayRedesign = $true,
@@ -98,6 +97,7 @@ Assert-InputHash (Join-Path $ImGuiRoot 'imstb_rectpack.h') 'BB53504995E983D54B1A
 Assert-InputHash (Join-Path $ImGuiRoot 'imstb_textedit.h') '24A8DB00354AF8F4057417841635A1B6DFD8986F1608336FE6F10D6FD9769AAA'
 Assert-InputHash (Join-Path $ImGuiRoot 'imstb_truetype.h') '37AA1D602706262BF94DA2F83EFAA8175EBC2202EDE13DA96B692FBCF8B4427B'
 Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_dx12.h') '9127655FEEC0E45BFA197F7BAE96C21C81B813448DE83410CDF0DBADBD8B33B0'
+Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_dx11.h') 'AE62E067D6B72470C8ABD529DFB6BBC80D7AA996ACFDAAA4DFF00379F3D6CFB5'
 Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_vulkan.h') 'F90DAB036827189E549A03A13414B013CE1F595B5ECF7B55787845444E2A92E9'
 Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_win32.h') 'D71CFDBA658C65EADF90C47CD2B73F023674A57E4ADB577636D35002FE00AA9A'
 Assert-InputHash (Join-Path $ImGuiRoot 'imgui.cpp') 'E97F4CB564B750108CC219372ECA8AB7CAC8DE892FC57B3A1932B0A170E1ED80'
@@ -106,6 +106,7 @@ Assert-InputHash (Join-Path $ImGuiRoot 'imgui_widgets.cpp') 'EE1EB52CCA7C5A0ACFF
 Assert-InputHash (Join-Path $ImGuiRoot 'imgui_tables.cpp') '66E8CA12A4C42B9C953152059B784F2DF0205AC8772A969123887A755C9D3FBC'
 Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_win32.cpp') '76B8AFB8851888B4FAFD0B6BAE05335C1478AAE6B50C1B633B3BE036631203EE'
 Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_dx12.cpp') '4932F938C6D48EDF91B45078CF0BDD0BF9AD46CC5D4B9A48873528046DA7C580'
+Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_dx11.cpp') '0167B94EA9732A4185C203C9BED5ECB4020BB30EE12C34025866A9ADFCC6A906'
 Assert-InputHash (Join-Path $ImGuiRoot 'backends/imgui_impl_vulkan.cpp') 'AF53CFE867184C94C736B8BC620E17DDE8A61BAFA3F0B6F43B9532E065F08AEF'
 Assert-InputHash (Join-Path $VulkanIncludeDirectory 'vulkan/vulkan.h') '44410C061C28016069A03E6EFDD642952DD24308A7FF35460B6F3B928EADA354'
 Assert-InputHash (Join-Path $VulkanIncludeDirectory 'vulkan/vk_platform.h') '9FC121C475DE911518D1975352D3ED6320B3CDDD7D7E28B5E2D89B91E6BD9981'
@@ -170,7 +171,6 @@ $arguments = @(
     "-DMFG_UNLOCK_NGX_CREATE_RESULT_DIAGNOSTICS=$($EnableNgxCreateResultDiagnostics.IsPresent.ToString().ToUpperInvariant())",
     "-DMFG_UNLOCK_GPU_FAULT_CAPTURE=$($EnableGpuFaultCapture.IsPresent.ToString().ToUpperInvariant())",
     "-DMFG_UNLOCK_SESSION_DIAGNOSTICS=$($EnableSessionDiagnostics.IsPresent.ToString().ToUpperInvariant())",
-    "-DMFG_UNLOCK_XVK_CAPTURE=$($EnableXvkCapture.IsPresent.ToString().ToUpperInvariant())",
     "-DMFG_UNLOCK_XEFG_VK_STANDALONE=$($EnableXefgVkStandalone.IsPresent.ToString().ToUpperInvariant())",
     "-DMFG_UNLOCK_DIAGNOSTIC_NO_SINGLE_OVERLAY=$($DisableSingleOverlay.IsPresent.ToString().ToUpperInvariant())",
     "-DMFG_UNLOCK_BOUNDED_OVERLAY_REDESIGN=$($EnableBoundedOverlayRedesign.IsPresent.ToString().ToUpperInvariant())",
@@ -226,7 +226,6 @@ Assert-CachePath 'MFG_AMPERE_KERNEL_DIRECTORY_ADDITIONAL' (Join-Path $nativeCach
 Assert-CacheValue 'MFG_UNLOCK_OVERLAY_SKIP_GPU_WORK' $SkipOverlayGpuWork.IsPresent.ToString().ToUpperInvariant()
 Assert-CacheValue 'MFG_UNLOCK_NGX_CREATE_RESULT_DIAGNOSTICS' $EnableNgxCreateResultDiagnostics.IsPresent.ToString().ToUpperInvariant()
 Assert-CacheValue 'MFG_UNLOCK_SESSION_DIAGNOSTICS' $EnableSessionDiagnostics.IsPresent.ToString().ToUpperInvariant()
-Assert-CacheValue 'MFG_UNLOCK_XVK_CAPTURE' $EnableXvkCapture.IsPresent.ToString().ToUpperInvariant()
 Assert-CacheValue 'MFG_UNLOCK_XEFG_VK_STANDALONE' $EnableXefgVkStandalone.IsPresent.ToString().ToUpperInvariant()
 Assert-CacheValue 'MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY' 'ON'
 Assert-CacheValue 'MFG_UNLOCK_XESS' 'ON'
@@ -260,7 +259,10 @@ if (-not $compilerText.Contains($compilerRecord) `
     throw "Configured compiler metadata is not the recorded MSVC x64 toolchain: $($compilerMetadata.FullName)"
 }
 
-& $CMakeExecutable --build $BuildDirectory --config Release --parallel --target RTXMFGUnified
+# parbuild.1: --parallel only builds whole projects side by side; MultiToolTask also compiles each project's files in
+# parallel, under one process limit shared by all projects (MSBuild adds /FS itself for the /Zi PDBs).
+& $CMakeExecutable --build $BuildDirectory --config Release --parallel --target RTXMFGUnified -- `
+    /p:UseMultiToolTask=true /p:EnforceProcessCountAcrossBuilds=true
 if ($LASTEXITCODE -ne 0) { throw "Native build failed: $LASTEXITCODE" }
 
 $dll = Join-Path $BuildDirectory 'Release/MFGUnlocker.dll'

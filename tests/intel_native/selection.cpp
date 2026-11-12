@@ -5,9 +5,9 @@
 #include <stdexcept>
 #include <string>
 
-// arcnative.3: the XeLL pairing follows the driver's own binding rule and never
-// loads a module. arcnative.2 loaded igxell, which made the driver unwrap a
-// built-in libxell context into igxell (Arc A750 launch crash).
+// The XeLL pairing follows the driver's own binding rule and never loads a
+// module: loading igxell makes the driver unwrap a built-in libxell context
+// into igxell, a crash at launch.
 namespace fs=std::filesystem;
 static unsigned checks{};
 static void Check(bool value,const char* why)
@@ -61,7 +61,7 @@ int wmain(int argc,wchar_t** argv)
         const std::string now=intel_native::DriverXellBinding();
         if (mode==L"builtin")
         {
-            // Thor's 007 First Light shape: OptiScaler's libxell 1.3.2, no igxell.
+            // The 007 First Light shape: OptiScaler's libxell 1.3.2, no igxell.
             Check(selected && receipt.ll==libxell && receipt.llBinding==std::string("libxell"),"built-in libxell bound");
             Check(receipt.llGated && receipt.llRva==0xd1cb,"libxell count gate mapped by the route layout");
             Check(receipt.llMajor==1 && receipt.llMinor==3 && receipt.llPatch==2 && !receipt.igxellLoaded,"receipt version and igxell state");

@@ -32,6 +32,8 @@ enum class Reason : uint32_t
 // first real factory returned and received an owned proxy. Preparing means armed.
 void FactoryReady() noexcept;
 void VulkanReady() noexcept;
+// dx11menu.1: a D3D11CreateDeviceAndSwapChain swapchain received the menu's proxy (no factory proxy on that route).
+void D3D11Ready() noexcept;
 bool PrepareInput() noexcept;
 bool InputReady() noexcept;
 State Current() noexcept;
@@ -46,5 +48,4 @@ uint32_t SuspendedThreadCount() noexcept;
 // Factory callbacks wrap returned objects outside loader callbacks. No graphics
 // creation, native table publication, installer waits or discovery worker occur.
 void RequestInstall() noexcept;
-const wchar_t* ReasonText(Reason reason) noexcept;
 }

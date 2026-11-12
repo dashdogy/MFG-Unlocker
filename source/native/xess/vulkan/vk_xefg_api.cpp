@@ -109,7 +109,7 @@ VkBool32 VKAPI_CALL OwnsSwapchainApi(VkSwapchainKHR swapchain) { return hosted::
 
 void VKAPI_CALL GetStatusApi(MfgXeFGVkStatus* status)
 {
-    // vkreflex.1: a host built before the latency fields passes the shorter structure; those fields need the longer one.
+    // A host built before the latency fields passes the shorter structure; those fields need the longer one.
     constexpr size_t kBaseSize = offsetof(MfgXeFGVkStatus, latencyMode);
     if (!status || status->size < kBaseSize) return;
     const auto snapshot = ReadSnapshot();

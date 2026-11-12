@@ -76,6 +76,12 @@ inline bool Ready(HMODULE module) noexcept {
             && protected_pointer::ProtectionMatches(reinterpret_cast<uintptr_t>(item.match),PAGE_EXECUTE_READ,kPattern.size());
     return false;
 }
+// GitHub issue 149 (AION 2, DLSS-G 310.6.0.0): a supported provider with no count/index check to restore. 310.1 to
+// 310.6 have none (310.7 and later have exactly one), so RTX 40 cannot run them above 2X.
+inline bool Missing(HMODULE module) noexcept {
+    return module && dlssg_provider_policy::IsSupportedRetainedProvider(module) && !Find(module).match;
+}
+
 inline Result Patch(HMODULE module, bool verifiedAdaAdapter) noexcept {
     if (!verifiedAdaAdapter || !dlssg_provider_policy::IsSupportedRetainedProvider(module)) return {};
     // Retention establishes module lifetime before scanning or publishing. No

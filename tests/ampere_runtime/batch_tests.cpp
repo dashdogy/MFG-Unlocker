@@ -32,8 +32,8 @@ int main()
     Check(middle.Accepts(32, 5, 1, 100), "completed interval can switch to a higher proven count");
     Check(!middle.Accepts(32, 6, 1, 100) && !middle.Accepts(32, 0, 1, 100), "counts outside fixed program capacity remain rejected");
     Check(!middle.Accepts(32, 1, 0, 100) && !middle.Accepts(32, 1, 1, 0), "zero index and null output remain rejected");
-    // Deep Rock Galactic tester log (rtx30.1): count 2, index 2 arrived with
-    // index 1's output (flip-metering presentation's two-surface pool).
+    // A shared output: count 2, index 2 arrives with index 1's output
+    // (flip-metering presentation's two-surface pool).
     Batch shared;
     shared.Complete(3919, 2, 1, 0x9C0, true);
     Check(!shared.Accepts(3919, 2, 2, 0x9C0) && shared.DuplicateOutput(3919, 2, 2, 0x9C0),

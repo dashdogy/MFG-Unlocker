@@ -37,6 +37,11 @@ void VulkanReady() noexcept {
     if (previous!=State::Active)
         single_module::Log(L"MFG_PROXY_UI state=active boundary=vulkan-swapchain-return nativeTableWrites=0 executablePatches=0");
 }
+void D3D11Ready() noexcept {
+    const auto previous=state.exchange(State::Active,std::memory_order_acq_rel);
+    if (previous!=State::Active)
+        single_module::Log(L"MFG_PROXY_UI state=active boundary=d3d11-swapchain-return nativeTableWrites=0");
+}
 bool PrepareInput() noexcept {
 #if !MFG_UNLOCK_OVERLAY_MENU_DRAW
     return true;
@@ -68,10 +73,5 @@ bool InputReady() noexcept {
 #else
     return true;
 #endif
-}
-const wchar_t* ReasonText(Reason r) noexcept {
-    if(r==Reason::None) return L"none";
-    if(r==Reason::DisabledByBuild) return L"disabled by build";
-    return L"UI attachment unavailable; original graphics path retained";
 }
 }

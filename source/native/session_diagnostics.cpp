@@ -70,7 +70,7 @@ HANDLE gFatalRequest = nullptr, gFatalDone = nullptr, gWriter = nullptr;
 EXCEPTION_POINTERS* gFatalPointers = nullptr;
 DWORD gFatalThread = 0;
 std::atomic<bool> gFatalClaimed{false}, gFatalText{false};
-// xemfgsa.4: the first-chance dump of a GPU driver fault (DumpDriverFault), written by the same writer thread.
+// The first-chance dump of a GPU driver fault (DumpDriverFault), written by the same writer thread.
 HANDLE gEarlyRequest = nullptr, gEarlyDone = nullptr;
 EXCEPTION_POINTERS* gEarlyPointers = nullptr;
 DWORD gEarlyThread = 0;
@@ -352,14 +352,14 @@ __declspec(noinline) void WriteFirstChance(const Fault& fault, const CONTEXT& co
     Line(L"First-chance exception 0x%08lX (%s%s) at %s on thread %lu; stack: %s (observed only: the code that "
         L"raised it may handle it)%s", fault.code, CodeName(fault.code), access, where, fault.thread, stack,
         slot + 1 == kInlineSites ? L"; later new fault sites are listed only in crash and exit records" : L"");
-    // xemfgsa.4: the rest of the stack, 12 frames a line (in Subnautica 2 a GPU driver's own frames filled the first
-    // 12 and the caller stayed unknown).
+    // The rest of the stack, 12 frames a line (a GPU driver's own frames can fill the first 12 and leave the caller
+    // unknown).
     for (size_t at = first; at < count; at += 12)
     {
         StackText(frames + at, std::min<size_t>(count - at, 12), stack, _countof(stack));
         Line(L"  stack continues: %s", stack);
     }
-    // alpha.15 (B4-02): a GPU driver's fault is placed without the dump (X4: a null read in nvoglv64.dll, no dump sent).
+    // A GPU driver's fault is placed without the dump.
     if (!driver) return;
     Line(L"  registers: rip=%016llX rsp=%016llX rbp=%016llX rax=%016llX rbx=%016llX rcx=%016llX rdx=%016llX "
         L"rsi=%016llX rdi=%016llX", context.Rip, context.Rsp, context.Rbp, context.Rax, context.Rbx, context.Rcx,
@@ -374,7 +374,7 @@ __declspec(noinline) void WriteFirstChance(const Fault& fault, const CONTEXT& co
 
 void DumpDriverFault(EXCEPTION_POINTERS* pointers, ULONG64 address) noexcept;
 bool InDriverStore(ULONG64 address) noexcept;
-// alpha.15 (B4-02): the first GPU driver fault, for the worker's "still running" line.
+// The first GPU driver fault, for the worker's "still running" line.
 std::atomic<ULONGLONG> gDriverFaultTick{0};
 std::atomic<ULONG64> gDriverFaultAddress{0};
 
@@ -410,7 +410,7 @@ LONG CALLBACK Observe(EXCEPTION_POINTERS* pointers) noexcept
 // ---- unhandled exceptions ---------------------------------------------------------------------------------------
 using MiniDumpWriteDumpFunction = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE,
     PMINIDUMP_EXCEPTION_INFORMATION, PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION);
-// alpha.15 (B4-03/B4-10): resolved at Start, so no dump has to load a module behind a held loader lock.
+// Resolved at Start, so no dump has to load a module behind a held loader lock.
 MiniDumpWriteDumpFunction gWriteDump = nullptr;
 constexpr MINIDUMP_TYPE kCrashDump = static_cast<MINIDUMP_TYPE>(MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules
     | MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithProcessThreadData | MiniDumpWithHandleData);
@@ -440,13 +440,30 @@ void WriteDump(EXCEPTION_POINTERS* pointers, DWORD thread, const wchar_t* path, 
         return;
     }
     MINIDUMP_EXCEPTION_INFORMATION exception{thread, pointers, FALSE};
-    const BOOL written = write(GetCurrentProcess(), GetCurrentProcessId(), file, type, pointers ? &exception : nullptr,
-        nullptr, nullptr);
-    const DWORD error = written ? 0 : GetLastError();
+    // A process with an unusual address space can refuse the fuller dump and leave an empty file (shadPS4:
+    // 0x80070057). A smaller dump still holds the threads, stacks and modules.
+    const MINIDUMP_TYPE attempts[] = {type, kHangDump, MiniDumpNormal};
+    BOOL written = FALSE;
+    DWORD firstError = 0, error = 0;
+    bool reduced = false;
+    for (const MINIDUMP_TYPE attempt : attempts)
+    {
+        if (reduced && attempt == type) continue;
+        LARGE_INTEGER start{};
+        SetFilePointerEx(file, start, nullptr, FILE_BEGIN);
+        SetEndOfFile(file);
+        written = write(GetCurrentProcess(), GetCurrentProcessId(), file, attempt, pointers ? &exception : nullptr, nullptr, nullptr);
+        if (written) break;
+        error = GetLastError();
+        if (!reduced) firstError = error;
+        reduced = true;
+    }
     LARGE_INTEGER size{};
     GetFileSizeEx(file, &size);
     CloseHandle(file);
-    if (written)
+    if (written && reduced)
+        Line(L"  minidump: %s (%lld bytes, reduced after error 0x%08lX)", path, size.QuadPart, firstError);
+    else if (written)
         Line(L"  minidump: %s (%lld bytes)", path, size.QuadPart);
     else
         Line(L"  minidump: failed (error 0x%08lX)", error);
@@ -487,8 +504,8 @@ void WriteFatal(EXCEPTION_POINTERS* pointers, DWORD thread, bool dump) noexcept
     else Line(L"  minidump: not written (the writer thread was unavailable)");
 }
 
-// alpha.15 (B4-03/B4-10): the worker went silent during start-up (Enshrouded and DOOM TDA standalone: no line after
-// 77 ms, inside Steam's own module loading). The dump's stacks say which lock it waits on.
+// The worker went silent during start-up (seen inside Steam's own module loading). The dump's stacks say which lock
+// it waits on.
 void WriteHang() noexcept
 {
     if (gFlush) gFlush(&WriteRaw);
@@ -498,8 +515,8 @@ void WriteHang() noexcept
     WriteDump(nullptr, 0, gHangDumpPath, kHangDump);
 }
 
-// The crash record (once, then the thread ends); before it, xemfgsa.4's first-chance driver fault dump and alpha.15's
-// start-up hang dump.
+// The crash record (once, then the thread ends); before it, the first-chance driver fault dump and the start-up hang
+// dump.
 DWORD WINAPI WriterThread(void*) noexcept
 {
     const HANDLE requests[2] = {gFatalRequest, gEarlyRequest};
@@ -553,10 +570,9 @@ bool InDriverStore(ULONG64 address) noexcept
     return wcsstr(path, L"\\driverstore\\") != nullptr;
 }
 
-// xemfgsa.4 (Subnautica 2, 23 Oct: the log stopped at a first-chance access violation in nvwgf2umx.dll, all 12 logged
-// frames the driver's own; no unhandled record, no minidump, no WER report, no engine crash folder): the first serious
-// fault inside a GPU driver is dumped at first chance, before whatever ends the process. The faulting thread waits for
-// the writer thread (at most kFatalWaitMs) and the exception then goes on as before.
+// The first serious fault inside a GPU driver is dumped at first chance, before whatever ends the process (such a
+// session can end with no unhandled record, minidump, WER report or engine crash folder). The faulting thread waits
+// for the writer thread (at most kFatalWaitMs) and the exception then goes on unchanged.
 void DumpDriverFault(EXCEPTION_POINTERS* pointers, ULONG64 address) noexcept
 {
     if (!gEarlyRequest || !gEarlyDone || !gWriter || !gEarlyDumpPath[0] || !InDriverStore(address) || OwnsLoaderLock()
@@ -833,7 +849,7 @@ void Start(FILE* runtimeLog, const wchar_t* logPath, LogFunction log, FlushFunct
         wcscpy_s(gHangDumpPath + length - 4, kPathChars - (length - 4), L".hang.dmp");
     }
     gStartTick = GetTickCount64();
-    // alpha.15: the dump writer, resolved now (outside the loader lock). dbgcore.dll holds the MiniDumpWriteDump that
+    // The dump writer, resolved now (outside the loader lock). dbgcore.dll holds the MiniDumpWriteDump that
     // dbghelp.dll forwards to; dbghelp.dll itself is not loaded by name here, because a System32 copy loaded this early
     // would then satisfy the game's later load of a dbghelp.dll in its own folder (OptiScaler installs under that name).
     if (const HMODULE core = LoadLibraryExW(L"dbgcore.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))

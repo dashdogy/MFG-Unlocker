@@ -1,0 +1,187 @@
+#version 460
+// vkhair.3: one Vulkan LSS geometry (VK_NV_ray_tracing_linear_swept_spheres, any supported layout) to DOTS hair,
+// the twin of dots_converter.hlsl: per LSS primitive three ribbons 60 degrees apart around the segment, each two
+// triangles (18 float3 vertices in primitive order, one winding; universal hair disables culling on these
+// BLASes' instances), every coordinate tagged in its low mantissa bits (lss_ir.h kTagMask / kTagValue). Triangle
+// t of a primitive: t & 1 odd (A, D, B) else even (A, B, C), ribbon t / 2. A primitive that is invalid, or every
+// primitive when the layout is unsupported (flags bit 1), gets NaN vertices: inactive triangles never hit.
+// Vertex numbering follows VkAccelerationStructureBuildRangeInfoKHR: indexed, vertex = index + firstVertex;
+// not indexed, vertex = firstVertex + j with the range's primitiveOffset already in the position and radius
+// offsets. No vertex count is known (the LSS data has none), so indexed reads trust the game's indices, as the
+// hardware does.
+// hairmem.1: compiled a second time with -DRIBBONS=2 ([RtxHair] Ribbons=2): two ribbons 90 degrees apart (12
+// vertices per primitive) of half-width pi/(2 sqrt 2) radii (vk_dots_builder.h RibbonScale). The default build
+// is the same SPIR-V as before (pinned in generate_vk_hair_shaders.py).
+#extension GL_GOOGLE_include_directive : require
+#include "vk_common.glsl"
+
+#ifndef RIBBONS
+#define RIBBONS 3
+#endif
+#if RIBBONS == 2
+#define FACES 2u
+#else
+#define FACES 3u
+#endif
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct Params
+{
+    uvec2 positions;     // 4-byte aligned bases; the remainders are in the offsets
+    uvec2 radii;
+    uvec2 indices;
+    uvec2 target;        // our vertex buffer for this geometry
+    uint primitiveCount;
+    uint flags;          // bit 0: successive (else list); bit 1: write every primitive inactive
+    uint firstVertex;
+    uint pad0;
+    uint positionOffset;
+    uint positionStride;
+    uint positionFormat; // 0 R32G32B32_SFLOAT, 1 R32G32_SFLOAT, 2 R16G16B16A16_SFLOAT, 3 R16G16_SFLOAT, 4 R16G16B16A16_SNORM, 5 R16G16_SNORM
+    uint pad1;
+    uint radiusOffset;
+    uint radiusStride;   // 0: one radius for every vertex
+    uint radiusFormat;   // 0 R32_SFLOAT, 1 R16_SFLOAT
+    uint pad2;
+    uint indexOffset;
+    uint indexStride;
+    uint indexFormat;    // 0 none, 1 UINT32, 2 UINT16, 3 UINT8
+    uint pad3;
+};
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ParamsRef
+{
+    Params p;
+};
+
+#if RIBBONS == 2
+const float kRibbon = 1.11072073454; // pi/(2 sqrt 2): vk_dots_builder.h RibbonScale(2)
+#else
+const float kRibbon = 1.04719755120; // pi/3: lss_ir.h kRibbon
+#endif
+const uint kTagMask = 0x7u;
+const uint kTagValue = 0x5u;
+#if RIBBONS == 2
+const uint kVerticesPerPrimitive = 12u;
+#else
+const uint kVerticesPerPrimitive = 18u;
+#endif
+
+float Half(uint h)
+{
+    return unpackHalf2x16(h).x;
+}
+
+float Snorm16(uint v)
+{
+    int s = int(v << 16) >> 16;
+    return max(float(s) / 32767.0, -1.0);
+}
+
+uint ReadIndex(Params p, uint i)
+{
+    if (p.indexFormat == 0u)
+        return i;
+    uvec2 a = At(p.indices, p.indexOffset, i, p.indexStride);
+    return p.indexFormat == 1u ? Load32(a) : (p.indexFormat == 2u ? Load16(a) : Load8(a));
+}
+
+vec4 ReadVertex(Params p, uint v)
+{
+    uvec2 a = At(p.positions, p.positionOffset, v, p.positionStride);
+    vec3 position;
+    if (p.positionFormat == 0u)
+        position = uintBitsToFloat(uvec3(Load32(a), Load32(Offset(a, 4u)), Load32(Offset(a, 8u))));
+    else if (p.positionFormat == 1u)
+        position = vec3(uintBitsToFloat(Load32(a)), uintBitsToFloat(Load32(Offset(a, 4u))), 0.0);
+    else if (p.positionFormat == 2u)
+        position = vec3(Half(Load16(a)), Half(Load16(Offset(a, 2u))), Half(Load16(Offset(a, 4u))));
+    else if (p.positionFormat == 3u)
+        position = vec3(Half(Load16(a)), Half(Load16(Offset(a, 2u))), 0.0);
+    else if (p.positionFormat == 4u)
+        position = vec3(Snorm16(Load16(a)), Snorm16(Load16(Offset(a, 2u))), Snorm16(Load16(Offset(a, 4u))));
+    else
+        position = vec3(Snorm16(Load16(a)), Snorm16(Load16(Offset(a, 2u))), 0.0);
+    uvec2 r = At(p.radii, p.radiusOffset, v, p.radiusStride);
+    float radius = p.radiusFormat == 0u ? uintBitsToFloat(Load32(r)) : Half(Load16(r));
+    return vec4(position, radius);
+}
+
+void Store(Params p, uint primitive, uint j, vec3 v)
+{
+    uvec2 a = At(p.target, 0u, primitive * kVerticesPerPrimitive + j, 12u);
+    uvec3 bits = (floatBitsToUint(v) & ~uvec3(kTagMask)) | uvec3(kTagValue);
+    Store32(a, bits.x);
+    Store32(Offset(a, 4u), bits.y);
+    Store32(Offset(a, 8u), bits.z);
+}
+
+void Inactive(Params p, uint primitive)
+{
+    float nan = uintBitsToFloat(0x7FC00000u);
+    for (uint j = 0u; j < kVerticesPerPrimitive; ++j)
+        Store(p, primitive, j, vec3(nan));
+}
+
+bool Finite(vec4 v)
+{
+    return !any(isnan(v)) && !any(isinf(v));
+}
+
+void main()
+{
+    Params p = ParamsRef(Slot()).p;
+    uint primitive = gl_GlobalInvocationID.x;
+    if (primitive >= p.primitiveCount)
+        return;
+    if ((p.flags & 2u) != 0u)
+    {
+        Inactive(p, primitive);
+        return;
+    }
+    uint first, second;
+    if ((p.flags & 1u) != 0u)
+    {
+        first = ReadIndex(p, primitive);
+        second = first + 1u;
+    }
+    else
+    {
+        first = ReadIndex(p, primitive * 2u);
+        second = ReadIndex(p, primitive * 2u + 1u);
+    }
+    vec4 a = ReadVertex(p, first + p.firstVertex);
+    vec4 b = ReadVertex(p, second + p.firstVertex);
+    vec3 d = b.xyz - a.xyz;
+    float length2 = dot(d, d);
+    if (!Finite(a) || !Finite(b) || a.w < 0.0 || b.w < 0.0 || (a.w == 0.0 && b.w == 0.0) || isinf(length2) || isnan(length2) || length2 <= 1.0e-20)
+    {
+        Inactive(p, primitive);
+        return;
+    }
+    // Three ribbons around the segment, 60 degrees apart, from the same axis s as dots_converter.hlsl.
+    vec3 t = d * inversesqrt(length2);
+    vec3 m = abs(t);
+    vec3 reference = (m.x <= m.y && m.x <= m.z) ? vec3(1.0, 0.0, 0.0) : ((m.y <= m.z) ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0));
+    vec3 s = normalize(cross(t, reference));
+    vec3 v = cross(t, s);
+    for (uint face = 0u; face < FACES; ++face)
+    {
+#if RIBBONS == 2
+        vec3 axis = face == 0u ? s : v; // two ribbons, 90 degrees apart
+#else
+        vec3 axis = face == 0u ? s : (face == 1u ? 0.5 * s + 0.86602540378 * v : -0.5 * s + 0.86602540378 * v);
+#endif
+        vec3 A = a.xyz + axis * (a.w * kRibbon);
+        vec3 B = b.xyz - axis * (b.w * kRibbon);
+        vec3 C = b.xyz + axis * (b.w * kRibbon);
+        vec3 D = a.xyz - axis * (a.w * kRibbon);
+        uint f = face * 6u;
+        Store(p, primitive, f + 0u, A);
+        Store(p, primitive, f + 1u, B);
+        Store(p, primitive, f + 2u, C);
+        Store(p, primitive, f + 3u, A);
+        Store(p, primitive, f + 4u, D);
+        Store(p, primitive, f + 5u, B);
+    }
+}

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "focus_standin.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -227,7 +228,15 @@ struct TestWindow
     }
     TestWindow(const TestWindow&) = delete;
     TestWindow& operator=(const TestWindow&) = delete;
-    void Show() { ShowWindow(window, SW_SHOWNOACTIVATE); UpdateWindow(window); }
+    void Show()
+    {
+        // bgfocus.1: a background case stays behind the user's windows, and neither a click on it nor the closing of
+        // the window in front of it may make Windows activate it.
+        if (focus::Virtual()) SetWindowLongPtrW(window, GWL_EXSTYLE, GetWindowLongPtrW(window, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
+        ShowWindow(window, SW_SHOWNOACTIVATE);
+        if (focus::Virtual()) SetWindowPos(window, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        UpdateWindow(window);
+    }
     void Pump(unsigned iterations = 8)
     {
         MSG message;

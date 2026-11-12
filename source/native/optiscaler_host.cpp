@@ -16,6 +16,7 @@ std::atomic<uint32_t> gRoute{static_cast<uint32_t>(Route::None)};
 std::atomic<uint32_t> gUiMode{static_cast<uint32_t>(UiMode::Default)};
 constexpr uint32_t kUndecided = ~0u;
 std::atomic<uint32_t> gDefaultUiMode{kUndecided};
+std::atomic<bool> gMenuTabOffered{false};
 std::atomic<bool> gPluginCallerAccepted{false};
 std::atomic<bool> gPluginCallerRejected{false};
 std::atomic<bool> gStarted{false};
@@ -355,7 +356,14 @@ UiMode DefaultUiMode() noexcept
         mode = static_cast<uint32_t>(ForzaTechExecutable() ? UiMode::Hidden : UiMode::Shared);
         gDefaultUiMode.store(mode, std::memory_order_release);
     }
+    // tabdefault.1: RTXMFG's tab in OptiScaler's menu.
+    if (gMenuTabOffered.load(std::memory_order_acquire)) return UiMode::Hidden;
     return static_cast<UiMode>(mode);
+}
+
+void NoteMenuTabOffered() noexcept
+{
+    gMenuTabOffered.store(true, std::memory_order_release);
 }
 
 bool Detected() noexcept
@@ -457,6 +465,23 @@ uint32_t ReadXefgModel(std::wstring& setting, std::wstring& path, std::wstring& 
     }
 }
 
+std::wstring ReadFrameGenSetting(const wchar_t* key) noexcept
+{
+    try
+    {
+        std::wstring ignoredSetting, path, ignoredKey;
+        ReadXefgModel(ignoredSetting, path, ignoredKey);
+        if (path.empty()) return {};
+        wchar_t value[64]{};
+        GetPrivateProfileStringW(L"FrameGen", key, L"", value, static_cast<DWORD>(_countof(value)), path.c_str());
+        return value;
+    }
+    catch (...)
+    {
+        return {};
+    }
+}
+
 namespace
 {
 // [XeFG] `key` of the OptiScaler.ini beside the identified module (ReadXefgModel
@@ -490,7 +515,7 @@ bool SwitchWord(const wchar_t* value, bool on) noexcept
         if (_wcsicmp(value, word) == 0) return true;
     return false;
 }
-// scene.1: off (also false, no, disabled) or intel (also on, stock); 0 stays a threshold.
+// Off (also false, no, disabled) or intel (also on, stock); 0 stays a threshold.
 bool SceneDetectorOffWord(const wchar_t* value) noexcept
 {
     return _wcsicmp(value, L"0") != 0 && SwitchWord(value, false);
@@ -516,7 +541,7 @@ bool ReadXefgSceneChangeThreshold(float& threshold, std::wstring& setting) noexc
 {
     threshold = 0.0f;
     wchar_t value[32]{};
-    // scene.1: the words XefgSceneDetectorOff reads set no threshold.
+    // The words XefgSceneDetectorOff reads set no threshold.
     if (ReadXefgIni(L"XeFGSceneChangeThreshold", value, setting) != XefgIniRead::eRead
         || !value[0] || _wcsicmp(value, L"auto") == 0 || SceneDetectorWord(value))
     {
@@ -537,10 +562,31 @@ bool ReadXefgTensorCores(std::wstring& setting) noexcept
     return ReadXefgIni(L"XeFGTensorCores", value, setting) != XefgIniRead::eRead || !SwitchWord(value, false);
 }
 
+bool ReadXefgTensorCoresVulkanBarriers(std::wstring& setting) noexcept
+{
+    wchar_t value[32]{};
+    return ReadXefgIni(L"XeFGTensorCoresVulkanBarriers", value, setting) == XefgIniRead::eRead && SwitchWord(value, true);
+}
+uint32_t ReadXefgTensorCoresMask(std::wstring& setting) noexcept
+{
+    constexpr uint32_t all = (1u << 17) - 1;
+    wchar_t value[32]{};
+    if (ReadXefgIni(L"XeFGTensorCoresMask", value, setting) != XefgIniRead::eRead || !value[0]) return all;
+    wchar_t* end{};
+    const auto mask = wcstoull(value, &end, 16);
+    while (end && (*end == L' ' || *end == L'\t')) ++end;
+    return end != value && end && !*end && mask <= all ? uint32_t(mask) : all;
+}
+
 bool ReadXefgFlipMetering(std::wstring& setting) noexcept
 {
     wchar_t value[32]{};
     return ReadXefgIni(L"XeFGFlipMetering", value, setting) != XefgIniRead::eRead || !SwitchWord(value, false);
+}
+
+bool XefgFlipMeteringForced(const std::wstring& setting) noexcept
+{
+    return !setting.empty() && SwitchWord(setting.c_str(), true);
 }
 
 bool ReadXefgFlipMeteringLead(uint32_t& microseconds, std::wstring& setting) noexcept
@@ -561,30 +607,11 @@ bool ReadXefgFlipMeteringLead(uint32_t& microseconds, std::wstring& setting) noe
     return true;
 }
 
-bool ReadXefgFlipMeteringHotkey(std::wstring& setting) noexcept
-{
-    wchar_t value[32]{};
-    return ReadXefgIni(L"XeFGFlipMeteringHotkey", value, setting) == XefgIniRead::eRead && SwitchWord(value, true);
-}
-
 int ReadXefgAmdFlipMeter(std::wstring& setting) noexcept
 {
     wchar_t value[32]{};
     if (ReadXefgIni(L"XeFGAmdFlipMeter", value, setting) != XefgIniRead::eRead) return 1;
     return SwitchWord(value, false) ? 0 : SwitchWord(value, true) ? 2 : 1;
-}
-
-// V1.6.2-alpha.1 wine.1: Wine/Proton (its ntdll exports wine_get_version). There the flip queue is off unless
-// OptiScaler.ini sets XeFGFlipQueue: under vkd3d-proton it held the game (Stellar Blade, AMD, RADV, 6X: 6 fps base,
-// OptiScaler's Present 93 ms). Tester, 20 Oct: only XeFGFlipQueue = off fixed it (MAILBOX and FIFO alike; output ring
-// 1 made it worse), so the output ring keeps its default depth 2 there.
-bool RunningUnderWine() noexcept
-{
-    static const bool wine = [] {
-        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
-    }();
-    return wine;
 }
 
 // An [XeFG] key the user set: present, not empty and not "auto".
@@ -607,16 +634,28 @@ bool ReadXefgHdr10FlagOff(std::wstring& setting) noexcept
     return !(_wcsicmp(value, L"stock") == 0 || _wcsicmp(value, L"intel") == 0 || SwitchWord(value, true));
 }
 
+// winequeue.1: Wine/Proton (its ntdll exports wine_get_version); the flip queue's auto default is off there.
+bool RunningUnderWine() noexcept
+{
+    static const bool wine = [] {
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+    }();
+    return wine;
+}
+
+// ChooseFlipQueue reads this as "the ini allows it" (Wine/Proton's auto is off there); off is the escape hatch.
 bool ReadXefgFlipQueue(std::wstring& setting) noexcept
 {
     wchar_t value[32]{};
-    if (!ReadXefgSetKey(L"XeFGFlipQueue", value, setting))
-    {
-        if (!RunningUnderWine()) return true;
-        setting = L"auto (Wine/Proton)";
-        return false;
-    }
+    if (!ReadXefgSetKey(L"XeFGFlipQueue", value, setting)) return true;
     return !SwitchWord(value, false);
+}
+
+bool ReadXefgPacingDiagnostics(std::wstring& setting) noexcept
+{
+    wchar_t value[32]{};
+    return ReadXefgIni(L"XeFGPacingDiagnostics", value, setting) == XefgIniRead::eRead && SwitchWord(value, true);
 }
 
 bool XefgFlipQueueSet() noexcept
@@ -626,16 +665,9 @@ bool XefgFlipQueueSet() noexcept
     return ReadXefgSetKey(L"XeFGFlipQueue", value, setting);
 }
 
-bool ReadXefgFlipQueueFirst(std::wstring& setting) noexcept
-{
-    wchar_t value[32]{};
-    if (ReadXefgIni(L"XeFGFlipQueueFirst", value, setting) != XefgIniRead::eRead) return true;
-    return !(_wcsicmp(value, L"buffer") == 0 || _wcsicmp(value, L"buffered") == 0 || SwitchWord(value, false));
-}
-
 namespace
 {
-// menu16.1: the marker and its terminator in a section of the image that is initialized data, readable, not writable,
+// The marker and its terminator in a section of the image that is initialized data, readable, not writable,
 // not executable and not discardable (OptiScaler's .rdata), within min(VirtualSize, SizeOfRawData).
 bool ImageCarriesMenuFix(HMODULE module) noexcept
 {
@@ -675,7 +707,7 @@ uint32_t MenuBackBuffers() noexcept
 {
     const uint32_t known = gMenuBuffers.load(std::memory_order_acquire);
     if (known) return known;
-    // Nothing identified yet: the old limit, not remembered (the first identified image decides).
+    // Nothing identified yet: the limit without the menu fix, not remembered (the first identified image decides).
     if (!gPublished.load(std::memory_order_acquire)) return kMenuBackBuffers;
     const uint32_t buffers = ImageCarriesMenuFix(Module()) ? kFixedMenuBackBuffers : kMenuBackBuffers;
     gMenuBuffers.store(buffers, std::memory_order_release);
@@ -697,24 +729,6 @@ uint32_t ReadXefgNativeBuffers(std::wstring& setting, uint32_t& requested) noexc
     if (!end || end == value || *end || value[0] == L'-' || parsed < 2 || parsed > kFixedMenuBackBuffers) return requested;
     requested = static_cast<uint32_t>(parsed);
     return requested > limit ? limit : requested;
-}
-
-bool ReadXefgFlipQueueBuffer(uint32_t& percent, std::wstring& setting) noexcept
-{
-    percent = 0;
-    wchar_t value[16]{};
-    if (ReadXefgIni(L"XeFGFlipQueueBufferPct", value, setting) != XefgIniRead::eRead
-        || !value[0] || _wcsicmp(value, L"auto") == 0)
-    {
-        setting.clear();
-        return false;
-    }
-    wchar_t* end{};
-    const unsigned long parsed = wcstoul(value, &end, 10);
-    while (end && (*end == L' ' || *end == L'\t')) ++end;
-    if (!end || end == value || *end || value[0] == L'-' || parsed > 100) return false;
-    percent = static_cast<uint32_t>(parsed);
-    return true;
 }
 
 namespace

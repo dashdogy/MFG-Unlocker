@@ -59,7 +59,7 @@ void SetInitialSelectionLoader(InitialSelectionLoader loader) noexcept;
 // exact provider route and has established output-buffer ownership.
 void RecordProviderRead(HMODULE provider, bool valueValid, uint32_t value, bool overridden) noexcept;
 
-// Live switching (V1.6.0). The probe reports true only while no frame-generation
+// Live switching. The probe reports true only while no frame-generation
 // Create is in flight and no frame-generation feature lives. It must be
 // read-only and nonblocking: RelatchPending calls it with the selection lock
 // held, which orders it against every provider read (each read takes that lock
@@ -73,7 +73,7 @@ bool RelatchPending() noexcept;
 // The configuration singleton is structurally identified and every endpoint
 // Create/Evaluate plus the cached reader have current, generation-matched hooks.
 bool ProviderSupportsLiveSwitch(HMODULE provider) noexcept;
-// V1.6.1, RTX 30/20 translated route: that route's own detour (`readerHook`)
+// RTX 30/20 translated route: that route's own detour (`readerHook`)
 // owns the provider's cached preset reader at `reader`. Discovers the endpoint
 // configuration and installs only the endpoint gates; live switching then also
 // requires `readerHook` to stay current with `generation` at `reader`. Call
@@ -95,7 +95,7 @@ bool ReadProvidersSupportLiveSwitch() noexcept;
 // Call at a normal initialization/API boundary, outside DllMain. Installs only
 // a process-memory read hook; no NVIDIA profile set/save API is used.
 bool Prepare() noexcept;
-// V1.6.0: reads of up to four other DRS keys (the DLSS SR and RR presets)
+// Reads of up to four other DRS keys (the DLSS SR and RR presets)
 // reach `filter` after the driver answered; its return value is what the caller
 // receives. `writable` is false when the hook is not current or the buffer is
 // not owned. Each call adds `id`; a null filter clears every key.

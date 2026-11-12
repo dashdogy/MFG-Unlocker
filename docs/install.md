@@ -11,7 +11,7 @@ OptiScaler instead, install it as an OptiScaler plugin; see
 
 1. Close the game. If upgrading, remove the old mod DLL first, as described
    under [Upgrade](#upgrade).
-2. Download `MFGUnlocker-v1.7.0.zip` from
+2. Download `MFGUnlocker-v1.7.1.zip` from
    [Releases](https://github.com/dashdogy/MFG-Unlocker/releases) and extract it.
 3. Rename `MFGUnlocker.dll` to **one** [supported filename](#supported-filenames)
    that the game loads early. [Game compatibility](compatibility.md) lists the

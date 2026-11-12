@@ -101,6 +101,47 @@ int main()
         check(xess_ui::SettingsSection(xess, "", true, 0) == xess_ui::Section::Xess,
             "an unidentified NVIDIA GPU keeps the XeSS page");
 
+        // portstatus.1: OptiScaler's MFG Unlocker tab names the XMX port or the CUDA port.
+        using xess_ui::FgPort;
+        using xess_ui::PortTensorCores;
+        xess_ui::State port = xess;
+        port.modelActive = 1;
+        check(xess_ui::ActivePort(port) == FgPort::None, "no XeFG card without OptiScaler");
+        port.optiScaler = TRUE;
+        port.available = FALSE;
+        check(xess_ui::ActivePort(port) == FgPort::None, "no XeFG card without the XeSS backend");
+        port.available = TRUE;
+        port.modelActive = 0;
+        check(xess_ui::ActivePort(port) == FgPort::None, "no XeFG card before XeFG picks a model");
+        port.modelActive = 2;
+        port.tensorCores = 1;
+        port.tensorCoreLaunches = 9;
+        check(xess_ui::ActivePort(port) == FgPort::Intel2x
+            && xess_ui::PortTensorCoreNote(port) == PortTensorCores::None, "Intel's 2x model has no tensor-core note");
+        port.modelActive = 1;
+        check(xess_ui::ActivePort(port) == FgPort::CudaPort
+            && xess_ui::PortTensorCoreNote(port) == PortTensorCores::None, "a launched layer makes it the CUDA port");
+        port.tensorCoreLaunches = 0;
+        check(xess_ui::ActivePort(port) == FgPort::XmxPort
+            && xess_ui::PortTensorCoreNote(port) == PortTensorCores::Ready,
+            "a ready route without a launch is still the XMX port");
+        port.tensorCores = 3;
+        port.tensorCoreLaunches = 4;
+        check(xess_ui::ActivePort(port) == FgPort::XmxPort
+            && xess_ui::PortTensorCoreNote(port) == PortTensorCores::OffSetting,
+            "XeFGTensorCores = off keeps the XMX port, launches or not");
+        port.tensorCores = 2;
+        check(xess_ui::PortTensorCoreNote(port) == PortTensorCores::Unavailable,
+            "an NVIDIA GPU without the route says why");
+        port.tensorCores = 0;
+        check(xess_ui::ActivePort(port) == FgPort::XmxPort
+            && xess_ui::PortTensorCoreNote(port) == PortTensorCores::None, "an undecided route has no note yet");
+        port.tensorCores = 2;
+        port.gpuVendorId = 0;
+        port.adapterVendor = 0x1002;
+        check(xess_ui::ActivePort(port) == FgPort::XmxPort
+            && xess_ui::PortTensorCoreNote(port) == PortTensorCores::None, "other vendors run the XMX port without a note");
+
         MfgUnlockReShadeSnapshot state{};
         state.gpuFamily = 5;
         state.safeMaximumMultiplier = 4;

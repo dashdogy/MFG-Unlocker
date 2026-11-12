@@ -2,6 +2,7 @@
 #include "ui_status_json.h"
 #include <cstdio>
 #include <filesystem>
+#include <thread>
 static bool okay=true;
 static void Check(bool value,const char* name){printf("%s %s\n",value?"PASS":"FAIL",name);fflush(stdout);okay&=value;}
 static bool Read(const std::wstring& path,std::string& text){
@@ -42,7 +43,38 @@ int main(){
     Check(CloseHandle(lock)!=FALSE,"foreign file ownership is released by its owner");
     auto recovery=Publish(primary,"{\"epoch\":2}");
     Check(recovery.published&&!recovery.fallback&&!recovery.primaryError,"publication returns to primary when the game releases its handle");
-    Check(status_transport::Read(primary,text,&::Read,current)==Source::Primary,"fresh primary takes precedence over retained fallback evidence");
+    Check(Read(primary,text)&&text=="{\"epoch\":2}","recovered primary file holds the current snapshot");
+    Check(status_transport::Read(primary,text,&::Read,current)==Source::Fallback&&current(text),"reader takes the current snapshot from process memory, which every publication refreshes");
+    // GitHub issue 122: a memory-only publication leaves the file alone and still reaches in-process readers.
+    auto quiet=Publish(primary,"{\"epoch\":3}",false);
+    Check(quiet.published&&!quiet.disk&&!quiet.fallback&&!quiet.primaryError&&!quiet.fallbackError,"memory-only publication skips the file");
+    Check(Read(primary,text)&&text=="{\"epoch\":2}","memory-only publication leaves the file's bytes unchanged");
+    auto third=[](const std::string& value){return ui_status_json::CompleteObject(value)&&value=="{\"epoch\":3}";};
+    Check(status_transport::Read(primary,text,&::Read,third)==Source::Fallback&&third(text),"reader sees the memory-only publication");
+    auto loud=Publish(primary,"{\"epoch\":4}");
+    Check(loud.published&&loud.disk&&!loud.fallback&&!loud.primaryError&&Read(primary,text)&&text=="{\"epoch\":4}","the next file publication writes the current snapshot");
+    auto fourth=[](const std::string& value){return ui_status_json::CompleteObject(value)&&value=="{\"epoch\":4}";};
+    Check(status_transport::Read(primary,text,&::Read,fourth)==Source::Fallback,"memory and file agree after a file publication");
+    // A memory copy the writer cannot update (a reader holds its lock past the writer's 10 ms) sends a
+    // memory-only publication to the file, so readers never lose the current snapshot.
+    const auto lockName=MemoryName(primary)+L"-Lock";
+    HANDLE held=CreateEventW(nullptr,TRUE,FALSE,nullptr),done=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    bool holding=false;
+    std::thread holder([&]{
+        HANDLE mutex=OpenMutexW(SYNCHRONIZE|MUTEX_MODIFY_STATE,FALSE,lockName.c_str());
+        holding=mutex&&WaitForSingleObject(mutex,1000)==WAIT_OBJECT_0;
+        SetEvent(held);
+        if(holding){WaitForSingleObject(done,5000);ReleaseMutex(mutex);}
+        if(mutex)CloseHandle(mutex);
+    });
+    WaitForSingleObject(held,5000);
+    auto busy=Publish(primary,"{\"epoch\":5}",false);
+    SetEvent(done);holder.join();CloseHandle(held);CloseHandle(done);
+    Check(holding,"test thread holds the memory lock");
+    Check(busy.published&&busy.disk&&busy.fallbackError==ERROR_BUSY&&!busy.primaryError&&Read(primary,text)&&text=="{\"epoch\":5}",
+        "a memory copy the writer cannot update sends the memory-only publication to the file");
+    auto fifth=[](const std::string& value){return ui_status_json::CompleteObject(value)&&value=="{\"epoch\":5}";};
+    Check(status_transport::Read(primary,text,&::Read,fifth)==Source::Primary&&fifth(text),"reader falls back to the file when the memory copy is behind");
     auto missing=Publish((std::filesystem::current_path()/L"does-not-exist"/L"status.json").wstring(),"{}");
     Check(!missing.published&&!missing.fallback&&missing.primaryError==ERROR_PATH_NOT_FOUND,"unrelated path errors are not silently redirected");
     printf("COMPLETE status transport passed=%u\n",okay?1:0);return okay?0:1;

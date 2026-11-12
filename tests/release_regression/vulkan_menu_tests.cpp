@@ -14,6 +14,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 
 #if MFG_VK_DYNAMIC
@@ -143,7 +145,7 @@ unsigned char Srgb(float value)
     value = std::clamp(value, 0.0f, 1.0f);
     return static_cast<unsigned char>(255.0f*(value <= 0.0031308f ? value*12.92f : 1.055f*std::pow(value, 1.0f/2.4f)-0.055f)+0.5f);
 }
-// V-Sync through the saved config, as the menu does (vkmenu.1). The present
+// V-Sync through the saved config, as the menu does. The present
 // mode is fixed at swapchain creation, so a change waits for the next one.
 std::filesystem::path ExecutableDirectory()
 {

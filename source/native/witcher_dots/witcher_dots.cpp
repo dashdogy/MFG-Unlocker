@@ -8,6 +8,7 @@
 #include "../single_module.h"
 #include "../diagnostic_paths.h"
 #include "../dlss5.h"
+#include "../rtx_hair/universal_hair.h"
 #include <MinHook.h>
 #include <dxgi1_4.h>
 #include <intrin.h>
@@ -103,7 +104,7 @@ bool HairTracedNow() noexcept {
             :L"WITCHER_DOTS game Path Traced Hair off: the game builds no hair BLAS, HairWorks stays raster");
     return on;
 }
-// One cost line per 30 s (bounded), so a tester's log shows where DOTS spends time.
+// One cost line per 30 s (bounded), so a log shows where DOTS spends time.
 std::atomic<uint64_t> nextCostLog{};
 std::atomic<uint32_t> costLogs{};
 void LogCost() noexcept {
@@ -336,6 +337,13 @@ void Preferences() {
     }
     wchar_t env[8]{};const DWORD count=GetEnvironmentVariableW(L"RTXMFG_WITCHER_DOTS",env,_countof(env));
     if(count==1&&env[0]==L'0') {state.snapshot.environmentOverride=true;state.snapshot.requested=false;}
+    // rtxhair.1: universal hair takes Witcher 3's hair through the game's own NVAPI LSS path
+    // instead; this game-specific path stands down.
+    if(rtx_hair::universal::Requested()) {
+        state.snapshot.requested=false;
+        strcpy_s(state.snapshot.reason,"universal hair on (RTXMFG.RtxHair.ini [RtxHair] Universal=0 turns it off)");
+        single_module::Log(L"WITCHER_DOTS off: universal hair is on (RTXMFG.RtxHair.ini [RtxHair] Universal=0 turns it off)");
+    }
     state.snapshot.stage=state.snapshot.requested?Stage::WaitingForDevice:Stage::Disabled;
 }
 void Reason(Stage stage,std::string_view reason) {
@@ -391,7 +399,7 @@ bool DeviceMatches(ID3D12Device5* device) {
 // The builder runs for every hair owner every frame, mostly on the render
 // thread. VirtualQuery sizes the region by walking its page-table entries:
 // in the game's large heap regions that cost 1.2 ms per call in play and 5 ms
-// after a save load (about 60% of a core, starving the GPU; dev.40/41). The
+// after a save load (about 60% of a core, starving the GPU). The
 // owner range (under a page) is instead probed under a structured-exception
 // guard: reading its first and last fields proves both pages it can touch are
 // committed and readable. Owners are game heap objects passed by the game's

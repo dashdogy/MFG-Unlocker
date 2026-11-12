@@ -1,4 +1,4 @@
-// xemfgsa.1 test fixture: a stand-in libxess with the public D3D12 entry points XeMFG standalone hooks
+// Test fixture: a stand-in libxess with the public D3D12 entry points XeMFG standalone hooks
 // (source/native/xess/d3d12_host.cpp DiscoverUpscalers). Execute records nothing itself: the harness checks what the
 // host tagged for XeFG before forwarding here.
 #include <Windows.h>

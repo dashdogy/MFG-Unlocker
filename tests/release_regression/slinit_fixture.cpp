@@ -69,7 +69,17 @@ extern "C" __declspec(dllexport) sl::Result slSetD3DDevice(void*) {
 extern "C" __declspec(dllexport) unsigned WINAPI FixtureDeviceSets(){return deviceSets.load();}
 static unsigned lookupMode = 0;
 extern "C" __declspec(dllexport) void FixtureLookupMode(unsigned mode){lookupMode=mode;}
+// nulltoken.1: Streamline's slPCLSetMarker answers a null frame token with eErrorMissingInputParameter (sl.pcl
+// 2.14.16 did in Indiana Jones). Same ABI as PFun_slPCLSetMarker: the reference arrives as this pointer.
+static std::atomic<unsigned> pclCalls{0};
+static sl::Result FixturePclSetMarker(uint32_t, const sl::FrameToken* frame){
+    ++pclCalls;
+    return frame ? sl::Result::eOk : sl::Result::eErrorMissingInputParameter;
+}
+extern "C" __declspec(dllexport) unsigned WINAPI FixturePclCalls(){return pclCalls.load();}
+extern "C" __declspec(dllexport) void* WINAPI FixturePclAddress(){return reinterpret_cast<void*>(&FixturePclSetMarker);}
 extern "C" __declspec(dllexport) sl::Result slGetFeatureFunction(sl::Feature, const char* name, void*& function){
+    if(name&&!strcmp(name,"slPCLSetMarker")){function=reinterpret_cast<void*>(&FixturePclSetMarker);return sl::Result::eOk;}
     HMODULE wrapper=GetModuleHandleW(L"ControlWrapperFixture.dll");
     if(!wrapper)wrapper=LoadLibraryW(L"ControlWrapperFixture.dll");
     if(!wrapper)return sl::Result::eErrorNotInitialized;

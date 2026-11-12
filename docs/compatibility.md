@@ -24,8 +24,9 @@ Dynamic MFG is unavailable on Vulkan. Available modes depend on the GPU, the
 active runtime and NVIDIA's per game MFG override maximum. XeMFG runs through
 [OptiScaler](optiscaler.md) or, experimentally, as
 [XeMFG standalone](xemfg.md#xemfg-standalone) in DirectX 12 and Vulkan games.
-In DirectX 11 games, use OptiScaler: MFG Unlocker's menu and XeMFG standalone
-need DirectX 12 or Vulkan.
+In DirectX 11 games, MFG Unlocker's menu and [DLSS 5](menu.md#dlss-5) run too;
+for frame generation there, use OptiScaler, since XeMFG standalone needs
+DirectX 12 or Vulkan.
 
 ## Choosing a filename
 
@@ -117,9 +118,22 @@ The Ascent, The Last of Us Part II, The Witcher 3, X4: Foundations.
 Arknights: Endfield, DOOM: The Dark Ages and Red Dead Redemption 2 need
 [our OptiScaler build](optiscaler.md).
 
-## The Witcher 3: path traced hair
+## Path traced hair
 
-**Path traced HairWorks on RTX 40.** A hair compatibility path built into the
+**RTX Hair on RTX 40 and RTX 30.** In DirectX 12 games with NVIDIA RTX Hair,
+which needs an RTX 50, MFG Unlocker turns the game's hair strands into
+triangles its path tracer can trace, so the game offers RTX Hair on RTX 40 and
+RTX 30 too. It is on by default and needs `dxcompiler.dll` and `dxil.dll`
+beside the game. To turn it off, put an `RTXMFG.RtxHair.ini` beside the game's
+exe with `Universal=0` under `[RtxHair]`. Support is experimental. Vulkan
+games with RTX Hair, such as Indiana Jones and the Great Circle, are converted
+the same way and need no extra files. `DumpSpirv=1` under `[RtxHair]` writes
+the game's hair shaders to an `RTXMFG-hair-spirv` folder beside the game, for
+bug reports.
+
+### The Witcher 3
+
+**Path traced HairWorks in The Witcher 3 on RTX 40.** A hair compatibility path built into the
 mod, for supported Witcher 3 DirectX 12 builds, retains the game's hair
 materials and shading while bringing animated strands into its path traced
 lighting.

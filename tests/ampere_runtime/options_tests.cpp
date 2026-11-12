@@ -160,6 +160,30 @@ int main()
     d = HoldOffWithoutAdmission(DecideOptions(true, 2, false, Mode::eOn, 1, 2, false), true);
     Check(d.mode == Mode::eOff && d.generatedFrames == 1,
         "Doom TDA, RTX 3080 Ti: the game's 2x request after a failed startup reaches Streamline as Off");
+
+    // rtx30ngx.1 (DW3 = Dynasty Warriors 3): OptiScaler's own DLSSG output with MFGUnlocker's XeMFG provider as its
+    // Nvngx replacement. No Ampere Create certifies a ring there, so the ring rule alone would hold 6x at 2x.
+    using ampere_policy::ReplacementOwnsFrameGeneration;
+    using ampere_policy::SafeMaximumMultiplier;
+    Check(ReplacementOwnsFrameGeneration(true, 0, 0), "the provider offered its maximum and NVIDIA's created nothing");
+    Check(!ReplacementOwnsFrameGeneration(false, 0, 0), "without the provider's offer the Ampere ring governs");
+    Check(!ReplacementOwnsFrameGeneration(true, 1, 0) && !ReplacementOwnsFrameGeneration(true, 0, 1),
+        "a FrameGeneration Create on NVIDIA's provider hands the decision back to the certified ring");
+    Check(SafeMaximumMultiplier(false, 5, true, 5, 0) == 2, "control: the uncertified ring is the 2x of the DW3 run");
+    bool replacementSafe = true;
+    for (bool ready : {false, true})
+        for (uint32_t startup : {0u, 1u, 5u})
+            for (uint32_t certified = 0; certified <= 6; ++certified)
+                replacementSafe = replacementSafe && SafeMaximumMultiplier(true, 5, ready, startup, certified) == 6
+                    && SafeMaximumMultiplier(false, 5, ready, startup, certified)
+                        == (ready ? RingMaximumMultiplier(startup, certified) : 2u);
+    Check(replacementSafe, "a replacement's maximum is 6x on any ring state; otherwise the ring rule is unchanged");
+    Check(SafeMaximumMultiplier(true, 0, true, 5, 0) == 2 && SafeMaximumMultiplier(true, 9, true, 5, 0) == 6
+        && SafeMaximumMultiplier(true, 3, false, 5, 0) == 4, "a replacement maximum is bounded to 2x-6x");
+    d = DecideOptions(true, 2, false, Mode::eOn, 5, SafeMaximumMultiplier(true, 5, true, 5, 0), false);
+    Check(d.mode == Mode::eOn && d.generatedFrames == 5, "DW3: OptiScaler's 6x request is submitted as 6x");
+    d = DecideOptions(false, 6, false, Mode::eOn, 1, SafeMaximumMultiplier(true, 5, true, 5, 0), false);
+    Check(d.generatedFrames == 5, "a fixed 6x menu choice reaches the replacement as 6x");
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

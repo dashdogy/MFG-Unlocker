@@ -25,7 +25,7 @@ using VkCreate1Fn = NVSDK_NGX_Result(NVSDK_CONV*)(void*, void*, NVSDK_NGX_Featur
     NVSDK_NGX_Handle**);
 using ReleaseFn = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Handle*);
 
-// V1.6.2 vkpreset.1: one route's Create entries on the game's own recording.
+// One route's Create entries on the game's own recording.
 // D3D12 uses `d3d12` with an ID3D12GraphicsCommandList; Vulkan uses `vulkan`
 // (CreateFeature) or `vulkan1` (CreateFeature1, with `device`) with a
 // VkCommandBuffer. `api` names the entry of a Create; for an Evaluate it names
@@ -66,7 +66,7 @@ void SetRuntimeEligibilityProbe(RuntimeEligibilityProbe probe) noexcept;
 // boundary with the game's device (Creates call it again, for a later NGX
 // initialization). Idempotent; outside every lock.
 void PrepareForDevice(ID3D12Device* device) noexcept;
-// vkpreset.1: the same before NVSDK_NGX_VULKAN_Init*, once the host's verified
+// The same before NVSDK_NGX_VULKAN_Init*, once the host's verified
 // VkPhysicalDevice has selected the GPU family (the installer gets no device).
 void PrepareForVulkan() noexcept;
 

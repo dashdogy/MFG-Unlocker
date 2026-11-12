@@ -1,12 +1,24 @@
 #pragma once
 #include "overlay_slots.h"
+#include <intrin.h>
 #include <wrl/client.h>
 #include <array>
 namespace single_overlay::native {
+using LoaderCallout = BOOLEAN (NTAPI*)();
+// The loader lock (PEB+0x110) as the session diagnostics read it.
+inline const RTL_CRITICAL_SECTION* LoaderLock() noexcept {
+    const auto* peb = reinterpret_cast<const unsigned char*>(__readgsqword(0x60));
+    return peb ? *reinterpret_cast<RTL_CRITICAL_SECTION* const*>(peb + 0x110) : nullptr;
+}
+// Wine and Proton do not export RtlIsThreadWithinLoaderCallout (GitHub #131); their loader holds
+// PEB->LoaderLock through DllMain and TLS callbacks, so its owner answers instead. Without either, fail closed.
+inline bool InsideLoader(LoaderCallout callout, const RTL_CRITICAL_SECTION* lock) noexcept {
+    if (callout) return callout();
+    return !lock || reinterpret_cast<DWORD_PTR>(lock->OwningThread) == GetCurrentThreadId();
+}
 inline bool InsideLoader() noexcept {
-    using Fn = BOOLEAN (NTAPI*)();
-    static auto fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlIsThreadWithinLoaderCallout"));
-    return !fn || fn();
+    static auto fn = reinterpret_cast<LoaderCallout>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlIsThreadWithinLoaderCallout"));
+    return InsideLoader(fn, LoaderLock());
 }
 inline bool PinInterface(IUnknown* object, size_t last) noexcept {
     if (!object || last > 64) return false;
@@ -29,12 +41,14 @@ inline bool SystemDxgiObject(IUnknown* object, size_t last) noexcept {
     auto** table = *reinterpret_cast<void***>(object);
     return slots::ImageSlot(dxgi, table) && slots::ImageSlot(dxgi, table + last) && PinInterface(object, last);
 }
+// Streamline's StreamlineRetrieveBaseInterface: its proxies answer with the object they wrap.
+inline constexpr GUID kStreamlineBase = {0xadec44e2,0x61f0,0x45c3,{0xad,0x9f,0x1b,0x37,0x37,0x92,0x84,0xff}};
 // NVIDIA, ReShade and Special K's public COM unwrapping contracts. No private
 // object offsets, no replacement of an application's interface, and bounded
 // cycle detection.
 template<class T> bool Unwrap(IUnknown* input, Microsoft::WRL::ComPtr<T>& output) noexcept {
     using Microsoft::WRL::ComPtr;
-    constexpr GUID baseGuid = {0xadec44e2,0x61f0,0x45c3,{0xad,0x9f,0x1b,0x37,0x37,0x92,0x84,0xff}};
+    constexpr GUID baseGuid = kStreamlineBase;
     // ReShade 6.8.0 source/com_utils.hpp: IID_UnwrappedObject. The returned
     // original owns an AddRef, as with any successful QueryInterface call.
     constexpr GUID reshadeGuid = {0x7f2c9a11,0x3b4e,0x4d6a,{0x81,0x2f,0x5e,0x9c,0xd3,0x7a,0x1b,0x42}};

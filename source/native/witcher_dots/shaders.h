@@ -58,7 +58,7 @@ enum class HairOrigin { Always, LoopFlag, PayloadBit, MaterialWord };
 // e.g. the loop phi), the hair material colour as three values (Material,
 // "r,g,b"; linear = m * 0.0466), a GBuffer2 load (GBufferLoad; its .xyz are
 // gamma encoded, linear ~ c * c) or three linear values (Linear, "r,g,b").
-// hairtrans.4: Material and GBufferLoad are the hair's specular colour (about
+// Material and GBufferLoad are the hair's specular colour (about
 // 0.047 for every hair), so the anchored sites use its albedo (Linear and the
 // loop phi); the shadow passes bind no albedo and stay colour-blind (None).
 enum class HairColour { None, Luminance, Material, GBufferLoad, Linear };
@@ -108,6 +108,14 @@ struct ShaderIdentity {
 std::span<const ShaderIdentity> KnownShaders();
 const ShaderIdentity* FindShader(std::span<const std::byte> bytes, ShaderKind kind);
 bool TranslateIr(std::string_view original, const ShaderIdentity& shader, std::string& translated, std::string& error);
+// rtxhair.1 universal hair in Witcher 3: the look fixes of this file (HairAlbedoLinear,
+// HairDebugLighting, hair translucency in the prepass) on a hair shader whose NVAPI LSS
+// ops rtx_hair already rewrote, keeping the original value numbering so the anchors
+// hold. `rewritten`: that shader's disassembly; `translated`: the named form with the
+// fixes; `applied`: which ones ("" when none is on). False with `error` on any anchor
+// mismatch (the caller keeps the rewrite without them). The path tracer libraries take
+// TranslateIr unchanged (they have no LSS op).
+bool ApplyHairLook(std::string_view rewritten, const ShaderIdentity& shader, std::string& translated, std::string& applied, std::string& error);
 // GitHub issue 70: report hair hits on a round strand 1.12x the LSS radius,
 // which encloses the crossed-ribbon proxy, instead of on a ribbon. Shading
 // points and ray origins on a ribbon lie inside the strand, and its own

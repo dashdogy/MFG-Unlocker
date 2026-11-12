@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdio>
 
-// diag.1 (V1.6.2-alpha.3): beta-build session diagnostics for the runtime log, compiled with
+// Beta-build session diagnostics for the runtime log, compiled with
 // MFG_UNLOCK_SESSION_DIAGNOSTICS. Local-time stamps on every line, a one-time environment header, the worker's state,
 // first-chance and unhandled-exception records with a minidump, and a "Session end" record at process exit. Crash and
 // exit records go straight to the log's OS handle: no CRT stream lock and no heap, so a fault inside either still
@@ -38,11 +38,11 @@ void WriteRaw(const wchar_t* line) noexcept;
 // DLL_PROCESS_DETACH of the backend module (loader lock held): flushes the queued lines, then the session end.
 void OnProcessDetach(bool processTerminating) noexcept;
 
-// alpha.15 (B4-03/B4-10): the patch worker's current start-up step (a literal). When the worker has not published its
+// The patch worker's current start-up step (a literal). When the worker has not published its
 // first state 15 s after Start, the writer thread logs the step and writes <log>.hang.dmp once (threads and handles).
 void StartupStep(const wchar_t* step) noexcept;
 
-// alpha.15 (B4-02): the first serious first-chance fault inside a GPU driver (a driver-store module): its tick and
+// The first serious first-chance fault inside a GPU driver (a driver-store module): its tick and
 // address; false while there was none. DescribeAddress gives module+offset.
 bool DriverFault(ULONGLONG& tick, ULONG64& address) noexcept;
 void DescribeAddress(ULONG64 address, wchar_t* output, size_t capacity) noexcept;

@@ -3,9 +3,12 @@
 #include "shaders.h"
 #include <d3d12.h>
 #include <wrl/client.h>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
+#include <vector>
 struct IDXGIAdapter3;
 namespace witcher_dots {
 // ABI declarations for the one verified game/NVAPI profile. This translation
@@ -104,6 +107,41 @@ bool ResolveNativeDevice(IUnknown* object,Microsoft::WRL::ComPtr<ID3D12Device5>&
 // ExecuteCommandLists slot while that slot holds our hook; null otherwise.
 void* QueueExecuteForward(ID3D12CommandQueue* queue) noexcept;
 RuntimeStats ReadRuntimeStats();
+// rtxhair.1 universal hair (rtx_hair/universal_hair.cpp): this runtime's device, queue,
+// command-list and root-signature tracking without the Witcher hair profile, never in
+// the same process as InitializeGpu. `rewrite` translates one DXIL library or compute
+// shader (false: the game's is kept); it runs inside CreateStateObject,
+// AddToStateObject and CreateComputePipelineState of the tracked device.
+using ShaderRewrite=bool(*)(const void* code,size_t size,std::vector<std::byte>& output) noexcept;
+bool InitializeTracking(ID3D12Device5* device,ShaderRewrite rewrite,std::string& error);
+// Records `inject` on the native list behind `list` (the game's, possibly wrapped) with
+// this runtime's own calls left out of tracking; `restore` re-binds the compute root
+// signature, root arguments and pipeline the game had bound. False with `error`, and
+// nothing recorded, when those bindings are not established (an untracked list, an
+// unknown root signature).
+using ComputeInjection=std::function<void(ID3D12GraphicsCommandList4* native,const std::function<void()>& restore)>;
+bool InjectCompute(ID3D12GraphicsCommandList4* list,const ComputeInjection& inject,std::string& error);
+// The tracked device, or a proven forwarding wrapper of it.
+bool TrackedDevice(ID3D12Device* device) noexcept;
+// The driver refused a state object built with rewritten libraries: true when the rewrite
+// now produces something else (Witcher 3's look fixes switched off), so it is tried once
+// more before the game's own libraries.
+using RewriteRefused=bool(*)() noexcept;
+void SetRewriteRefused(RewriteRefused refused) noexcept;
+// Top-level builds (universal tracking only): `patch` records, on the native list, the copy
+// of `count` instance descs from `input` to `output` (a buffer of this runtime, in
+// UNORDERED_ACCESS) with its changes, or returns false having recorded nothing. Every
+// top-level build through a tracked list's BuildRaytracingAccelerationStructure then reads
+// the copy, which stays alive until that submission completes (the queue fences of the
+// hair leases); the list's compute bindings are handed back. Null turns it off.
+using TopLevelPatch=bool(*)(ID3D12GraphicsCommandList4* native,D3D12_GPU_VIRTUAL_ADDRESS input,uint32_t count,D3D12_GPU_VIRTUAL_ADDRESS output) noexcept;
+void SetInstancePatch(TopLevelPatch patch) noexcept;
+// The same for a top-level build the caller records itself (NVAPI BuildEx) on `list` (the
+// game's, possibly wrapped): the address to build from, or 0 with `error` to build from
+// `input` unchanged.
+D3D12_GPU_VIRTUAL_ADDRESS PatchTopLevel(ID3D12GraphicsCommandList4* list,D3D12_GPU_VIRTUAL_ADDRESS input,uint32_t count,std::string& error) noexcept;
+struct TopLevelStats { uint64_t patched{},unpatched{},leaseBytes{};uint32_t leases{}; };
+TopLevelStats ReadTopLevelStats() noexcept;
 // Device-removal report (DRED breadcrumbs/page fault plus DOTS state), armed
 // only for the prepared DOTS device when the opt-in report is enabled.
 bool ArmRemovalReport(ID3D12Device5* device,const std::wstring& path) noexcept;

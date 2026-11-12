@@ -183,35 +183,6 @@ struct Lifecycle
     bool releaseObserved = false;
 };
 
-constexpr void ObserveSetOptions(Lifecycle& state, bool enabled,
-    bool accepted) noexcept
-{
-    if (!accepted)
-        return;
-    state.frameGenerationOn = enabled;
-    if (enabled)
-    {
-        state.offAccepted = false;
-        state.releaseObserved = false;
-    }
-    else
-    {
-        state.offAccepted = true;
-    }
-}
-
-constexpr bool ObserveRelease(Lifecycle& state, bool dlssgFeature,
-    bool accepted) noexcept
-{
-    if (!dlssgFeature || !accepted || !state.offAccepted)
-        return false;
-    state.frameGenerationOn = false;
-    state.pipelineCreated = false;
-    state.offAccepted = false;
-    state.releaseObserved = true;
-    return true;
-}
-
 constexpr bool CanActivateRoute(Identity active, Identity candidate,
     const Lifecycle& lifecycle) noexcept
 {

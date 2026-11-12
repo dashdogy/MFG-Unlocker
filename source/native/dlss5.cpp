@@ -1,6 +1,8 @@
 
 #include "dlss5.h"
 #include "dlss5_auto.h"
+#include "dlss5_d3d11_policy.h"
+#include "dlss5_stage_common.h"
 #include "overlay_native.h"
 #include "physical_key.h"
 #include <MinHook.h>
@@ -25,9 +27,13 @@ std::atomic<LogCallback> gLog{nullptr};
 #if defined(MFG_DLSS5_TESTING)
 bool gSoftwareTest=false;
 std::wstring gProviderTestPath;
+// nrscale.1: the video memory a case reports instead of DXGI's (testing::SetVideoMemory); a zero budget: DXGI's.
+std::atomic<uint64_t> gTestUsage{0},gTestBudget{0};
+// autorect.1: Resolution Scale Auto's level a case pins (testing::SetAutoLevel); SIZE_MAX: the controller's.
+std::atomic<size_t> gTestAutoLevel{SIZE_MAX};
 #endif
 bool gForeign=false;
-// alpha.15 (B4-18): the provider-ownership snapshot, taken once per process before the first native create, so a
+// The provider-ownership snapshot, taken once per process before the first native create, so a
 // provider NGX mapped for our own first native attempt never counts as another loader's for a later or reset slot.
 bool gProviderChecked=false,gProviderForeign=false;
 uint64_t gNativeAttempts=0;
@@ -48,18 +54,10 @@ constexpr uint32_t kSetDescriptors=30,kSets=8;
 // A provider feature and everything sized to its processing extent. A slot
 // evaluates one (its own base); a Resolution Scale or settings change creates
 // the next one beside it while the live one keeps evaluating (Settle).
-struct Feature {
-    bool createdReady=false;
-    // The settings the feature was created with (SameFeature fields).
-    Settings applied{};
-    NVSDK_NGX_Parameter* params=nullptr;
-    std::array<NVSDK_NGX_Handle*,kMaxPasses> handles{};
-    uint32_t passes=0;
+struct Feature : common::FeatureCore {
     // encoded: the network input; ping/pong: pass outputs.
     ComPtr<ID3D12Resource> encoded, ping, pong;
     ComPtr<ID3D12DescriptorHeap> heap;
-    // Stage extent and processing extent.
-    uint32_t width=0,height=0,extentWidth=0,extentHeight=0;
     // Boost: boostSums and boostModel hold the last network run's look model
     // (dlss5_policy.h BoostGrid; its least-squares sums, then 3 RGBA32F texels
     // per cell and bin), boostChange what the model does not explain (fine
@@ -72,7 +70,6 @@ struct Feature {
     // The Present stage's neutral depth and motion vectors at the extent.
     ComPtr<ID3D12Resource> neutralDepth,neutralMotion;
     bool neutralFilled=false;
-    bool HasFeature() const noexcept {return passes!=0;}
     // Anything the provider or the GPU may still use.
     bool Holds() const noexcept {return passes || params || encoded || heap || boostChange || neutralDepth;}
 };
@@ -81,15 +78,7 @@ struct Feature {
 struct Retired { Feature feature; uint64_t after=0; };
 // Slots stay owned across failed releases and outstanding/discarded command lists.
 // Exhaustion disables new NR work rather than evicting an in-use feature.
-struct Slot : Feature {
-    size_t route=0;
-    uintptr_t game=0;
-    bool occupied=false, retiring=false, nativeAttempted=false, direct=false;
-    bool failed=false, resetHistory=true, directOwnershipDenied=false,nativeSucceeded=false,cleanupFailed=false;
-    bool ownershipLogged=false;uint32_t nativeResult=0;
-    uint64_t revision=0,failureRevision=0;
-    State failureState=State::eOff;uint32_t failureResult=0;
-    dlss_sr::CreateKeys keys{};
+struct Slot : Feature, common::SlotState {
     Api api{};
     ComPtr<ID3D12Device> device;
     // The Render stage's processed reconstruction input (the game color's size).
@@ -100,22 +89,22 @@ struct Slot : Feature {
     Flight flight{};
     uint32_t descriptor=0;
     std::array<uint64_t,kSets> descriptorFence{};
-    // autoscale.1: the replacement being created (ready once the fence passed
+    // The replacement being created (ready once the fence passed
     // nextReady), the features it replaced, and whether this slot replaces its
     // feature in place instead (a replacement could not be created beside it).
     Feature next;
     uint64_t nextReady=0;
     std::array<Retired,3> retired{};
     bool replaceRefused=false;
-    // Encoding Auto resolves to this (the Present stage: the swapchain's).
-    Encoding automatic=Encoding::eLinear;
-    // DLSS 5 Auto: the Resolution Scale level, adaptive exposure and the real
-    // frame clock, fed by this slot's GPU timestamps and luminance meter.
-    auto_mode::ScaleController scaling{};
-    bool scalingSeeded=false,floorLogged=false;
-    auto_mode::ExposureController exposure{};
-    auto_mode::FrameClock clock{};
-    double frameSeconds=0.0;
+    // nrscale.1: the adapter's video memory, the latest create's share of it, and
+    // whether the change under way replaces the feature in place (RoomFor).
+    ComPtr<IDXGIAdapter3> memory;
+    bool memoryTried=false,inPlace=false;
+    uint64_t createBytes=0;
+    uint32_t createWidth=0,createHeight=0;
+    // vmemlog.1: the last "DLSS 5 video memory" line (tick; local and non-local bytes).
+    ULONGLONG memoryLogTick=0;
+    uint64_t memoryLogLocal=0,memoryLogSystem=0;
     // Per descriptor set: two timestamps around the stage and the meter's
     // float2 (log2 luminance sum, samples), read back once the set's fence passed.
     ComPtr<ID3D12QueryHeap> timing;
@@ -123,13 +112,10 @@ struct Slot : Feature {
     const uint8_t* measurements=nullptr;
     bool measurementsTried=false;
     std::array<bool,kSets> measured{};
-    // The Resolution Scale of the feature each set measured: only the
-    // controller's own level feeds Auto (a step's old feature runs on until
-    // its replacement is ready).
+    // autorect.1: the Resolution Scale each set measured; only the controller's
+    // own level feeds Auto (not a set recorded before a step).
     std::array<float,kSets> measuredScale{};
     uint64_t timestampFrequency=0;
-    float gpuMs=-1.0f;
-    shared::CostLog cost{};
     bool boostLogged=false;
     // Per descriptor set: 1 a Boost network evaluation, 2 a Carry one, 0 neither.
     // gpuMs averages the latest of each, so it is the cost per evaluation.
@@ -203,8 +189,8 @@ std::atomic<float> gCompareShown{0.0f};
 std::atomic<bool> gCompareHeld{false},gCompareSwapped{false};
 std::atomic<uint64_t> gCompareTick{0};
 std::atomic<uint64_t> gOverlayDividerTick{0};
-// vkdlss5.1: the Vulkan stage's live feature for Read() (dlss5_vulkan.cpp).
 std::atomic<shared::LiveFn> gVulkanLive{nullptr};
+std::atomic<shared::D3D11ViewFn> gD3D11View{nullptr};
 // Encode: stage color -> network signal at the processing extent.
 // Decode: network output -> stage color (RGB residual or processed image).
 // Bridge: decoded linear color x exposure, scaled so 1 = diffuse white, then
@@ -702,6 +688,11 @@ void Transition(ID3D12GraphicsCommandList* cmd,ID3D12Resource* resource,D3D12_RE
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,before,after};cmd->ResourceBarrier(1,&barrier);
 }
+// The game's output, which can carry a mip chain: only mip 0 is ours to move.
+void TransitionMip0(ID3D12GraphicsCommandList* cmd,ID3D12Resource* resource,D3D12_RESOURCE_STATES before,D3D12_RESOURCE_STATES after) {
+    D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition={resource,0,before,after};cmd->ResourceBarrier(1,&barrier);
+}
 void Uav(ID3D12GraphicsCommandList* cmd,ID3D12Resource* resource) {
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;barrier.UAV.pResource=resource;cmd->ResourceBarrier(1,&barrier);
 }
@@ -765,12 +756,20 @@ void Destroy(Slot& slot) noexcept {
     slot.descriptorFence={};slot.measured={};
 }
 void ReleasePresentStage() noexcept;
+void LogVideoMemory(Slot& slot,const wchar_t* why,bool force) noexcept;
 void Pump() noexcept {
     for(auto& slot:gSlots) if(slot.occupied && slot.retiring && !slot.game && Complete(slot)) {
         Destroy(slot);
         if(!Outstanding(slot)) slot=Slot{};
     }
-    if(!gPresentChosen.load(std::memory_order_acquire))ReleasePresentStage();
+    // Hook Method Off releases the features once their work executed.
+    uint64_t revision=0;
+    if(!Wanted(revision).enabled) for(auto& slot:gSlots) if(slot.occupied && !slot.retiring && Outstanding(slot)) {
+        Collect(slot);if(!Complete(slot))continue;
+        Destroy(slot);
+        if(!Outstanding(slot)){slot.gpuMs=-1.0f;Log(L"DLSS 5 off: its feature was released");LogVideoMemory(slot,L"released",true);}
+    }
+    if(!gPresentSelected.load(std::memory_order_acquire))ReleasePresentStage();
 }
 // typed: the game stored the value as ID3D12Resource* (else void*).
 bool Resource(const NVSDK_NGX_Parameter* params,const char* key,uintptr_t& out,bool* typed=nullptr) noexcept {
@@ -905,14 +904,15 @@ DXGI_FORMAT DepthViewFormat(DXGI_FORMAT format) noexcept {
 // viewed: we create a shader view of it (stage color, exposure), so its format
 // needs a typed view. The provider alone reads depth and motion vectors, whose
 // formats (e.g. a depth-stencil typeless depth buffer) it handles itself.
-bool TextureOnDevice(ID3D12Resource* resource,ID3D12Device* device,const Rect& rect,D3D12_RESOURCE_DESC& desc,bool viewed) noexcept {
+// anyMips: the stage color may carry a mip chain; our views and barriers only touch mip 0.
+bool TextureOnDevice(ID3D12Resource* resource,ID3D12Device* device,const Rect& rect,D3D12_RESOURCE_DESC& desc,bool viewed,bool anyMips=false) noexcept {
     __try {
         ID3D12Device* owner=nullptr;
         if(FAILED(resource->GetDevice(IID_PPV_ARGS(&owner))) || !owner)return false;
         const bool same=owner==device;owner->Release();if(!same)return false;
         desc=resource->GetDesc();
         return desc.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D && desc.DepthOrArraySize==1
-            && desc.MipLevels==1 && desc.SampleDesc.Count==1 && !(desc.Flags&D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE)
+            && (anyMips || desc.MipLevels==1) && desc.SampleDesc.Count==1 && !(desc.Flags&D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE)
             && RectFits(rect,desc.Width,desc.Height) && (!viewed || ViewFormat(desc.Format)!=DXGI_FORMAT_UNKNOWN);
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
@@ -947,8 +947,16 @@ DXGI_FORMAT MotionCaptureFormat(DXGI_FORMAT view) noexcept {
 bool ValidateResources(const Slot& slot,Frame& frame,Stage stage,D3D12_RESOURCE_DESC& color) noexcept {
     if(!slot.device)return false;
     D3D12_RESOURCE_DESC depth{},motion{};
-    if(!TextureOnDevice(reinterpret_cast<ID3D12Resource*>(frame.color),slot.device.Get(),frame.colorRect,color,true)){
+    if(!TextureOnDevice(reinterpret_cast<ID3D12Resource*>(frame.color),slot.device.Get(),frame.colorRect,color,true,true)){
         InputsRefused(stage==Stage::eRender?L"color":L"output",color,frame.colorRect);return false;
+    }
+    if(color.MipLevels>1){
+        static std::atomic<bool> noted{false};
+        if(!noted.exchange(true)){
+            wchar_t message[160]{};
+            swprintf_s(message,L"DLSS 5: %ls has %u mips, processing mip 0 only",stage==Stage::eRender?L"color":L"output",color.MipLevels);
+            Log(message);
+        }
     }
     if(!TextureOnDevice(reinterpret_cast<ID3D12Resource*>(frame.depth),slot.device.Get(),frame.depthRect,depth,false)){
         InputsRefused(L"depth",depth,frame.depthRect);return false;
@@ -1008,31 +1016,49 @@ void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* queue,UINT count,ID3D12Comman
 // holds our own table hook (Witcher 3 hair, witcher_dots), the runtime method
 // that hook forwards to is hooked: every submission still reaches it with the
 // same command list pointers.
-bool PrepareQueue(ID3D12Device* device,std::wstring& owner) noexcept {
+// `detail` says which part failed, with MinHook's status and the entry's first bytes, so an entry another hook
+// already rewrote can be told from a pin or protection failure.
+bool PrepareQueue(ID3D12Device* device,std::wstring& owner,std::wstring& detail) noexcept {
     ComPtr<ID3D12CommandQueue> probe;D3D12_COMMAND_QUEUE_DESC desc{D3D12_COMMAND_LIST_TYPE_DIRECT};
-    if(FAILED(device->CreateCommandQueue(&desc,IID_PPV_ARGS(&probe))))return false;
+    if(FAILED(device->CreateCommandQueue(&desc,IID_PPV_ARGS(&probe)))){detail=L"probe queue";return false;}
     void* target=(*reinterpret_cast<void***>(probe.Get()))[10];
     bool behindOwn=false;
     if(const auto forward=gQueueForward.load(std::memory_order_acquire))
         if(void* inner=forward(probe.Get())){target=inner;behindOwn=true;}
-    if(gExecuteTarget)return target==gExecuteTarget;
+    if(gExecuteTarget){if(target!=gExecuteTarget)detail=L"another queue type already hooked";return target==gExecuteTarget;}
     MEMORY_BASIC_INFORMATION memory{};
-    if(VirtualQuery(target,&memory,sizeof(memory))!=sizeof(memory) || memory.Type!=MEM_IMAGE || !memory.AllocationBase)return false;
+    if(VirtualQuery(target,&memory,sizeof(memory))!=sizeof(memory) || memory.Type!=MEM_IMAGE || !memory.AllocationBase)
+        {detail=L"entry is not in a loaded image";return false;}
     HMODULE module=nullptr,self=nullptr;
     if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(target),&module) || module!=static_cast<HMODULE>(memory.AllocationBase))return false;
+            reinterpret_cast<LPCWSTR>(target),&module) || module!=static_cast<HMODULE>(memory.AllocationBase))
+        {detail=L"entry module";return false;}
     wchar_t path[32768]{};
     const DWORD length=GetModuleFileNameW(module,path,32768);
-    if(!length || length>=32768)return false;
+    if(!length || length>=32768){detail=L"entry module path";return false;}
     owner.assign(path,length);
+    const auto refused=[&](const wchar_t* part,MH_STATUS status) noexcept {
+        wchar_t text[160]{};
+        const auto* bytes=static_cast<const unsigned char*>(target);
+        int at=swprintf_s(text,L"%ls (%hs) entry bytes",part,MH_StatusToString(status));
+        const uintptr_t end=reinterpret_cast<uintptr_t>(memory.BaseAddress)+memory.RegionSize;
+        const int readable=static_cast<int>((std::min<uintptr_t>)(16,end-reinterpret_cast<uintptr_t>(target)));
+        for(int i=0;i<readable && at>0 && at<150;++i)at+=swprintf_s(text+at,std::size(text)-at,L" %02X",bytes[i]);
+        detail=text;
+        return false;
+    };
     if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(&Execute),&self) || self==module)return false;
-    const auto init=MH_Initialize();if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED)return false;
+        reinterpret_cast<LPCWSTR>(&Execute),&self) || self==module){detail=L"own module";return false;}
+    const auto init=MH_Initialize();if(init!=MH_OK && init!=MH_ERROR_ALREADY_INITIALIZED)return refused(L"MinHook initialize",init);
     const auto made=MH_CreateHook(target,reinterpret_cast<void*>(&Execute),reinterpret_cast<void**>(&gExecute));
-    if(made!=MH_OK)return false;
+    if(made!=MH_OK)return refused(L"MinHook create",made);
     HMODULE pinned=nullptr;
     if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
-            reinterpret_cast<LPCWSTR>(target),&pinned) || pinned!=module || MH_EnableHook(target)!=MH_OK){
+            reinterpret_cast<LPCWSTR>(target),&pinned) || pinned!=module){
+        MH_RemoveHook(target);gExecute=nullptr;detail=L"owner pin";return false;
+    }
+    if(const auto enabled=MH_EnableHook(target);enabled!=MH_OK){
+        refused(L"MinHook enable",enabled);
         MH_RemoveHook(target);gExecute=nullptr;return false;
     }
     gExecuteTarget=target;
@@ -1082,6 +1108,44 @@ bool Nvidia(ID3D12Device* device) noexcept {
     const LUID wanted=device->GetAdapterLuid();ComPtr<IDXGIFactory4> factory;ComPtr<IDXGIAdapter1> adapter;
     if(FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || FAILED(factory->EnumAdapterByLuid(wanted,IID_PPV_ARGS(&adapter))))return false;
     DXGI_ADAPTER_DESC1 desc{};return SUCCEEDED(adapter->GetDesc1(&desc)) && desc.VendorId==0x10DE && !(desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE);
+}
+// nrscale.1: the process's local video memory in use and its budget on the
+// slot's adapter, in bytes. False when DXGI cannot tell (asked once).
+bool VideoMemory(Slot& slot,uint64_t& usage,uint64_t& budget) noexcept {
+#if defined(MFG_DLSS5_TESTING)
+    if(gTestBudget){usage=gTestUsage;budget=gTestBudget;return true;}
+#endif
+    if(!slot.memoryTried){
+        slot.memoryTried=true;ComPtr<IDXGIFactory4> factory;
+        if(slot.device && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+            factory->EnumAdapterByLuid(slot.device->GetAdapterLuid(),IID_PPV_ARGS(&slot.memory));
+    }
+    DXGI_QUERY_VIDEO_MEMORY_INFO local{};
+    if(!slot.memory || FAILED(slot.memory->QueryVideoMemoryInfo(0,DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&local)))return false;
+    usage=local.CurrentUsage;budget=local.Budget;return true;
+}
+// vmemlog.1: the process's local and non-local video memory (system memory the GPU reads over PCIe), logged as "DLSS 5
+// video memory (why)" at each create and release (force), and while a feature runs at most every 2 s when either moved
+// by 64 MB or more, otherwise every 30 s. Diagnostics only; nothing acts on it.
+void LogVideoMemory(Slot& slot,const wchar_t* why,bool force) noexcept {
+#if defined(MFG_DLSS5_TESTING)
+    if(gTestBudget)return;
+#endif
+    const ULONGLONG now=GetTickCount64();
+    if(!force && slot.memoryLogTick && now-slot.memoryLogTick<2000)return;
+    uint64_t usage=0,budget=0;
+    if(!VideoMemory(slot,usage,budget) || !slot.memory)return;
+    DXGI_QUERY_VIDEO_MEMORY_INFO local{},nonLocal{};
+    if(FAILED(slot.memory->QueryVideoMemoryInfo(0,DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&local))
+        || FAILED(slot.memory->QueryVideoMemoryInfo(0,DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL,&nonLocal)))return;
+    const auto moved=[](uint64_t a,uint64_t b){return (a>b?a-b:b-a)>=(64ull<<20);};
+    if(!force && slot.memoryLogTick && now-slot.memoryLogTick<30000
+        && !moved(local.CurrentUsage,slot.memoryLogLocal) && !moved(nonLocal.CurrentUsage,slot.memoryLogSystem))return;
+    slot.memoryLogTick=now;slot.memoryLogLocal=local.CurrentUsage;slot.memoryLogSystem=nonLocal.CurrentUsage;
+    wchar_t message[240]{};
+    swprintf_s(message,L"DLSS 5 video memory (%ls): local %llu MB of a %llu MB budget, non-local %llu MB of a %llu MB budget",
+        why,local.CurrentUsage>>20,local.Budget>>20,nonLocal.CurrentUsage>>20,nonLocal.Budget>>20);
+    Log(message);
 }
 std::wstring ProviderPath() {
 #if defined(MFG_DLSS5_TESTING)
@@ -1138,14 +1202,18 @@ void UavView(ID3D12Device* device,D3D12_CPU_DESCRIPTOR_HANDLE at,ID3D12Resource*
     D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};desc.Format=ViewFormat(resource->GetDesc().Format);desc.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
     device->CreateUnorderedAccessView(resource,nullptr,&desc,at);
 }
+// Writes one table with a view format per SRV (UNKNOWN: ViewFormat of the resource's).
+void ViewsOf(ID3D12Device* device,ID3D12DescriptorHeap* heap,uint32_t first,ID3D12Resource* const (&t)[4],
+    const DXGI_FORMAT (&formats)[4],ID3D12Resource* u0) noexcept {
+    auto cpu=heap->GetCPUDescriptorHandleForHeapStart();const auto step=gPipeline.descriptorSize;
+    cpu.ptr+=size_t(first)*step;
+    for(unsigned i=0;i<4;++i)Srv(device,{cpu.ptr+size_t(i)*step},t[i],formats[i]);
+    UavView(device,{cpu.ptr+size_t(4)*step},u0);
+}
 // Writes one table (t0..t3, u0) at descriptor `first` of `heap`.
 void Views(ID3D12Device* device,ID3D12DescriptorHeap* heap,uint32_t first,ID3D12Resource* t0,ID3D12Resource* t1,
     ID3D12Resource* t2,ID3D12Resource* t3,ID3D12Resource* u0,DXGI_FORMAT t0Format=DXGI_FORMAT_UNKNOWN) noexcept {
-    auto cpu=heap->GetCPUDescriptorHandleForHeapStart();const auto step=gPipeline.descriptorSize;
-    cpu.ptr+=size_t(first)*step;
-    ID3D12Resource* srvs[]{t0,t1,t2,t3};
-    for(unsigned i=0;i<4;++i)Srv(device,{cpu.ptr+size_t(i)*step},srvs[i],i?DXGI_FORMAT_UNKNOWN:t0Format);
-    UavView(device,{cpu.ptr+size_t(4)*step},u0);
+    ViewsOf(device,heap,first,{t0,t1,t2,t3},{t0Format,DXGI_FORMAT_UNKNOWN,DXGI_FORMAT_UNKNOWN,DXGI_FORMAT_UNKNOWN},u0);
 }
 // Writes one table at descriptor `first` of the slot's current set.
 void Table(Slot& slot,uint32_t first,ID3D12Resource* t0,ID3D12Resource* t1,ID3D12Resource* t2,ID3D12Resource* t3,ID3D12Resource* u0) noexcept {
@@ -1182,14 +1250,6 @@ void CopyTexels(ID3D12GraphicsCommandList* cmd,ID3D12Device* device,ID3D12Descri
     constants.width=static_cast<uint32_t>(rect.width);constants.height=static_cast<uint32_t>(rect.height);
     Run(cmd,heap,first,gPipeline.copy.Get(),constants,constants.width,constants.height);
 }
-// Writes one table with a view format per SRV (UNKNOWN: ViewFormat of the resource's).
-void ViewsOf(ID3D12Device* device,ID3D12DescriptorHeap* heap,uint32_t first,ID3D12Resource* const (&t)[4],
-    const DXGI_FORMAT (&formats)[4],ID3D12Resource* u0) noexcept {
-    auto cpu=heap->GetCPUDescriptorHandleForHeapStart();const auto step=gPipeline.descriptorSize;
-    cpu.ptr+=size_t(first)*step;
-    for(unsigned i=0;i<4;++i)Srv(device,{cpu.ptr+size_t(i)*step},t[i],formats[i]);
-    UavView(device,{cpu.ptr+size_t(4)*step},u0);
-}
 // kBoostShader's constant buffer.
 struct BoostConstants {
     int32_t motionX=0,motionY=0;uint32_t motionWidth=0,motionHeight=0;
@@ -1213,7 +1273,7 @@ BoostConstants BoostConstantsFor(const Slot& slot,const Frame& frame,const Setti
     c.stableBelow=threshold.stableBelow;c.unstableAbove=threshold.unstableAbove;
     c.motionX=frame.motionRect.x;c.motionY=frame.motionRect.y;
     c.motionWidth=static_cast<uint32_t>(frame.motionRect.width);c.motionHeight=static_cast<uint32_t>(frame.motionRect.height);
-    c.extentWidth=slot.extentWidth;c.extentHeight=slot.extentHeight;
+    c.extentWidth=common::ShownWidth(slot);c.extentHeight=common::ShownHeight(slot);
     c.motionScaleX=frame.motionScaleX;c.motionScaleY=frame.motionScaleY;
     c.cell=slot.boostGrid.cell;c.bins=slot.boostGrid.bins;c.cellsX=slot.boostGrid.cellsX;c.cellsY=slot.boostGrid.cellsY;
     return c;
@@ -1237,8 +1297,14 @@ BoostStep BoostFor(Slot& slot,const Frame& frame,const Settings& wanted,DXGI_FOR
     const D3D12_RESOURCE_DESC motion=reinterpret_cast<ID3D12Resource*>(frame.motion)->GetDesc();
     motionView=ViewFormat(motion.Format);
     if(MotionCaptureFormat(motionView)==DXGI_FORMAT_UNKNOWN)return off(L"the game's motion vectors have no shader view format");
+    // autorect.1: the look model's grid follows the network's rect; under Resolution
+    // Scale Auto its textures hold every level's grid, so an Auto step keeps them.
     BoostGrid grid{};
-    if(!BoostGridFor(slot.extentWidth,slot.extentHeight,grid))return off(L"the extent has no look model grid");
+    if(!BoostGridFor(common::ShownWidth(slot),common::ShownHeight(slot),grid))return off(L"the extent has no look model grid");
+    BoostGrid sizes=grid,levels{};
+    if(wanted.scaleAuto && auto_mode::BoostGridCapacity(slot.width,slot.height,auto_mode::CeilingLevel(slot.applied.scale),levels)){
+        sizes.cellsX=std::max(sizes.cellsX,levels.cellsX);sizes.cellsY=std::max(sizes.cellsY,levels.cellsY);
+    }
     // The motion textures take the resource's size, so a moving render subrect keeps them.
     const uint32_t motionWidth=static_cast<uint32_t>(motion.Width),motionHeight=motion.Height;
     const auto sized=[](const ComPtr<ID3D12Resource>& texture,uint32_t w,uint32_t h){
@@ -1248,8 +1314,8 @@ BoostStep BoostFor(Slot& slot,const Frame& frame,const Settings& wanted,DXGI_FOR
         slot.boostChange.Reset();slot.boostSums.Reset();slot.boostModel.Reset();slot.boostMotion.Reset();slot.boostTwoFrame.Reset();
     };
     const bool stale=(slot.boostChange && !sized(slot.boostChange,slot.extentWidth,slot.extentHeight))
-        || (slot.boostSums && !sized(slot.boostSums,grid.cellsX*6,grid.cellsY*grid.bins))
-        || (slot.boostModel && !sized(slot.boostModel,grid.cellsX*3,grid.cellsY*grid.bins))
+        || (slot.boostSums && !sized(slot.boostSums,sizes.cellsX*6,sizes.cellsY*sizes.bins))
+        || (slot.boostModel && !sized(slot.boostModel,sizes.cellsX*3,sizes.cellsY*sizes.bins))
         || (slot.boostMotion && !sized(slot.boostMotion,motionWidth,motionHeight))
         || (slot.boostTwoFrame && !sized(slot.boostTwoFrame,motionWidth,motionHeight));
     if(stale){
@@ -1260,19 +1326,20 @@ BoostStep BoostFor(Slot& slot,const Frame& frame,const Settings& wanted,DXGI_FOR
         slot.boostHeld=slot.boostSkipped=false;
         constexpr auto kSums=DXGI_FORMAT_R32G32B32A32_FLOAT;constexpr auto kUav=D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         if(!MakeTexture(slot.device.Get(),slot.extentWidth,slot.extentHeight,slot.boostChange)
-            || !MakeTextureOf(slot.device.Get(),grid.cellsX*6,grid.cellsY*grid.bins,kSums,kUav,slot.boostSums)
-            || !MakeTextureOf(slot.device.Get(),grid.cellsX*3,grid.cellsY*grid.bins,kSums,kUav,slot.boostModel)
+            || !MakeTextureOf(slot.device.Get(),sizes.cellsX*6,sizes.cellsY*sizes.bins,kSums,kUav,slot.boostSums)
+            || !MakeTextureOf(slot.device.Get(),sizes.cellsX*3,sizes.cellsY*sizes.bins,kSums,kUav,slot.boostModel)
             || !MakeTextureOf(slot.device.Get(),motionWidth,motionHeight,DXGI_FORMAT_R32G32_FLOAT,kUav,slot.boostMotion)
             || !MakeTextureOf(slot.device.Get(),motionWidth,motionHeight,DXGI_FORMAT_R32G32_FLOAT,kUav,slot.boostTwoFrame)){
             reset();
             return off(L"its textures could not be created");
         }
-        slot.boostGrid=grid;
         wchar_t message[260]{};
         swprintf_s(message,L"DLSS 5 Boost: the network runs on every other evaluation; the frames between rebuild its look from their own image (extent %ux%u, motion %ux%u view %u, model %ux%u cells of %u, %u bins)",
-            slot.extentWidth,slot.extentHeight,motionWidth,motionHeight,static_cast<unsigned>(motionView),grid.cellsX,grid.cellsY,grid.cell,grid.bins);
+            common::ShownWidth(slot),common::ShownHeight(slot),motionWidth,motionHeight,static_cast<unsigned>(motionView),grid.cellsX,grid.cellsY,grid.cell,grid.bins);
         Log(message);
     }
+    // A rect that moved restarted the history (Activate), so this evaluation runs the network on the new grid.
+    slot.boostGrid=grid;
     return slot.boostHeld && !slot.boostSkipped && !frame.reset ? BoostStep::eCarry : BoostStep::eNetwork;
 }
 // GPU timestamps and the luminance meter for each descriptor set. Without
@@ -1298,36 +1365,35 @@ bool MeasurementsFor(Slot& slot) noexcept {
     }
     slot.measurements=static_cast<const uint8_t*>(mapped);return true;
 }
-// The settings a stage runs with: Hook Method Auto and Resolution Scale Auto
-// resolved. Auto starts from the stage extent, never above the slider and
-// never below its quality floor.
-Settings Effective(Slot& slot,const Settings& wanted,Stage stage,uint32_t width,uint32_t height) noexcept {
-    Settings run=wanted;run.stage=static_cast<uint32_t>(stage);
-    if(wanted.scaleAuto){
-        const size_t ceiling=auto_mode::CeilingLevel(wanted.scale);
-        if(!slot.scalingSeeded){
-            slot.scaling.Reset(std::clamp(auto_mode::StartingLevel(width,height),ceiling,auto_mode::FloorLevel(ceiling)));
-            slot.scalingSeeded=true;
-        }else slot.scaling.Clamp(ceiling);
-        run.scale=slot.scaling.Scale();
-    }
-    return run;
-}
 // What a live feature should have been created with for `wanted` (no seeding).
-Settings Expected(const Slot& slot,Settings wanted) noexcept {
+// autorect.1: Resolution Scale Auto's feature is its capacity, whatever its level.
+Settings Expected(const Slot&,Settings wanted) noexcept {
     if(wanted.stage==static_cast<uint32_t>(Stage::eAuto))wanted.stage=static_cast<uint32_t>(auto_mode::AutoStage());
-    if(wanted.scaleAuto && slot.scalingSeeded)wanted.scale=slot.scaling.Scale();
+    if(wanted.scaleAuto)wanted.scale=auto_mode::CapacityScale(wanted.scale);
     return wanted;
 }
-// Counts this evaluation into the real frame clock.
-void Tick(Slot& slot) noexcept {
-    static LARGE_INTEGER frequency{};
-    if(!frequency.QuadPart)QueryPerformanceFrequency(&frequency);
-    LARGE_INTEGER now{};QueryPerformanceCounter(&now);
-    slot.frameSeconds+=slot.clock.Tick(static_cast<uint64_t>(now.QuadPart),static_cast<uint64_t>(frequency.QuadPart));
+#if defined(MFG_DLSS5_TESTING)
+// testing::SetAutoLevel: Auto's level as a case pinned it, whatever the controller measured.
+void PinAutoLevel(Slot& slot,const Settings& wanted) noexcept {
+    const size_t pinned=gTestAutoLevel.load();
+    if(pinned!=SIZE_MAX && wanted.scaleAuto && (!slot.scalingSeeded || slot.scaling.level!=pinned)){
+        slot.scaling.Reset(pinned);slot.scalingSeeded=true;
+    }
 }
-// alpha.15 (B4-21): what DLSS 5 costs, in the log (Townfall on an RTX 3070: ~240 ms latency and no line saying what
-// DLSS 5 took of each rendered frame).
+#endif
+Settings EffectiveFor(Slot& slot,const Settings& wanted,Stage stage,uint32_t width,uint32_t height) noexcept {
+#if defined(MFG_DLSS5_TESTING)
+    PinAutoLevel(slot,wanted);
+#endif
+    return common::Effective(slot,wanted,stage,width,height);
+}
+// autorect.1: after Harvest, so that an Auto step applies to this evaluation.
+void ActivateFor(Slot& slot,const Settings& wanted,const Settings& run) noexcept {
+#if defined(MFG_DLSS5_TESTING)
+    PinAutoLevel(slot,wanted);
+#endif
+    common::Activate(slot,slot,wanted,run);
+}
 void LogCost(const wchar_t* api,shared::CostLog& log,uint32_t stage,uint32_t width,uint32_t height,float gpuMs,double frameMs,
     uint64_t evaluations) noexcept {
     if(gpuMs<0.0f)return;
@@ -1373,24 +1439,11 @@ void Harvest(Slot& slot,const Settings& wanted,uint64_t completed) noexcept {
         if(timed){slot.gpuMs=static_cast<float>(ms/timed);slot.boostNetworkMs=slot.boostCarryMs=-1.0f;}
         else if(slot.boostNetworkMs>=0.0f && slot.boostCarryMs>=0.0f)slot.gpuMs=(slot.boostNetworkMs+slot.boostCarryMs)*0.5f;
         else slot.gpuMs=std::max(slot.boostNetworkMs,slot.boostCarryMs);
-        LogCost(L"",slot.cost,slot.applied.stage,slot.extentWidth,slot.extentHeight,slot.gpuMs,slot.clock.averageMs,gEvaluations);
-        const float before=slot.scaling.Scale();
-        const float budget=auto_mode::BudgetMs(slot.clock.averageMs,slot.gpuMs);
-        if(wanted.scaleAuto && slot.scalingSeeded && !otherLevel
-            && slot.scaling.Update(slot.gpuMs,budget,seconds,auto_mode::CeilingLevel(wanted.scale))){
-            wchar_t message[200]{};
-            swprintf_s(message,L"DLSS 5 Auto resolution scale: %.0f%% -> %.0f%% (stage %.2f ms, budget %.2f ms)",
-                before,slot.scaling.Scale(),slot.gpuMs,budget);
-            Log(message);slot.floorLogged=false;
-        }
-        // Logged once per level.
-        if(slot.scaling.floorHeld && !slot.floorLogged){
-            slot.floorLogged=true;
-            wchar_t message[200]{};
-            swprintf_s(message,L"DLSS 5 Auto resolution scale holds its %.0f%% quality floor (stage %.2f ms, budget %.2f ms)",
-                slot.scaling.Scale(),slot.gpuMs,budget);
-            Log(message);
-        }
+        LogCost(L"",slot.cost,slot.applied.stage,common::ShownWidth(slot),common::ShownHeight(slot),slot.gpuMs,slot.clock.averageMs,gEvaluations);
+        LogVideoMemory(slot,L"running",false);
+        common::StepScale(slot,wanted,seconds,otherLevel,Log,
+            L"DLSS 5 Auto resolution scale: %.0f%% -> %.0f%% (stage %.2f ms, budget %.2f ms), within the feature",
+            L"DLSS 5 Auto resolution scale holds its %.0f%% quality floor (stage %.2f ms, budget %.2f ms)");
     }
     if(samples>0.0f && wanted.adaptiveExposure)slot.exposure.Update(sum/samples,seconds,wanted.adaptiveTarget);
 }
@@ -1402,60 +1455,23 @@ bool Setup(Slot& slot,const Api& api,ID3D12GraphicsCommandList* cmd) noexcept {
         }
         return true;
     }
-    const wchar_t* step=nullptr;std::wstring owner;
+    const wchar_t* step=nullptr;std::wstring owner,detail;
     if(!api.Complete())step=L"NGX entry points incomplete";
     else if(FAILED(cmd->GetDevice(IID_PPV_ARGS(&slot.device))))step=L"command list device";
     else if(!Nvidia(slot.device.Get()))step=L"adapter is not NVIDIA";
     else if(cmd->GetType()!=D3D12_COMMAND_LIST_TYPE_DIRECT)step=L"command list is not DIRECT";
     else if(slot.device->GetNodeCount()!=1)step=L"multi-node device";
-    else if(!PrepareQueue(slot.device.Get(),owner))step=L"queue submission hook";
+    else if(!PrepareQueue(slot.device.Get(),owner,detail))step=L"queue submission hook";
     else if(!PipelineFor(slot.device.Get()))step=L"compute pipeline";
     else if(FAILED(slot.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&slot.fence))))step=L"fence";
     if(step){
         wchar_t message[2048]{};
-        swprintf_s(message,L"DLSS 5 setup refused: step=%ls%ls%.1800ls",step,owner.empty()?L"":L" owner=",owner.c_str());
+        swprintf_s(message,L"DLSS 5 setup refused: step=%ls%ls%ls%ls%.1700ls",step,detail.empty()?L"":L" (",detail.c_str(),
+            detail.empty()?L"":L")",owner.empty()?L"":(L" owner="+owner).c_str());
         Log(message);
         SlotFailure(slot,State::eUnsupported,NVSDK_NGX_Result_FAIL_FeatureNotSupported);return false;
     }
     slot.api=api;return true;
-}
-// alpha.15 (B4-18): an nvngx_dlssnr.dll mapped before our first create (NVIDIA's NGX runtime, which can map a signed
-// provider, or another DLSS 5 add-on): the file it is, the one beside the game, and our native creates so far.
-void LogProviderLoaded(const wchar_t* api,HMODULE loaded,const std::wstring& provider,uint64_t attempts) noexcept {
-    wchar_t module[1024]{};
-    const DWORD length=GetModuleFileNameW(loaded,module,1024);
-    if(!length || length>=1024)wcscpy_s(module,L"-");
-    wchar_t message[2400]{};
-    swprintf_s(message,L"DLSS 5%ls provider already loaded before MFG Unlocker's first create: module=%ls provider=%.1000ls samePath=%d ownNativeCreates=%llu",
-        api,module,provider.empty()?L"-":provider.c_str(),!provider.empty() && !_wcsicmp(module,provider.c_str()),
-        static_cast<unsigned long long>(attempts));
-    Log(message);
-}
-// alpha.15 (B4-21): the direct provider's FileVersion and size, once per process. Identity diagnostics only:
-// admission never reads them (dlss5_provider.cpp).
-void LogDirectIdentity(const wchar_t* api,HMODULE module,const std::wstring& path) noexcept {
-    static std::atomic<bool> logged{false};
-    if(!module || logged.exchange(true))return;
-    unsigned version[4]{};
-    if(const HRSRC info=FindResourceW(module,MAKEINTRESOURCEW(1),MAKEINTRESOURCEW(16))) // VS_VERSION_INFO, RT_VERSION
-        if(const HGLOBAL resource=LoadResource(module,info)){
-            const auto* data=static_cast<const BYTE*>(LockResource(resource));
-            const DWORD size=SizeofResource(module,info);
-            for(DWORD at=0;data && at+sizeof(VS_FIXEDFILEINFO)<=size;at+=4){
-                const auto* fixed=reinterpret_cast<const VS_FIXEDFILEINFO*>(data+at);
-                if(fixed->dwSignature!=0xFEEF04BD)continue;
-                version[0]=HIWORD(fixed->dwFileVersionMS);version[1]=LOWORD(fixed->dwFileVersionMS);
-                version[2]=HIWORD(fixed->dwFileVersionLS);version[3]=LOWORD(fixed->dwFileVersionLS);
-                break;
-            }
-        }
-    WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    const unsigned long long bytes=GetFileAttributesExW(path.c_str(),GetFileExInfoStandard,&attributes)
-        ? (static_cast<unsigned long long>(attributes.nFileSizeHigh)<<32)|attributes.nFileSizeLow : 0;
-    wchar_t message[2048]{};
-    swprintf_s(message,L"DLSS 5%ls direct provider identity (diagnostics only, not admission): FileVersion=%u.%u.%u.%u size=%llu path=%.1700ls",
-        api,version[0],version[1],version[2],version[3],bytes,path.c_str());
-    Log(message);
 }
 // Creates the feature's passes on `cmd`. The first evaluation waits for this
 // submission's fence. The log gives the time the provider's create calls
@@ -1469,7 +1485,7 @@ void CreateFeature(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,
             gProviderChecked=true;
             const HMODULE loaded=GetModuleHandleW(L"nvngx_dlssnr.dll");
             gProviderForeign=loaded && !gDirect.Module();
-            if(gProviderForeign)LogProviderLoaded(L"",loaded,path,gNativeAttempts);
+            if(gProviderForeign)common::LogProviderLoaded(Log,L"",loaded,path,gNativeAttempts);
         }
         slot.directOwnershipDenied=gProviderForeign;
     }
@@ -1483,6 +1499,13 @@ void CreateFeature(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,
         }
         gState=State::eOtherMod;return;
     }
+    // dx11nr.1: the DirectX 11 bridge stays off the direct provider once native NGX reported an outdated driver.
+    if(slot.nativeAttempted && !slot.nativeSucceeded && !d3d11::DirectFallbackAllowed(slot.route,slot.nativeResult)){
+        SlotFailure(slot,State::eDriverUpdate,slot.nativeResult);return;
+    }
+    // nrscale.1: the video memory before the create (the log, and RoomFor's estimate of the next replacement).
+    uint64_t usageBefore=0,budget=0;
+    const bool measured=VideoMemory(slot,usageBefore,budget);
     if(slot.api.allocate(&slot.params)!=NVSDK_NGX_Result_Success || !slot.params
         || !WriteCreate(slot.params,extentWidth,extentHeight,wanted)) {
         SlotFailure(slot,State::eCreateFailed,NVSDK_NGX_Result_FAIL_InvalidParameter);return;
@@ -1494,7 +1517,7 @@ void CreateFeature(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,
     else {
         slot.direct=true;route=false;
         if(!path.empty() && (!gDirectRuntime || gDirectRuntime==slot.api.runtime) && gDirect.Open(path.c_str(),slot.api.runtime)){
-            LogDirectIdentity(L"",gDirect.Module(),path);
+            common::LogDirectIdentity(Log,L"",gDirect.Module(),path);
             gDirectRuntime=slot.api.runtime;result=gDirect.Initialize(slot.device.Get(),slot.params);directStep=L"initialize";
             if(result==NVSDK_NGX_Result_Success){route=true;directStep=L"create";}
         }else if(!path.empty()){result=NVSDK_NGX_Result_FAIL_PlatformError;directStep=L"open";}
@@ -1515,15 +1538,16 @@ void CreateFeature(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,
     if(!slot.direct)slot.nativeResult=gResult;
     if(result!=NVSDK_NGX_Result_Success || slot.passes!=wanted.passes){
         wchar_t message[2048]{};
-        // alpha.15 (B4-21): and how long the failed create took on the game's thread.
+        const bool fallback=d3d11::DirectFallbackAllowed(slot.route,gResult);
         if(slot.direct)swprintf_s(message,L"DLSS 5 direct provider %ls failed: result=0x%08X passes=%u/%u createMs=%.1f provider=%.1700ls",
             directStep,gResult,slot.passes,wanted.passes,createMs,path.c_str());
         else swprintf_s(message,L"DLSS 5 native NGX create returned 0x%08X%ls%ls (createMs=%.1f)",gResult,
-            path.empty()?L"; no provider beside the game for the direct route":L"; the next evaluation uses the direct provider ",
+            path.empty()?L"; no provider beside the game for the direct route"
+                :fallback?L"; the next evaluation uses the direct provider ":L"; the driver is out of date, so the DirectX 11 bridge does not use the direct provider ",
             path.substr(0,1700).c_str(),createMs);
         Log(message);
         if(slot.passes){SlotFailure(slot,State::eCreateFailed,result==NVSDK_NGX_Result_Success?NVSDK_NGX_Result_FAIL_OutOfGPUMemory:gResult);return;}
-        if(slot.direct || path.empty()){SlotFailure(slot,CreateFailureState(gResult),gResult);}
+        if(slot.direct || path.empty() || !fallback){SlotFailure(slot,CreateFailureState(gResult),gResult);}
         else gState=State::eWaitingForDlss;
         return;
     }
@@ -1532,11 +1556,35 @@ void CreateFeature(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,
     slot.createdReady=false;gCreates+=slot.passes;
     if(!MakeTextures(slot,extentWidth,extentHeight,slot.passes)){SlotFailure(slot,State::eCreateFailed,NVSDK_NGX_Result_FAIL_OutOfGPUMemory);return;}
     gState=State::eWaitingForDlss;
+    // nrscale.1: what the create took, kept while it is measurable (a create
+    // in place may start before the old feature's memory came back).
+    uint64_t usageAfter=0;
+    wchar_t memory[160]{};
+    if(measured && VideoMemory(slot,usageAfter,budget)){
+        if(usageAfter>usageBefore){slot.createBytes=usageAfter-usageBefore;slot.createWidth=extentWidth;slot.createHeight=extentHeight;}
+        swprintf_s(memory,L"; video memory %llu -> %llu MB of a %llu MB budget",usageBefore>>20,usageAfter>>20,budget>>20);
+    }
+    slot.inPlace=false;
     wchar_t message[2048]{};
-    swprintf_s(message,L"DLSS 5 feature created: route=%ls stage=%u size=%ux%u extent=%ux%u passes=%u preset=%u model=%u later=%ls%u create=%.1f ms provider=%.1400ls; %.200ls",
+    swprintf_s(message,L"DLSS 5 feature created: route=%ls stage=%u size=%ux%u extent=%ux%u passes=%u preset=%u model=%u later=%ls%u create=%.1f ms provider=%.1400ls%ls; %.200ls",
         slot.direct?L"direct":L"native-ngx",wanted.stage,slot.width,slot.height,extentWidth,extentHeight,slot.passes,wanted.preset,wanted.model,
-        wanted.laterCustom?L"custom/":L"same/",LaterModel(wanted),createMs,path.empty()?L"NGX-managed":path.c_str(),waiting);
+        wanted.laterCustom?L"custom/":L"same/",LaterModel(wanted),createMs,path.empty()?L"NGX-managed":path.c_str(),memory,waiting);
     Log(message);
+    LogVideoMemory(slot,L"create",true);
+}
+// nrscale.1: whether a replacement at this extent fits beside the live feature (else it replaces it in place).
+bool RoomFor(Slot& slot,uint32_t extentWidth,uint32_t extentHeight) noexcept {
+    if(slot.inPlace)return false;
+    uint64_t usage=0,budget=0;
+    if(!VideoMemory(slot,usage,budget))return true;
+    const uint64_t bytes=ReplacementBytes(slot.createBytes,slot.createWidth,slot.createHeight,extentWidth,extentHeight);
+    if(RoomBeside(usage,budget,bytes))return true;
+    slot.inPlace=true;
+    wchar_t message[320]{};
+    swprintf_s(message,L"DLSS 5 replaces its feature in place: %llu MB of video memory in use and about %llu MB for a create at %ux%u exceed the %llu MB budget; "
+        L"frames go unprocessed until the new create executed",usage>>20,bytes>>20,extentWidth,extentHeight,budget>>20);
+    Log(message);
+    return false;
 }
 // CreateFeature, with the Present stage's neutral inputs at the extent.
 void Create(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,const Settings& run,uint32_t extentWidth,uint32_t extentHeight,
@@ -1550,15 +1598,16 @@ void Create(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,const S
 // The live feature for `run` at this extent, on `cmd`: kept, created or
 // replaced. True when a feature evaluates on `cmd` now; `run` is then what it
 // evaluates with.
-// autoscale.1: a change of Resolution Scale (Auto's steps too) or of the
+// A change of Resolution Scale (Auto's steps too) or of the
 // feature's settings creates the replacement beside the live feature, which
 // keeps evaluating with what it was created with. Once the replacement's
 // create executed (its fence) it takes over with fresh history, and the old
 // feature is released once every list that used it executed, so no frame goes
 // unprocessed. The feature is replaced in place (once its work completed,
 // frames unprocessed until the new create executed) when it is not ready yet,
-// the stage or its size changed, or no replacement could be created beside it
-// (then for the rest of the slot's life).
+// the stage or its size changed, no replacement could be created beside it
+// (then for the rest of the slot's life), or (nrscale.1) a replacement has no
+// room beside it in the video memory budget (RoomFor).
 bool Settle(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,Settings& run,uint32_t extentWidth,uint32_t extentHeight,
     bool present) noexcept {
     Collect(slot);
@@ -1569,10 +1618,11 @@ bool Settle(Slot& slot,ID3D12GraphicsCommandList* cmd,const Frame& frame,Setting
     if(slot.HasFeature() && !differs(slot)){
         // The replacement of a change that was undone goes.
         if(slot.next.Holds() && Retire(slot,slot.next))slot.nextReady=0;
+        slot.inPlace=false;
         return true;
     }
     const bool beside=slot.HasFeature() && !slot.replaceRefused && slot.createdReady && slot.applied.stage==run.stage
-        && slot.width==frame.width && slot.height==frame.height;
+        && slot.width==frame.width && slot.height==frame.height && (slot.next.Holds() || RoomFor(slot,extentWidth,extentHeight));
     if(!beside){
         if(Outstanding(slot)){
             if(!Complete(slot))return false;
@@ -1627,10 +1677,11 @@ bool ReserveDescriptors(Slot& slot,const Settings& wanted) noexcept {
     return true;
 }
 // A failed slot retries only after a settings change, once its work and
-// cleanup completed. False while it stays failed.
-bool Recovered(Slot& slot) noexcept {
+// cleanup completed. False while it stays failed; with `publish`, its failure
+// is the state meanwhile.
+bool Recovered(Slot& slot,bool publish=true) noexcept {
     if(!slot.failed)return true;
-    gState=slot.failureState;gResult=slot.failureResult;
+    if(publish){gState=slot.failureState;gResult=slot.failureResult;}
     if(slot.revision==slot.failureRevision || slot.cleanupFailed || slot.flight.failed || (slot.direct && gDirect.Faulted()) || !Complete(slot))return false;
     Destroy(slot);if(Outstanding(slot))return false;
     slot.failed=false;return true;
@@ -1640,7 +1691,7 @@ bool Recovered(Slot& slot) noexcept {
 bool Ready(Slot& slot,const Api& api,ID3D12GraphicsCommandList* cmd,const NVSDK_NGX_Parameter* params,
     const Settings& wanted,uint64_t revision,Stage stage,Frame& frame,D3D12_RESOURCE_DESC& color,Settings& run) noexcept {
     slot.revision=revision;
-    Tick(slot);
+    common::Tick(slot);
     if(gForeign){gState=State::eOtherMod;return false;}
     if(!Recovered(slot))return false;
     if(!slot.flight.CanRecord(reinterpret_cast<uintptr_t>(cmd)))return false;
@@ -1651,7 +1702,7 @@ bool Ready(Slot& slot,const Api& api,ID3D12GraphicsCommandList* cmd,const NVSDK_
     if(!Setup(slot,api,cmd))return false;
     MeasurementsFor(slot);
     if(!ValidateResources(slot,frame,stage,color)){gState=State::eMissingInputs;return false;}
-    run=Effective(slot,wanted,stage,frame.width,frame.height);
+    run=EffectiveFor(slot,wanted,stage,frame.width,frame.height);
     uint32_t extentWidth=0,extentHeight=0;
     if(!ProcessingExtent(frame.width,frame.height,run.scale,extentWidth,extentHeight)){
         wchar_t reason[160]{};swprintf_s(reason,L"the stage extent %ux%u is beyond the %u texture limit",frame.width,frame.height,kMaxExtent);
@@ -1659,17 +1710,27 @@ bool Ready(Slot& slot,const Api& api,ID3D12GraphicsCommandList* cmd,const NVSDK_
     }
     if(!Settle(slot,cmd,frame,run,extentWidth,extentHeight,false))return false;
     if(!slot.createdReady){if(!Complete(slot))return false;slot.createdReady=true;slot.resetHistory=true;}
-    return ReserveDescriptors(slot,wanted);
+    if(!ReserveDescriptors(slot,wanted))return false;
+    ActivateFor(slot,wanted,run);
+    return true;
 }
-// Linear reconstruction color is unbounded when the DLSS feature is HDR
-// (Present: an FP16 or HDR10 swapchain); HDR10 and scRGB always are.
-bool Unbounded(const Slot& slot,const Settings& wanted) noexcept {
-    return UnboundedColor(wanted,slot.automatic,slot.keys.createFlags);
-}
-// Adaptive exposure applies to unbounded color only: SDR keeps a unit gain,
-// and the status reports the gain the shader receives.
-float AdaptiveGain(const Slot& slot,const Settings& wanted) noexcept {
-    return wanted.adaptiveExposure && Unbounded(slot,wanted) && slot.exposure.valid ? slot.exposure.Gain() : 1.0f;
+// dx11nr.1 (shared::CanEvaluate): whether Ready could let the slot work at `stage` now, without recording or retrying;
+// a refusal publishes its state as Ready does.
+bool Possible(Slot& slot,const NVSDK_NGX_Parameter* params,Stage stage) noexcept {
+    uint64_t revision=0;Wanted(revision);
+    if(slot.failed && (revision==slot.failureRevision || slot.cleanupFailed || slot.flight.failed || (slot.direct && gDirect.Faulted())
+            || !Complete(slot))){
+        gState=slot.failureState;gResult=slot.failureResult;return false;
+    }
+    if(slot.nativeAttempted && !slot.nativeSucceeded && slot.directOwnershipDenied){gState=State::eOtherMod;return false;}
+    if(!params)return true;
+    InputsWhy why{};Source source{};Frame frame{};
+    if(!ReadFrame(params,slot.keys,stage,frame,why,source)){
+        InputsUnavailable(L"",why,source,slot.keys);slot.resetHistory=true;gState=State::eMissingInputs;return false;
+    }
+    D3D12_RESOURCE_DESC color{};
+    if(slot.device && !ValidateResources(slot,frame,stage,color)){gState=State::eMissingInputs;return false;}
+    return true;
 }
 Constants PassConstantsFor(const Frame& frame,const Settings& wanted,uint32_t extentWidth,uint32_t extentHeight,Encoding automatic,
     bool unbounded,float adaptiveGain,bool decode,bool inPlace) noexcept {
@@ -1686,7 +1747,7 @@ Constants PassConstantsFor(const Frame& frame,const Settings& wanted,uint32_t ex
     // The HDR bridge's knee: Encode and Decode must use the same one.
     c.knee=wanted.knee;
     if(decode){
-        // Blend, halos and the debug view (dlss5adv.1); flag 256: Supersampling Filter Area.
+        // Blend, halos and the debug view; flag 256: Supersampling Filter Area.
         c.blendStrength=wanted.blend;c.colorStrength=wanted.color;
         c.highlightLimit=wanted.highlightGuard?wanted.highlightLimit:0.0f;
         c.haloDark=wanted.haloDark;c.haloBright=wanted.haloBright;c.haloRadius=static_cast<float>(wanted.haloRadius);
@@ -1711,9 +1772,11 @@ Constants PassConstantsFor(const Frame& frame,const Settings& wanted,uint32_t ex
     }
     return c;
 }
+// autorect.1: the network's rect (Activate) is the shaders' extent; the
+// textures keep the processing extent, and every kernel stays within the rect.
 Constants MakeConstants(const Slot& slot,const Frame& frame,const Settings& wanted,bool decode,bool inPlace) noexcept {
-    return PassConstantsFor(frame,wanted,slot.extentWidth,slot.extentHeight,slot.automatic,Unbounded(slot,wanted),
-        AdaptiveGain(slot,wanted),decode,inPlace);
+    return PassConstantsFor(frame,wanted,common::ShownWidth(slot),common::ShownHeight(slot),slot.automatic,common::Unbounded(slot,wanted),
+        common::AdaptiveGain(slot,wanted),decode,inPlace);
 }
 // Encode, the network passes and decode into `destination`. The stage color
 // is read in NON_PIXEL_SHADER_RESOURCE; the network textures rest in UNORDERED_ACCESS.
@@ -1735,7 +1798,7 @@ bool RecordNeural(Slot& slot,ID3D12GraphicsCommandList* cmd,Frame frame,const Se
     const uint32_t set=slot.descriptor;
     const bool measuring=slot.measurements && slot.timing && slot.meter;
     if(measuring)cmd->EndQuery(slot.timing.Get(),D3D12_QUERY_TYPE_TIMESTAMP,set*2);
-    if(inPlace)Transition(cmd,color,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if(inPlace)TransitionMip0(cmd,color,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     const Constants encode=MakeConstants(slot,frame,wanted,false,inPlace);
     Dispatch(slot,cmd,encode,false);
     if(measuring){
@@ -1753,6 +1816,7 @@ bool RecordNeural(Slot& slot,ID3D12GraphicsCommandList* cmd,Frame frame,const Se
     constexpr auto kRead=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;constexpr auto kWrite=D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     const uint32_t boostFirst=set*kSetDescriptors+10;
     constexpr DXGI_FORMAT kOwn=DXGI_FORMAT_UNKNOWN;
+    const uint32_t activeWidth=common::ShownWidth(slot),activeHeight=common::ShownHeight(slot);
     Frame network=frame;
     if(boost==BoostStep::eCarry){
         // This evaluation's motion vectors, for the next network pass's two-frame vectors.
@@ -1762,7 +1826,7 @@ bool RecordNeural(Slot& slot,ID3D12GraphicsCommandList* cmd,Frame frame,const Se
         Transition(cmd,slot.boostChange.Get(),kWrite,kRead);Transition(cmd,slot.boostModel.Get(),kWrite,kRead);
         ViewsOf(slot.device.Get(),slot.heap.Get(),boostFirst+5,{slot.encoded.Get(),slot.boostChange.Get(),slot.boostModel.Get(),motion},
             {kOwn,kOwn,kOwn,motionView},final);
-        Run(cmd,slot.heap.Get(),boostFirst+5,gPipeline.carry.Get(),boosting,slot.extentWidth,slot.extentHeight);
+        Run(cmd,slot.heap.Get(),boostFirst+5,gPipeline.carry.Get(),boosting,activeWidth,activeHeight);
         Transition(cmd,slot.boostChange.Get(),kRead,kWrite);Transition(cmd,slot.boostModel.Get(),kRead,kWrite);
         Transition(cmd,final,kWrite,kRead);readable[(slot.passes-1)%2]=true;
         slot.boostSkipped=true;
@@ -1783,7 +1847,7 @@ bool RecordNeural(Slot& slot,ID3D12GraphicsCommandList* cmd,Frame frame,const Se
         Frame neural=network;
         neural.color=reinterpret_cast<uintptr_t>(pass==0?slot.encoded.Get():outputs[(pass-1)%2]);
         neural.output=reinterpret_cast<uintptr_t>(target);
-        neural.colorRect=neural.outputRect={0,0,static_cast<int32_t>(slot.extentWidth),static_cast<int32_t>(slot.extentHeight)};
+        neural.colorRect=neural.outputRect={0,0,static_cast<int32_t>(activeWidth),static_cast<int32_t>(activeHeight)};
         WriteEvaluate(slot.params,neural,PassSettings(wanted,pass));
         result=slot.direct?gDirect.Evaluate(cmd,slot.handles[pass],slot.params):slot.api.evaluate(cmd,slot.handles[pass],slot.params,nullptr);
         if(result!=NVSDK_NGX_Result_Success)break;
@@ -1806,12 +1870,12 @@ bool RecordNeural(Slot& slot,ID3D12GraphicsCommandList* cmd,Frame frame,const Se
             Transition(cmd,slot.boostSums.Get(),kRead,kWrite);Transition(cmd,slot.boostModel.Get(),kWrite,kRead);
             ViewsOf(slot.device.Get(),slot.heap.Get(),boostFirst+15,{slot.encoded.Get(),final,slot.boostModel.Get(),nullptr},
                 {kOwn,kOwn,kOwn,kOwn},slot.boostChange.Get());
-            Run(cmd,slot.heap.Get(),boostFirst+15,gPipeline.hold.Get(),boosting,slot.extentWidth,slot.extentHeight);
+            Run(cmd,slot.heap.Get(),boostFirst+15,gPipeline.hold.Get(),boosting,activeWidth,activeHeight);
             Transition(cmd,slot.boostModel.Get(),kRead,kWrite);
             Uav(cmd,slot.boostChange.Get());slot.boostHeld=true;
         }
     }
-    if(inPlace)Transition(cmd,color,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if(inPlace)TransitionMip0(cmd,color,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     if(result==NVSDK_NGX_Result_Success){
         Dispatch(slot,cmd,MakeConstants(slot,frame,wanted,true,inPlace),true);
         Uav(cmd,destination);slot.resetHistory=false;++gEvaluations;gLastEvaluate=GetTickCount64();gState=State::eRunning;
@@ -1827,7 +1891,7 @@ bool RecordNeural(Slot& slot,ID3D12GraphicsCommandList* cmd,Frame frame,const Se
         Transition(cmd,slot.meter.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_SOURCE);
         cmd->CopyBufferRegion(slot.readback.Get(),uint64_t(set)*kMeasurementBytes+16,slot.meter.Get(),uint64_t(set)*sizeof(float)*2,sizeof(float)*2);
         Transition(cmd,slot.meter.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        slot.measured[set]=true;slot.measuredScale[set]=slot.applied.scale;
+        slot.measured[set]=true;slot.measuredScale[set]=common::ShownScale(slot);
         slot.measuredStep[set]=static_cast<uint8_t>(boost==BoostStep::eNetwork?1:boost==BoostStep::eCarry?2:0);
     }
     Record(slot,cmd);gResult=static_cast<uint32_t>(result);
@@ -1868,11 +1932,7 @@ bool CaptureSubmitted(const CaptureSet& set) noexcept {
 void CaptureForPresent(Slot& slot,const Api& api,ID3D12GraphicsCommandList* cmd,const NVSDK_NGX_Parameter* params,
     const Settings& wanted,uint64_t revision) noexcept {
     slot.revision=revision;
-    if(gForeign)return;
-    if(slot.failed){
-        if(slot.revision==slot.failureRevision || slot.cleanupFailed || slot.flight.failed || (slot.direct && gDirect.Faulted()) || !Complete(slot))return;
-        Destroy(slot);if(Outstanding(slot))return;slot.failed=false;
-    }
+    if(gForeign || !Recovered(slot,false))return;
     // This source's Render/Upscaled feature goes once its work completed.
     if(Outstanding(slot)){if(!Complete(slot))return;Destroy(slot);if(Outstanding(slot))return;}
     if(!Setup(slot,api,cmd))return;
@@ -1979,9 +2039,9 @@ bool RecordPresent(PresentStage& stage,const PresentTarget& target,const Setting
     ID3D12Device* device,const CaptureSet* capture) noexcept {
     auto& slot=stage.slot;auto* list=stage.list.Get();
     if(!Setup(slot,gNgxApi,list) || !slot.flight.CanRecord(reinterpret_cast<uintptr_t>(list)))return false;
-    MeasurementsFor(slot);Tick(slot);
+    MeasurementsFor(slot);common::Tick(slot);
     const uint32_t width=static_cast<uint32_t>(image.Width),height=image.Height;
-    Settings run=Effective(slot,wanted,Stage::ePresent,width,height);
+    Settings run=EffectiveFor(slot,wanted,Stage::ePresent,width,height);
     uint32_t extentWidth=0,extentHeight=0;
     if(!ProcessingExtent(width,height,run.scale,extentWidth,extentHeight)){
         wchar_t reason[160]{};swprintf_s(reason,L"the swapchain image %ux%u is beyond the %u texture limit",width,height,kMaxExtent);
@@ -2009,13 +2069,16 @@ bool RecordPresent(PresentStage& stage,const PresentTarget& target,const Setting
     if(!Settle(slot,list,frame,run,extentWidth,extentHeight,true))return false;
     if(!slot.createdReady){if(!Complete(slot))return false;slot.createdReady=true;slot.resetHistory=true;}
     if(!ReserveDescriptors(slot,wanted))return false;
+    ActivateFor(slot,wanted,run);
     if(capture){
         frame.depth=reinterpret_cast<uintptr_t>(capture->depth.Get());frame.motion=reinterpret_cast<uintptr_t>(capture->motion.Get());
         frame.depthRect=capture->depthRect;frame.motionRect=capture->motionRect;
         frame.motionScaleX=capture->motionScaleX;frame.motionScaleY=capture->motionScaleY;frame.depthInverted=capture->depthInverted;
     }else{
-        // Neutral inputs: zero motion and constant (zero) depth at the processing extent.
+        // Neutral inputs: zero motion and constant (zero) depth, filled over the processing extent once
+        // and handed over at the network's rect (autorect.1: Auto's level within it).
         const Rect extent{0,0,static_cast<int32_t>(slot.extentWidth),static_cast<int32_t>(slot.extentHeight)};
+        const Rect active{0,0,static_cast<int32_t>(common::ShownWidth(slot)),static_cast<int32_t>(common::ShownHeight(slot))};
         if(!slot.neutralFilled){
             const uint32_t first=slot.descriptor*kSetDescriptors+10;
             CopyTexels(list,device,slot.heap.Get(),first,nullptr,DXGI_FORMAT_UNKNOWN,slot.neutralDepth.Get(),extent);
@@ -2025,7 +2088,7 @@ bool RecordPresent(PresentStage& stage,const PresentTarget& target,const Setting
             slot.neutralFilled=true;
         }
         frame.depth=reinterpret_cast<uintptr_t>(slot.neutralDepth.Get());frame.motion=reinterpret_cast<uintptr_t>(slot.neutralMotion.Get());
-        frame.depthRect=frame.motionRect=extent;
+        frame.depthRect=frame.motionRect=active;
     }
     // The image (PRESENT) into our copy, processed in place there, and back.
     auto* buffer=target.buffer;auto* color=stage.color.Get();
@@ -2231,7 +2294,10 @@ void GameCreated(size_t route,const NVSDK_NGX_Handle* handle,const dlss_sr::Crea
     InputsUnavailable(kSlotsFull);
     gState=State::eMissingInputs;gResult=NVSDK_NGX_Result_FAIL_OutOfGPUMemory;++gFailures;
 }
-// alpha.15 (B4-18): which caller and NGX runtime, once per process.
+bool Owns(size_t route,const NVSDK_NGX_Handle* game) noexcept {
+    std::lock_guard lock(gMutex);return Find(route,reinterpret_cast<uintptr_t>(game))!=nullptr;
+}
+// Which caller and NGX runtime, once per process.
 void ForeignCreated(const void* caller,HMODULE runtime) noexcept {
     bool first=false;
     {std::lock_guard lock(gMutex);first=!gForeign;gForeign=true;gState=State::eOtherMod;}
@@ -2245,13 +2311,14 @@ void ForeignCreated(const void* caller,HMODULE runtime) noexcept {
     Log(message);
 }
 Substitution BeforeEvaluate(size_t route,const Api& api,ID3D12GraphicsCommandList* cmd,const NVSDK_NGX_Handle* game,
-    const NVSDK_NGX_Parameter* params) noexcept {
+    const NVSDK_NGX_Parameter* params,uint64_t expectedRevision) noexcept {
     Substitution substitution{};
     if(!cmd || !game || !params)return substitution;
     try {
         std::lock_guard lock(gMutex);Pump();
         Slot* found=Find(route,reinterpret_cast<uintptr_t>(game));if(!found)return substitution;
         Slot& slot=*found;uint64_t revision=0;const Settings wanted=Wanted(revision);
+        if(expectedRevision && revision!=expectedRevision)return substitution;
         if(!wanted.enabled || wanted.stage!=static_cast<uint32_t>(Stage::eRender))return substitution;
         Frame frame{};D3D12_RESOURCE_DESC color{};Settings run{};
         if(!Ready(slot,api,cmd,params,wanted,revision,Stage::eRender,frame,color,run))return substitution;
@@ -2273,7 +2340,7 @@ Substitution BeforeEvaluate(size_t route,const Api& api,ID3D12GraphicsCommandLis
     return substitution;
 }
 void AfterEvaluate(size_t route,const Api& api,ID3D12GraphicsCommandList* cmd,const NVSDK_NGX_Handle* game,
-    const NVSDK_NGX_Parameter* params,NVSDK_NGX_Result gameResult,const Substitution& substitution) noexcept {
+    const NVSDK_NGX_Parameter* params,NVSDK_NGX_Result gameResult,const Substitution& substitution,uint64_t expectedRevision) noexcept {
     try {
         std::lock_guard lock(gMutex);
         if(substitution.slot<gSlots.size()){
@@ -2289,6 +2356,9 @@ void AfterEvaluate(size_t route,const Api& api,ID3D12GraphicsCommandList* cmd,co
         Pump();
         Slot* found=Find(route,reinterpret_cast<uintptr_t>(game));if(!found)return;
         Slot& slot=*found;uint64_t revision=0;const Settings wanted=Wanted(revision);
+        // The caller resolved its stage for that revision (the DirectX 11 bridge): nothing of another stage, such as
+        // the Present stage's capture, ever records on its list.
+        if(expectedRevision && revision!=expectedRevision)return;
         if(!wanted.enabled){slot.resetHistory=true;gState=State::eOff;return;}
         if(wanted.stage==static_cast<uint32_t>(Stage::ePresent)){CaptureForPresent(slot,api,cmd,params,wanted,revision);return;}
         // Hook Method Auto runs here (dlss5_auto.h AutoStage).
@@ -2324,23 +2394,28 @@ CompareView LastCompare() noexcept {
 bool Running() noexcept {
     std::lock_guard lock(gMutex);return gState==State::eRunning;
 }
+bool Offered() noexcept {
+    if(Requested().enabled)return true;
+    try {return !ProviderPath().empty();}catch(...){return false;}
+}
 Snapshot Read() noexcept {
     std::lock_guard lock(gMutex);Snapshot view{};view.requested=Requested();view.state=gState;view.result=gResult;
     view.creates=gCreates;view.evaluations=gEvaluations;view.failures=gFailures;
     try {view.providerDetected=!ProviderPath().empty() || gDirect.Module();}catch(...){}
     const auto live=[&view](const Slot& slot){
-        ++view.live;view.width=slot.width;view.height=slot.height;view.extentWidth=slot.extentWidth;view.extentHeight=slot.extentHeight;
+        ++view.live;view.width=slot.width;view.height=slot.height;view.extentWidth=common::ShownWidth(slot);view.extentHeight=common::ShownHeight(slot);
         view.route=slot.direct?2:1;view.stage=slot.applied.stage;view.passes=slot.passes;
         view.pending|=!SameFeature(slot.applied,Expected(slot,view.requested)) || !slot.createdReady;
-        view.scale=slot.applied.scale;view.gpuMs=slot.gpuMs;view.budgetMs=auto_mode::BudgetMs(slot.clock.averageMs,slot.gpuMs);
+        view.scale=common::ShownScale(slot);view.gpuMs=slot.gpuMs;view.budgetMs=common::AutoBudgetMs(slot);
         view.scaleFloorHeld|=view.requested.scaleAuto && slot.scalingSeeded && slot.scaling.floorHeld;
         view.boostNetworkMs=slot.boostNetworkMs;
         view.frameMs=static_cast<float>(slot.clock.averageMs);
-        view.exposureGain=AdaptiveGain(slot,view.requested);
+        view.exposureGain=common::AdaptiveGain(slot,view.requested);
+        view.d3d11|=slot.route==kD3D11Route;
     };
     for(const auto& slot:gSlots)if(slot.occupied && slot.HasFeature())live(slot);
     if(gPresent.slot.HasFeature())live(gPresent.slot);
-    // vkdlss5.1: a Vulkan feature (its module publishes the view under a leaf lock).
+    // A Vulkan feature (its module publishes the view under a leaf lock).
     shared::Live vulkan{};
     const auto vulkanLive=gVulkanLive.load(std::memory_order_acquire);
     if(vulkanLive && vulkanLive(vulkan) && vulkan.live){
@@ -2351,29 +2426,50 @@ Snapshot Read() noexcept {
         view.scaleFloorHeld|=vulkan.scaleFloorHeld;
     }
     const bool present=view.requested.stage==static_cast<uint32_t>(Stage::ePresent);
+    // Off measures nothing: no cost left from before while the feature is released.
+    if(!view.requested.enabled){view.gpuMs=view.boostNetworkMs=-1.0f;view.budgetMs=0.0f;}
     if(!view.requested.enabled)view.state=State::eOff;
     else if(gForeign)view.state=State::eOtherMod;
     // A Present-stage refusal stays; one left from another Hook Method does not.
     else if(view.state==State::eOff || (view.state==State::eStageUnavailable && !present)
         || (view.state==State::eRunning && GetTickCount64()-gLastEvaluate>1000))view.state=State::eWaitingForDlss;
-    // vkdlss5.1: Before upscaling or Present on a Vulkan game has no stage yet.
+    // Before upscaling or Present on a Vulkan game has no stage yet.
     if(view.requested.enabled && !gForeign && vulkanLive && vulkan.stageUnavailable)view.state=State::eStageUnavailable;
+    // dx11nr.1: the DirectX 11 bridge (its view is lock-free): Present has no stage there, an outdated driver stops
+    // it, and a refusal of the game's device keeps DLSS 5 off.
+    shared::D3D11View bridge{};
+    const auto d3d11View=gD3D11View.load(std::memory_order_acquire);
+    if(d3d11View && d3d11View(bridge)){
+        view.d3d11|=bridge.tracked;view.d3d11Refusal=bridge.refusal;
+        if(view.requested.enabled && !gForeign){
+            if(bridge.initFailure){view.state=CreateFailureState(bridge.initFailure);view.result=bridge.initFailure;}
+            else if(bridge.stageUnavailable)view.state=State::eStageUnavailable;
+            else if(d3d11::Blocking(static_cast<d3d11::Refusal>(bridge.refusal)) && view.state==State::eWaitingForDlss)
+                view.state=State::eUnsupported;
+        }
+    }
     return view;
 }
 void Present(const PresentTarget& target) noexcept {
     if(!target.queue || !target.buffer || !target.owner)return;
-    bool blocked=false;
+    // hudlatch.1: Block Hudless is written under gMutex, as DrainPresent clears it, so a present that started before
+    // its owner's drain cannot set it again afterwards.
     try {
         std::lock_guard lock(gMutex);Pump();
         uint64_t revision=0;const Settings wanted=Wanted(revision);
+        bool blocked=false;
         if(wanted.enabled && wanted.stage==static_cast<uint32_t>(Stage::ePresent)){
             ++gPresents;
             auto& stage=gPresent;
             if(stage.owner!=target.owner){stage.owner=target.owner;stage.slot.resetHistory=true;}
             blocked=ProcessPresent(stage,target,wanted,revision) && wanted.blockHudless;
         }
-    }catch(...){std::lock_guard lock(gMutex);Failure(State::eEvaluateFailed,kProviderFault);}
-    gHudlessBlocked.store(blocked,std::memory_order_release);
+        gHudlessBlocked.store(blocked,std::memory_order_release);
+    }catch(...){
+        std::lock_guard lock(gMutex);
+        gHudlessBlocked.store(false,std::memory_order_release);
+        Failure(State::eEvaluateFailed,kProviderFault);
+    }
 }
 bool DrainPresent(uintptr_t owner) noexcept {
     ComPtr<ID3D12Fence> fence;uint64_t value=0;
@@ -2381,6 +2477,10 @@ bool DrainPresent(uintptr_t owner) noexcept {
         std::lock_guard lock(gMutex);
         if(!owner || gPresent.owner!=owner)return true;
         gPresent.owner=0;gPresent.slot.resetHistory=true;
+        // hudlatch.1: no present processes the game's image until a chain owns the stage again (a chain moved to
+        // XeFG never does), so frame generation gets the HUD-less tag back here.
+        if(gHudlessBlocked.exchange(false,std::memory_order_acq_rel))
+            Log(L"DLSS 5 Present stage: its swapchain was released or resized; frame generation gets the game's HUD-less tag until a present is processed again");
         fence=gPresent.slot.fence;value=gPresent.slot.flight.submitted;
     }
     if(!fence || fence->GetCompletedValue()>=value)return true;
@@ -2401,10 +2501,6 @@ void Evaluated() noexcept {std::lock_guard lock(gMutex);++gEvaluations;gLastEval
 bool Foreign() noexcept {std::lock_guard lock(gMutex);return gForeign;}
 void Log(const wchar_t* message) noexcept {dlss5::Log(message);}
 std::wstring ProviderPath() {return dlss5::ProviderPath();}
-void ProviderLoaded(HMODULE loaded,const std::wstring& provider,uint64_t attempts) noexcept {
-    dlss5::LogProviderLoaded(L" Vulkan",loaded,provider,attempts);
-}
-void DirectIdentity(HMODULE module,const std::wstring& path) noexcept {dlss5::LogDirectIdentity(L" Vulkan",module,path);}
 void Cost(CostLog& log,uint32_t stage,uint32_t extentWidth,uint32_t extentHeight,float gpuMs,double frameMs) noexcept {
     uint64_t evaluations=0;
     {std::lock_guard lock(gMutex);evaluations=gEvaluations;}
@@ -2422,12 +2518,31 @@ PassConstants Constants(const Frame& frame,const Settings& wanted,uint32_t exten
     return PassConstantsFor(frame,wanted,extentWidth,extentHeight,automatic,unbounded,adaptiveGain,decode,inPlace);
 }
 void SetVulkanLive(LiveFn fn) noexcept {gVulkanLive.store(fn,std::memory_order_release);}
+void SetD3D11View(D3D11ViewFn fn) noexcept {gD3D11View.store(fn,std::memory_order_release);}
+uint64_t Evaluations() noexcept {std::lock_guard lock(gMutex);return gEvaluations;}
+void ReleaseRoute(size_t route) noexcept {
+    std::lock_guard lock(gMutex);Pump();
+    for(auto& slot:gSlots)if(slot.occupied && !slot.retiring && slot.route==route && Outstanding(slot)){
+        dlss5::Collect(slot);if(!Complete(slot))continue;
+        Destroy(slot);
+        if(!Outstanding(slot)){slot.gpuMs=-1.0f;slot.resetHistory=true;Log(L"DLSS 5: a feature its Hook Method does not run on was released");}
+    }
+}
+bool CanEvaluate(size_t route,const NVSDK_NGX_Handle* game,const NVSDK_NGX_Parameter* params,Stage stage) noexcept {
+    if(!game)return false;
+    std::lock_guard lock(gMutex);Pump();
+    if(gForeign){gState=State::eOtherMod;return false;}
+    Slot* found=Find(route,reinterpret_cast<uintptr_t>(game));
+    return found && Possible(*found,params,stage);
+}
 }
 #if defined(MFG_DLSS5_TESTING)
 namespace testing {
 void AllowSoftwareDevice() noexcept {std::lock_guard lock(gMutex);gSoftwareTest=true;}
 void Collect() noexcept {std::lock_guard lock(gMutex);Pump();}
 void SetProviderPath(const wchar_t* path) {std::lock_guard lock(gMutex);gProviderTestPath=path?path:L"";}
+void SetVideoMemory(uint64_t usage,uint64_t budget) noexcept {gTestUsage=usage;gTestBudget=budget;}
+void SetAutoLevel(size_t level) noexcept {gTestAutoLevel=level;}
 std::wstring NativeRefusal(ID3D12DeviceChild* object,ID3D12Device* queueDevice) {
     wchar_t refusal[1600]{};
     return NativeOn(L"object",object,queueDevice,refusal) ? std::wstring{} : std::wstring{refusal};

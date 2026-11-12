@@ -7,12 +7,12 @@
 // exercised. Like OptiScaler's [Plugins] LoadAsiPlugins, DllMain loads the
 // .asi named by RTXMFG_TEST_OPTISCALER_PLUGIN with the loader lock held and
 // calls its InitializeASI on the same thread.
-// xefgrace.1: like OptiScaler's XeFG proxy, DllMain first loads the XeSS pair
+// Like OptiScaler's XeFG proxy, DllMain first loads the XeSS pair
 // from RTXMFG_TEST_OPTISCALER_XEFG (libxell.dll, libxess_fg.dll) and resolves
 // xefgSwapChainD3D12CreateContext, before any plug-in loads. The creation is
 // later called from this module's code, so RTXMFG sees OptiScaler as the caller.
 //
-// xefgmenu.1 (OPTISCALER_FIXTURE_XEFG, with the XeSS SDK headers): OptiScaler's
+// OPTISCALER_FIXTURE_XEFG (with the XeSS SDK headers): OptiScaler's
 // XeFG output swapchain as XeFG_Dx12::CreateSwapchain1Internal builds it
 // (context, InitFromSwapChainDesc with the game's queue and the real DXGI
 // factory, GetSwapChainPtr), every call from this image; and a detour on DXGI's
@@ -20,12 +20,19 @@
 // XeFG, answers a game's creation with that chain (XeFG's own creation inside
 // passes through, as ScopedSkipFGSCCreation does).
 //
-// Built twice: without OPTISCALER_FIXTURE_NO_IDENTITY as the host, and with it
+// Built three times: without OPTISCALER_FIXTURE_NO_IDENTITY as the host, with it
 // as a fakenvapi stand-in (copied to nvapi64.dll) that has no OptiScaler
-// identity.
+// identity, and with OPTISCALER_FIXTURE_MENU_TAB as a host that also offers
+// OptiScaler's plugin API to the plugin it loads: upstream's merged layout, or
+// with RTXMFG_TEST_OPTISCALER_API=fork2 our fork's earlier version 2 layout.
 #include <Windows.h>
 #include <cstdint>
 #include <cstring>
+#if defined(OPTISCALER_FIXTURE_MENU_TAB)
+#include <string>
+#include "optiscaler_plugin.h"
+#include "optiscaler_plugin_fork2.h"
+#endif
 #if defined(OPTISCALER_FIXTURE_XEFG)
 #include <cwchar>
 #include <d3d12.h>
@@ -251,6 +258,175 @@ extern "C" __declspec(dllexport) void* __cdecl OptiFixtureHookedXefg(int* calls,
 }
 #endif
 
+#if defined(OPTISCALER_FIXTURE_MENU_TAB)
+// menutab.2: OptiScaler's plugin API. Like OptiScaler's plugin loader, DllMain hands it to the plugin's OptiPluginInit
+// right after InitializeASI. The stand-in keeps one tab and draws it on demand (OptiFixtureMenuTab) through widget
+// functions that record what the tab drew, and count widget calls outside a draw, invalid arguments and a Disabled
+// block left open as bad. A tab reading one table layout as the other calls the widget next to the one it means, and
+// its text goes missing or its arguments count as bad.
+struct OptiPlugin
+{
+    int unused;
+};
+
+namespace
+{
+SRWLOCK gTabLock = SRWLOCK_INIT;
+OptiPlugin gPluginHandle{};
+int gPluginInitResult = -1; // -1 not called, 0 refused, 1 accepted
+bool gTabRegistered = false;
+char gTabLabel[64]{};
+OptiDrawTabFn gTabDraw = nullptr;
+void* gTabUser = nullptr;
+bool gInDraw = false;
+bool gDisabledOpen = false;
+std::string gTabText; // every text, section, label and tooltip drawn, one per line
+int gTabCalls = 0;
+int gTabBad = 0;
+
+void Record(const char* text)
+{
+    ++gTabCalls;
+    if (!gInDraw || !text) { ++gTabBad; return; }
+    gTabText += text;
+    gTabText += '\n';
+}
+void Widget()
+{
+    ++gTabCalls;
+    if (!gInDraw) ++gTabBad;
+}
+// From OptiPluginInit (inside DllMain) or later from the plugin's own thread.
+bool TabRegister(OptiPlugin* plugin, const char* name, const char*, OptiDrawTabFn draw, void* userData)
+{
+    if (plugin != &gPluginHandle || !name || !name[0] || !draw) return false;
+    AcquireSRWLockExclusive(&gTabLock);
+    const bool added = !gTabRegistered;
+    if (added)
+    {
+        strncpy_s(gTabLabel, name, _TRUNCATE);
+        gTabDraw = draw;
+        gTabUser = userData;
+        gTabRegistered = true;
+    }
+    ReleaseSRWLockExclusive(&gTabLock);
+    return added;
+}
+void TabText(const char* text) { Record(text); }
+void TabNothing() { Widget(); }
+void TabDisabled(bool disabled) { Widget(); gDisabledOpen = disabled; }
+void TabTextColored(float, float, float, float, const char* text) { Record(text); }
+bool TabButton(const char* label) { Record(label); return false; }
+bool TabCheckbox(const char* label, bool* value) { Record(label); if (!value) ++gTabBad; return false; }
+bool TabSliderFloat(const char* label, float* value, float, float, const char*) { Record(label); if (!value) ++gTabBad; return false; }
+bool TabSliderInt(const char* label, int32_t* value, int32_t, int32_t, const char*) { Record(label); if (!value) ++gTabBad; return false; }
+bool TabComboItems(const char* label, int32_t* current, const char* const* items, int32_t count)
+{
+    Record(label);
+    if (!current || !items || count <= 0 || *current < 0 || *current >= count) { ++gTabBad; return false; }
+    for (int32_t i = 0; i < count; ++i)
+        if (!items[i]) ++gTabBad;
+    return false;
+}
+// Upstream: itemDisabled is null or count bools.
+bool TabCombo(const char* label, int32_t* current, const char* const* items, int32_t count, const bool* itemDisabled)
+{
+    const bool result = TabComboItems(label, current, items, count);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(itemDisabled);
+    for (int32_t i = 0; bytes && i < count && i < 64; ++i)
+        if (bytes[i] > 1) ++gTabBad;
+    return result;
+}
+// The fork: Combo without disabled items, ComboEx with a mask of the first 32.
+bool TabComboFork2(const char* label, int32_t* current, const char* const* items, int32_t count)
+{
+    return TabComboItems(label, current, items, count);
+}
+bool TabComboEx(const char* label, int32_t* current, const char* const* items, int32_t count, uint32_t)
+{
+    return TabComboItems(label, current, items, count);
+}
+bool TabInputText(const char* label, char* buffer, size_t size) { Record(label); if (!buffer || !size) ++gTabBad; return false; }
+bool TabColorEdit(const char* label, float* rgba, bool) { Record(label); if (!rgba) ++gTabBad; return false; }
+float TabMenuScale() { return 1.0f; }
+bool TabMenuOpen() { return gInDraw; }
+bool TabFalse() { Widget(); return false; }
+// Settings and logging: RTXMFG keeps its own; these stand-ins return the defaults.
+bool TabGetBool(OptiPlugin*, const char*, bool value) { return value; }
+int32_t TabGetInt(OptiPlugin*, const char*, int32_t value) { return value; }
+float TabGetFloat(OptiPlugin*, const char*, float value) { return value; }
+bool TabGetString(OptiPlugin*, const char*, char* buffer, size_t size, const char* value)
+{
+    if (buffer && size) strncpy_s(buffer, size, value ? value : "", _TRUNCATE);
+    return false;
+}
+void TabSetBool(OptiPlugin*, const char*, bool) {}
+void TabSetInt(OptiPlugin*, const char*, int32_t) {}
+void TabSetFloat(OptiPlugin*, const char*, float) {}
+void TabSetString(OptiPlugin*, const char*, const char*) {}
+void TabReset(OptiPlugin*, const char*) {}
+bool TabSave(OptiPlugin*) { return true; }
+void TabLog(OptiPlugin*, OptiLogLevel, const char*) {}
+
+// Field order of optiscaler_plugin.h: ItemDeactivatedAfterEdit after ItemTooltip, Combo with itemDisabled, no
+// GetMenuScale.
+const OptiPluginApi gPluginApi = {sizeof(OptiPluginApi), OPTI_PLUGIN_API_VERSION, TabRegister, TabText, TabNothing,
+    TabNothing, TabNothing, TabDisabled, TabText, TabFalse, TabText, TabText, TabTextColored, TabButton, TabCheckbox,
+    TabSliderFloat, TabSliderInt, TabCombo, TabInputText, TabColorEdit, TabMenuOpen, TabGetBool, TabGetInt, TabGetFloat,
+    TabGetString, TabSetBool, TabSetInt, TabSetFloat, TabSetString, TabReset, TabSave, TabLog};
+
+// Field order of optiscaler_plugin_fork2.h.
+const OptiPluginApiFork2 gPluginApiFork2 = {sizeof(OptiPluginApiFork2), OPTI_PLUGIN_FORK2_API_VERSION, TabRegister,
+    TabText, TabNothing, TabNothing, TabNothing, TabDisabled, TabText, TabText, TabText, TabTextColored, TabButton,
+    TabCheckbox, TabSliderFloat, TabSliderInt, TabComboFork2, TabInputText, TabColorEdit, TabMenuScale, TabMenuOpen,
+    TabGetBool, TabGetInt, TabGetFloat, TabGetString, TabSetBool, TabSetInt, TabSetFloat, TabSetString, TabReset, TabSave,
+    TabLog, TabComboEx, TabFalse};
+
+void InitPlugin(HMODULE plugin)
+{
+    const auto init = reinterpret_cast<PFN_OptiPluginInit>(GetProcAddress(plugin, OPTI_PLUGIN_INIT_NAME));
+    if (!init) return;
+    wchar_t layout[16]{};
+    const DWORD length = GetEnvironmentVariableW(L"RTXMFG_TEST_OPTISCALER_API", layout, 16);
+    const bool fork2 = length && length < 16 && wcscmp(layout, L"fork2") == 0;
+    const auto* api = fork2 ? reinterpret_cast<const OptiPluginApi*>(&gPluginApiFork2) : &gPluginApi;
+    // Not under gTabLock: the plugin registers from inside.
+    const bool accepted = init(api, &gPluginHandle);
+    AcquireSRWLockExclusive(&gTabLock);
+    gPluginInitResult = accepted ? 1 : 0;
+    // OptiScaler keeps nothing a plugin registered when it declines the API.
+    if (!accepted) gTabRegistered = false;
+    ReleaseSRWLockExclusive(&gTabLock);
+}
+}
+
+// 1 while a tab is registered; label receives its label and initResult OptiPluginInit's result (-1 not called). With
+// draw, the tab is drawn once on this thread, text receives what it drew, calls the widget calls and bad the misuses.
+extern "C" __declspec(dllexport) int __cdecl OptiFixtureMenuTab(char* label, size_t labelSize, int draw, char* text,
+    size_t textSize, int* calls, int* bad, int* initResult)
+{
+    AcquireSRWLockExclusive(&gTabLock);
+    const int registered = gTabRegistered ? 1 : 0;
+    if (label && labelSize) strncpy_s(label, labelSize, gTabLabel, _TRUNCATE);
+    if (initResult) *initResult = gPluginInitResult;
+    if (registered && draw)
+    {
+        gTabText.clear();
+        gTabCalls = gTabBad = 0;
+        gDisabledOpen = false;
+        gInDraw = true;
+        gTabDraw(gTabUser);
+        gInDraw = false;
+        if (gDisabledOpen) ++gTabBad;
+    }
+    if (text && textSize) strncpy_s(text, textSize, gTabText.c_str(), _TRUNCATE);
+    if (calls) *calls = gTabCalls;
+    if (bad) *bad = gTabBad;
+    ReleaseSRWLockExclusive(&gTabLock);
+    return registered;
+}
+#endif
+
 extern "C" __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_CreateFeature() { return -1; }
 extern "C" __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_EvaluateFeature() { return -1; }
 extern "C" __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_GetFeatureRequirements() { return -1; }
@@ -303,6 +479,9 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
                     initialize();
                     gInitializeCalled = 1;
                 }
+#if defined(OPTISCALER_FIXTURE_MENU_TAB)
+            if (gPlugin) InitPlugin(gPlugin);
+#endif
         }
     }
 #endif

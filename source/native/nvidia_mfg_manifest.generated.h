@@ -7,9 +7,9 @@ struct ManifestEntry { std::string_view key; Tier tier; };
 
 // Source: https://www.nvidia.com/content/dam/en-zz/Solutions/geforce/news/nvidia-rtx-games-engines-apps/dlss-rt-games-apps-overrides.json
 // NoMfgOverride: native FG listed, MFG cell blank; 2x is the mod fallback, not a published maximum.
-inline constexpr char kManifestFetchedDate[] = "2026-10-25";
-inline constexpr char kManifestSha256[] = "B11550FF03738E43BA5F724782A45A68503D1AA40546BAB9B1C3A051250B490D";
-inline constexpr std::array<ManifestEntry, 407> kManifest = {{
+inline constexpr char kManifestFetchedDate[] = "2026-11-12";
+inline constexpr char kManifestSha256[] = "D938E180F4E91B08674B3BA38C8CD075835C5871F120868BF3AA403A9F5EE298";
+inline constexpr std::array<ManifestEntry, 410> kManifest = {{
     {"007firstlight", Tier::eSixX}, // 007 First Light
     {"171", Tier::eSixX}, // 171
     {"3dmark", Tier::eFourX}, // 3D Mark
@@ -174,7 +174,7 @@ inline constexpr std::array<ManifestEntry, 407> kManifest = {{
     {"grayzonewarfare", Tier::eSixX}, // Gray Zone Warfare
     {"greedland", Tier::eSixX}, // Greedland
     {"groundbranch", Tier::eSixX}, // Ground Branch
-    {"halflife2rtxdemo", Tier::eFourX}, // Half-Life 2 RTX Demo
+    {"halflife2rtxdemo", Tier::eSixX}, // Half-Life 2 RTX Demo
     {"halfsword", Tier::eSixX}, // Half Sword
     {"halloweenthegame", Tier::eSixX}, // Halloween: The Game
     {"halocampaignevolved", Tier::eSixX}, // Halo: Campaign Evolved
@@ -278,10 +278,12 @@ inline constexpr std::array<ManifestEntry, 407> kManifest = {{
     {"payday3", Tier::eSixX}, // PAYDAY 3
     {"perish", Tier::eNoMfgOverride}, // PERISH
     {"permafrost", Tier::eSixX}, // Permafrost
+    {"phantombladezero", Tier::eSixX}, // Phantom Blade Zero
     {"pizzabandit", Tier::eSixX}, // Pizza Bandit
     {"planetcoaster2", Tier::eNoMfgOverride}, // Planet Coaster 2
+    {"planetzoo2", Tier::eSixX}, // Planet Zoo 2
     {"portalpreludertx", Tier::eNoMfgOverride}, // Portal: Prelude RTX
-    {"portalwithrtx", Tier::eFourX}, // Portal with RTX
+    {"portalwithrtx", Tier::eSixX}, // Portal with RTX
     {"postal4noregerts", Tier::eSixX}, // Postal 4: No Regerts
     {"pragmata", Tier::eFourX}, // PRAGMATA
     {"predecessor", Tier::eFourX}, // Predecessor
@@ -358,6 +360,7 @@ inline constexpr std::array<ManifestEntry, 407> kManifest = {{
     {"thebackroomslosttape", Tier::eSixX}, // The Backrooms: Lost Tape
     {"theblackpool", Tier::eSixX}, // The Black Pool
     {"theblackpoolarenasurvivors", Tier::eSixX}, // The Black Pool: Arena Survivors
+    {"thebloodofdawnwalker", Tier::eSixX}, // The Blood of Dawnwalker
     {"thebus", Tier::eSixX}, // The Bus
     {"thecastingoffrankstone", Tier::eSixX}, // The Casting of Frank Stone
     {"thedaybefore", Tier::eNoMfgOverride}, // The Day Before

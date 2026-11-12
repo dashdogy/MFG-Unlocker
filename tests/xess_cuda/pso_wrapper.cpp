@@ -1,4 +1,4 @@
-// psorefused.1 (board #543): a device wrapper in its own image, the shape of ReShade's for the route. Its table is in
+// A device wrapper in its own image, the shape of ReShade's for the route. Its table is in
 // this image, ReShade's IID_UnwrappedObject gives the runtime's device under it (the route resolves it by unwrap), and
 // CreateComputePipelineState / ID3D12Device2::CreatePipelineState are passed to that device from this image. Every
 // other method fails: the tests call only these on it.

@@ -39,7 +39,7 @@ private:
     ID3D12Device* device_ = nullptr; // retained; never shut down somebody else's NGX instance
     bool initialized_ = false, faulted_ = false;
 };
-// V1.7.0 vkdlss5.1: the same direct route through the provider's Vulkan
+// The same direct route through the provider's Vulkan
 // entries (its Init_Ext2, CreateFeature1, EvaluateFeature, ReleaseFeature).
 // Vulkan handles and loader entry points stay opaque here: VkInstance,
 // VkPhysicalDevice, VkDevice, VkCommandBuffer, PFN_vkGet*ProcAddr.
@@ -53,7 +53,6 @@ public:
     NVSDK_NGX_Result Release(NVSDK_NGX_Handle*) noexcept;
     HMODULE Module() const noexcept { return module_; }
     bool Faulted() const noexcept { return faulted_; }
-    void* Device() const noexcept { return device_; }
 private:
     using InitFn = NVSDK_NGX_Result(NVSDK_CONV*)(unsigned long long, const wchar_t*, void*, void*, void*, void*, void*,
         NVSDK_NGX_Version, const NVSDK_NGX_Parameter*);

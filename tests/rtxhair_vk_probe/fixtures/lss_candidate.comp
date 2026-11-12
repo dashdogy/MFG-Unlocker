@@ -1,0 +1,26 @@
+#version 460
+// rtxhair-spirv fixture: non-opaque LSS candidates confirmed in the traversal loop by their radius.
+// Expect: Rewritten, two LSS ops on the candidate (intersection 0).
+#extension GL_EXT_ray_query : require
+#extension GL_NV_linear_swept_spheres : require
+
+layout(local_size_x = 64) in;
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(binding = 1, std430) buffer Out { uint hits[]; };
+
+void main()
+{
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, scene, gl_RayFlagsNoneEXT, 0xFF, vec3(0.0), 0.0, vec3(0.0, 0.0, 1.0), 100.0);
+    while (rayQueryProceedEXT(q))
+    {
+        if (rayQueryIsLSSHitNV(q, false))
+        {
+            float radii[2];
+            rayQueryGetIntersectionLSSRadiiNV(q, false, radii);
+            if (radii[0] > 0.001)
+                rayQueryConfirmIntersectionEXT(q);
+        }
+    }
+    hits[gl_GlobalInvocationID.x] = rayQueryGetIntersectionTypeEXT(q, true);
+}

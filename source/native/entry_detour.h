@@ -59,6 +59,14 @@ enum class Kind : uint32_t
     eSrPresetSelector = 41,
     eSrPresetReader = 42,
     eSrPresetReport = 43,
+    // nrouter.1: OptiScaler's own D3D12 NGX exports, serving the game's DLSS calls (relocation path).
+    eOptiScalerNgxD3D12Create = 44,
+    eOptiScalerNgxD3D12Evaluate = 45,
+    eOptiScalerNgxD3D12Release = 46,
+    // dx11nr.1: the NGX runtime's D3D11 entries, carrying DLSS 5 on DirectX 11 games (relocation path).
+    eNgxRuntimeD3D11Create = 47,
+    eNgxRuntimeD3D11Evaluate = 48,
+    eNgxRuntimeD3D11Release = 49,
     eCount,
 };
 
@@ -141,7 +149,7 @@ struct Snapshot
     bool current = false;
     bool cachedPointersCovered = false;
     bool forwarding = false;
-    // ngxforward.1: not current, but the entry starts with a jump (another hook's
+    // Not current, but the entry starts with a jump (another hook's
     // over our relocated five-byte jump, or ours back after one) and the bytes
     // after it are unchanged; `original` still forwards to the target.
     bool overlaid = false;

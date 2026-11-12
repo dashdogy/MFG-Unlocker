@@ -3,6 +3,79 @@
 What changed in each release. Downloads and the full release notes are on
 [GitHub Releases](https://github.com/dashdogy/MFG-Unlocker/releases).
 
+## [V1.7.1](https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.7.1) - 13 Nov 2026
+
+DLSS 5 Auto is now significantly smoother, no more stutter when it changes the
+resolution scale, and it follows your Dynamic MFG fps target.
+
+DLSS 5 presets are here. Save your favourite looks under a name with **Save
+as**, share them as a simple `DLSS5-` code with **Export** and **Import**, and
+pick them from the **Presets** list next to the built-in looks. The DLSS 5 tab
+is also much easier to find your way around. See [DLSS 5](docs/menu.md#dlss-5).
+
+DLSS 5 and the menu now work in DX11 games too. DLSS 5 runs there Before
+upscaling, After upscaling or Auto on MFG Unlocker's own DX12 device (Windows
+10 version 1703 or later), and Half rate works in DX11 as well as DX12.
+
+New live latency readout in the menu, with its 1% high, in games that run
+Reflex. Pin it on screen right next to your fps.
+
+Switch XeMFG standalone on and off, or swap it for DLSS FG, on the fly, no
+restart needed.
+
+New Keybinds tab: put Dynamic, raise or lower the multiplier, 2x to 6x, the
+FPS readout and the DLSS presets on any key, with or without Ctrl, Shift or
+Alt. See [Keys](docs/menu.md#keys).
+
+With DLSS FG the menu now runs as smooth as your output fps.
+
+AMD pacing got a big overhaul for smoother frames and lower latency. On Radeon
+RX 9000 (Adrenalin 26.10.1 or newer) the driver's flip meter paces 2x, and
+above 2x and on older Radeons our flip queue paces every frame. On NVIDIA,
+flip metering is only used where the driver reports support. Wine/Proton keep
+V1.6.1's pacing. See [Pacing](docs/xemfg.md#pacing).
+
+XeMFG as optiscaler's DLSS FG (the nvngx replacer, `FGNvngxReplacement =
+MFGUnlocker`) in DX12 and Vulkan games, up to 6x with Dynamic MFG, which can
+also be your fps limit (experimental). Every GPU runs our port of Intel's
+multi frame model there by default, on the tensor cores on NVIDIA, 30 and 20
+series included. No extra dll anymore: MFG Unlocker registers itself through
+optiscaler's plugin API with
+[our optiscaler build](docs/optiscaler.md#which-optiscaler-build), so the old
+`OptiScaler\custom\MFGUnlocker` folder can go. See
+[XeMFG as OptiScaler's DLSS Frame Generation](docs/xemfg.md#xemfg-as-optiscalers-dlss-frame-generation).
+
+RTX Hair now runs on 40 and 30 series and turns on by itself in DX12 and
+Vulkan games with NVIDIA RTX Hair. In Vulkan games like Indiana Jones and the
+Great Circle it now uses far less VRAM and no longer stutters when characters
+come close. To turn it off, put `Universal=0` under `[RtxHair]` in an
+`RTXMFG.RtxHair.ini` beside the game. See
+[Path traced hair](docs/compatibility.md#path-traced-hair).
+
+30 and 20 series are no longer stuck at 2x in Streamline 2.12 games like
+Darktide, and 40 series no longer drops to 2x mid-game when a game loads an
+older DLSS FG dll (Indiana Jones and the Great Circle, AION 2).
+
+NVIDIA's game list is updated to 410 titles: Half-Life 2 RTX and Portal with
+RTX now go up to 6x, and Phantom Blade Zero, Planet Zoo 2 and The Blood of
+Dawnwalker are new.
+
+With optiscaler our menu now lives in its own MFG Unlocker tab in optiscaler's
+menu, with the DLSS presets and DLSS 5, and it works with the official
+nightlies from 4 November 2026 on too. `"optiScalerUi": "shared"` in
+`RTXMFG-Universal.json` brings back our own menu. See
+[OptiScaler](docs/optiscaler.md#menus).
+
+Our optiscaler build for V1.7.1 also fixes Crimson Desert's fps cap with the
+DLSSG output, keeps DLSS working in Modern Warfare 4 (its Streamline refuses
+newer plugins) and stops the Like a Dragon: Pirate Yakuza in Hawaii crash.
+
+Plus fixes for crashes and freezes in BeamNG.drive, shadPS4, Indiana Jones and
+the Great Circle and Dying Light: The Beast (with optiscaler's XeFG), Pragmata
+and Modern Warfare 4's menu, a key staying stuck after closing the menu, and
+far fewer writes to the game folder, with a **Write log file** switch under
+**Diagnostics** to turn the log off.
+
 ## [V1.7.0](https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.7.0) - 25 Oct 2026
 
 - **DLSS 5 support in the menu.** With NVIDIA's DLSS 5 dll (`nvngx_dlssnr.dll`)

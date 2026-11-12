@@ -1,4 +1,4 @@
-// xemfgsa.1 (V1.7.0): XeMFG standalone on D3D12 (d3d12_host.h).
+// XeMFG standalone on D3D12 (d3d12_host.h).
 //
 // Frame flow on a taken-over chain (XeFG's proxy, wrapped by the menu's proxy):
 //  inputs   each source tags its depth and motion vectors on the game's own command list as they arrive, under the
@@ -9,6 +9,7 @@
 //           id go to XeFG, the XeLL markers the game did not send itself, then XeFG's proxy presents and generates.
 //           After the present the host sleeps in XeLL for the next frame unless the game slept in Reflex.
 #include "d3d12_host.h"
+#include "host_xell_binding.h"
 #include "standalone_policy.h"
 #include "runtime_search.h"
 #include "xemfg_dynamic.h"
@@ -17,7 +18,12 @@
 #include "xess_mod.h"
 #include "single_module.h"
 #include "optiscaler_host.h"
+#include "ampere_backend.h"
+#include "overlay_back_buffers.h"
 #include "overlay_native.h"
+#include "xemfg_host_common.h"
+#include "frame_gen_target.h"
+#include "module_list.h"
 #include <d3d12.h>
 #include <xefg_swapchain.h>
 #include <xefg_swapchain_d3d12.h>
@@ -45,41 +51,7 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 using xemfg_standalone::Source;
-
-std::string Escape(const std::string& text)
-{
-    std::string out;
-    for (char c : text) {
-        if (c == '"' || c == '\\') out += '\\';
-        if (static_cast<unsigned char>(c) >= 0x20) out += c;
-    }
-    return out;
-}
-
-std::string Narrow(const std::wstring& text)
-{
-    std::string out;
-    for (wchar_t c : text) out += c < 0x80 ? char(c) : '?';
-    return out;
-}
-
-void Log(const char* stage, const std::string& fields) noexcept
-{
-    xess_mod::WriteLog(stage, fields);
-}
-
-int64_t Now() noexcept
-{
-    LARGE_INTEGER value{};
-    QueryPerformanceCounter(&value);
-    return value.QuadPart;
-}
-
-double Milliseconds(int64_t ticks) noexcept
-{
-    static const double frequency = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return double(f.QuadPart); }();
-    return double(ticks) * 1000.0 / frequency;
-}
+using xemfg_host::Escape, xemfg_host::Narrow, xemfg_host::Log, xemfg_host::Now, xemfg_host::Milliseconds;
 
 std::atomic<bool> gEnabled{false};
 std::atomic<uint32_t> gFrames{2};
@@ -92,9 +64,28 @@ std::atomic<bool> gNativeBeforeOn{false};
 // The last depth convention an input reported (XeFG's init flag for the next chain; reverse-Z until one did).
 std::atomic<bool> gObservedInverted{true};
 std::atomic<uint64_t> gBasePresents{0}, gInputFrames{0};
-// xemfgsa.5: the menu's FPS limit (presented frames per second; 0 off), applied as XeLL's minimum interval.
+// The menu's FPS limit (presented frames per second; 0 off), applied as XeLL's minimum interval.
 std::atomic<uint32_t> gFpsLimit{0};
 thread_local bool tInsideHost = false;
+
+// xemfglive.1 (d3d12_host.h WantedMove): the switch's generation, the move a resize was asked for (awaited until the
+// deadline, 0 when none or done), ResizeBuffers seen on a proxy whose chain should move (the resize thread waits for
+// one), whether Streamline's DLSS-G is applied On, and the generation whose resize was asked for.
+std::atomic<uint32_t> gSwitchGeneration{0};
+std::atomic<uint64_t> gMoveDeadlineMs{0};
+std::atomic<uint64_t> gMoveAttempts{0};
+std::atomic<bool> gDlssgApplied{false};
+std::atomic<uint32_t> gResizeGeneration{0};
+// A move whose new chain failed after the old one was released (the old kind was re-created): not tried again in that
+// generation, so each later resize does not repeat it.
+std::atomic<uint32_t> gMoveBlockedGeneration{UINT32_MAX};
+// How long a move asked for counts as under way (the hold on the game's DLSS-G, the menu's "switching").
+constexpr uint64_t kMoveWindowMs = 1500;
+// xemfglive.5 / .6 (d3d12_host.h NativeChainReleased): DLSS-G was applied On in this process, it is retired until a
+// restart (a native chain was released while its feature may still live: Streamline would create it a second time
+// without the exact release the 6x unlock needs before a re-creation, which can hang the GPU), and its exact release
+// is wanted (held Off without resource retention until ampere_backend::FrameGenerationQuiescent).
+std::atomic<bool> gDlssgEverApplied{false}, gDlssgRetired{false}, gDlssgReleaseWanted{false};
 
 // ---------------------------------------------------------------- runtime (the player's libxess_fg + libxell)
 struct Runtime
@@ -104,7 +95,8 @@ struct Runtime
     std::string reason = "not_loaded";
     HMODULE fg = nullptr, ll = nullptr;
     std::wstring folder;
-    xess_runtime_search::Result search;   // alpha.15 (B4-12): the folders searched and why the pair was not found
+    xess_runtime_search::Result search;   // the folders searched and why the pair was not found
+    xess_runtime_search::Outdated outdated; // oldruntime.1: the file short of exports and its version
 #define MFG_XEFG_FUNCTIONS(X) \
     X(xefgSwapChainD3D12CreateContext) X(xefgSwapChainSetLatencyReduction) X(xefgSwapChainD3D12InitFromSwapChainDesc) \
     X(xefgSwapChainD3D12GetSwapChainPtr) X(xefgSwapChainSetNumInterpolatedFrames) X(xefgSwapChainSetEnabled) \
@@ -143,14 +135,20 @@ Runtime& LoadRuntime()
             else if (!rt.fg || !rt.ll) rt.reason = "runtime_load_failed";
             else if (!xess_mod::AdoptVulkanHostPair(rt.fg, rt.ll)) rt.reason = "runtime_route_rejected";
             else {
-                bool complete = true;
-#define MFG_RESOLVE_FG(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.fg, #name)); complete &= rt.name != nullptr;
-#define MFG_RESOLVE_LL(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.ll, #name)); complete &= rt.name != nullptr;
+                // xellbind.1: XeFG's own lookup of libxell.dll finds this pair's, not a game's copy loaded first.
+                xess_host_xell::Bind(rt.fg, rt.ll);
+#define MFG_RESOLVE_FG(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.fg, #name)); \
+                             if (!rt.name) rt.outdated.Miss(xess_runtime_search::kFg, #name);
+#define MFG_RESOLVE_LL(name) rt.name = reinterpret_cast<decltype(rt.name)>(GetProcAddress(rt.ll, #name)); \
+                             if (!rt.name) rt.outdated.Miss(xess_runtime_search::kLl, #name);
                 MFG_XEFG_FUNCTIONS(MFG_RESOLVE_FG)
                 MFG_XELL_FUNCTIONS(MFG_RESOLVE_LL)
 #undef MFG_RESOLVE_FG
 #undef MFG_RESOLVE_LL
-                if (!complete) rt.reason = "runtime_exports_missing";
+                if (rt.outdated.file) {
+                    rt.outdated.version = xess_runtime_search::ModuleVersion(rt.outdated.file == xess_runtime_search::kFg ? rt.fg : rt.ll);
+                    rt.reason = "runtime_exports_missing";
+                }
                 else { rt.ready = true; rt.reason.clear(); }
             }
         } catch (...) {
@@ -159,7 +157,7 @@ Runtime& LoadRuntime()
         gRuntimeTried = true;
         gRuntimeFailed = !rt.ready;
         std::string searched;
-        try { searched = "," + xess_runtime_search::Json(bases, rt.search); } catch (...) {}
+        try { searched = xess_runtime_search::OutdatedJson(rt.outdated) + "," + xess_runtime_search::Json(bases, rt.search); } catch (...) {}
         Log("d3d12_runtime", std::string("\"ready\":") + (rt.ready ? "true" : "false") + ",\"folder\":\"" +
             Escape(Narrow(rt.folder)) + "\"" + (rt.reason.empty() ? "" : ",\"reason\":\"" + rt.reason + "\"") + searched);
     });
@@ -184,15 +182,17 @@ struct Chain
     bool invertedDepth = true;
     bool enabledApplied = false;
     uint32_t framesApplied = 0;
+    // xemfglive.1: moved here while the game's DLSS-G was applied On; generation waits until it is applied Off.
+    bool awaitDlssgOff = false;
     uint64_t presents = 0;
     int64_t lastPresent = 0;
     uint32_t presentingId = 0;
     const char* lastWhy = "start";
     bool conventionLogged = false;
     bool generating = false;
-    int64_t presentStart = 0;   // xemfgsa.2: when the game's Present entered XeFG's
+    int64_t presentStart = 0;   // when the game's Present entered XeFG's
     xefg_swapchain_present_status_t status{};
-    // xemfgsa.6: Dynamic MFG on this chain: its controllers, 1X (generation off, the count kept), whether it ran last
+    // Dynamic MFG on this chain: its controllers, 1X (generation off, the count kept), whether it ran last
     // frame, the game's last XeFG Present (a wait it counts) and the window's refresh rate (looked up every 2 s).
     xemfg_standalone::DynamicFrames dynamic;
     bool dynamicOff = false, dynamicRan = false;
@@ -216,30 +216,35 @@ struct Host
     uint64_t markersMs = 0;             // the last game latency marker
     uint64_t sleepMs = 0;               // the last game Reflex sleep that ran
     uint32_t markerPresentId = 0;       // the frame the game's present-start marker named
-    // xemfgsa.2: the frame the game's render-submit start named. Not the simulation start: an engine that renders
+    // The frame the game's render-submit start named. Not the simulation start: an engine that renders
     // a frame while it simulates the next (Unreal) has already started the next frame's simulation when the current
-    // frame's upscaler runs, which gave the inputs the next frame's id.
+    // frame's upscaler runs, which would give the inputs the next frame's id.
     uint32_t markerBuildId = 0;
     uint64_t renderMarkersMs = 0;       // the last render-submit start
     Source lastSource = Source::eNone;
     std::string reason;
-    // xemfgsa.2: per log interval (600 presents): the game's markers forwarded to XeLL, the game's Reflex sleeps that
+    // Per log interval (600 presents): the game's markers forwarded to XeLL, the game's Reflex sleeps that
     // XeLL took over, the host's own XeLL sleeps (no game markers), and the time in XeFG's Present and in XeLL sleeps.
     uint64_t markers = 0, reflexSleeps = 0, ownSleeps = 0;
     int64_t presentTicks = 0, sleepTicks = 0;
     uint32_t intervalPresents = 0;
-    // xemfgsa.5: the game's and XeFG's frame rates for the menu, and the XeLL interval the FPS limit last set.
+    // The game's and XeFG's frame rates for the menu, and the XeLL interval the FPS limit last set.
     xemfg_standalone::FpsWindow fps;
     uint32_t limitIntervalUs = 0;
-    // xemfgsa.5 (log): Streamline tag/constant calls whose token mapped to a frame already presented (Subnautica 2,
-    // xemfgsa.4: the tags were seen but never reached XeFG; the DLSS evaluation's inputs ran the whole session), with
-    // the raw tokens of the game's latest render-submit and present markers to compare.
+    // Logged: Streamline tag/constant calls whose token mapped to a frame already presented (tags that never reach
+    // XeFG), with the raw tokens of the game's latest render-submit and present markers to compare.
     uint64_t streamlineRefused = 0, streamlineRefusedLogs = 0;
     uint32_t renderToken = 0, presentToken = 0;
-    // xemfgsa.6: the menu's Dynamic MFG settings (the most frames and the FPS limit are filled in per frame), and the
+    // idanchor.1: the first times a present-start marker anchored the frame ids again (FrameIds::FromPresentToken).
+    uint64_t anchorLogs = 0;
+    // tagframe.1: the first legacy (frameless) Streamline tag calls, with the token each was given.
+    uint32_t legacyTagLogs = 0;
+    // The menu's Dynamic MFG settings (the most frames and the FPS limit are filled in per frame), and the
     // game's XeLL sleep since its last present (Dynamic MFG counts it as waiting).
     xemfg_standalone::DynamicSettings dynamic;
     int64_t frameSleepTicks = 0;
+    // xemfglive.1: why the last live move did not happen (the menu's note while the switch waits for a resize).
+    std::string moveReason;
 };
 Host gHost;
 
@@ -356,7 +361,6 @@ void TagUpscalerFrame(const UpscalerFrame& in)
     }
     record.depth = Tag(*chain, list.Get(), id, XEFG_SWAPCHAIN_RES_DEPTH, in.depth, in.depthArea, in.depthState, true);
     record.motion = Tag(*chain, list.Get(), id, XEFG_SWAPCHAIN_RES_MOTION_VECTOR, in.motion, in.motionArea, in.motionState, true);
-    record.constants = true;
     record.jitterX = in.jitterX;
     record.jitterY = in.jitterY;
     record.motionScaleX = in.motionScaleX;
@@ -408,17 +412,21 @@ void Marker(uint32_t id, xell_latency_marker_type_t marker)
     gRuntime.xellAddMarkerData(gHost.xell, id, marker);
 }
 
-// xemfgsa.5: before each XeLL sleep (host lock held). The game's Reflex sleep goes to XeLL while XeMFG generates
-// (ReplacesReflexSleep), so the driver's Reflex frame limit no longer paces it: the menu's FPS limit becomes XeLL's
+// Before each XeLL sleep (host lock held). The game's Reflex sleep goes to XeLL while XeMFG generates
+// (ReplacesReflexSleep), so the driver's Reflex frame limit does not pace it: the menu's FPS limit becomes XeLL's
 // minimum interval, which XeLL holds for the frames XeFG presents (standalone_policy.h LimitIntervalUs).
 void ApplyFpsLimitLocked()
 {
     if (!gHost.xell) return;
     const auto chain = ActiveLocked();
     const uint32_t perBase = chain && chain->generating ? chain->framesApplied : 1;
-    // xemfgsa.6: Dynamic MFG's "Use target as cap" holds the presented rate at its target instead.
+    // Dynamic MFG's "Use target as cap" holds the presented rate at its target instead.
     const double capFps = chain ? chain->dynamic.CapFps() : 0.0;
-    const uint32_t fps = capFps > 0.0 ? uint32_t(capFps + 0.5) : gFpsLimit.load();
+    uint32_t fps = capFps > 0.0 ? uint32_t(capFps + 0.5) : gFpsLimit.load();
+    // pacerfix.2: with neither, while the flip queue presents with V-Sync, the output rate is held just under the
+    // display's refresh (standalone_policy.h AutoCapFps), so the game does not run ahead of the vblanks into the queue.
+    const bool automatic = !fps && chain && chain->generating;
+    if (automatic) fps = xemfg_standalone::AutoCapFps(sdk_pacing::VsyncRefreshNs());
     const uint32_t interval = xemfg_standalone::LimitIntervalUs(fps);
     if (interval == gHost.limitIntervalUs) return;
     xell_sleep_params_t sleep{};
@@ -428,7 +436,8 @@ void ApplyFpsLimitLocked()
     const auto result = gRuntime.xellSetSleepMode(gHost.xell, &sleep);
     if (result == XELL_RESULT_SUCCESS) gHost.limitIntervalUs = interval;
     Log("d3d12_fps_limit", "\"fps\":" + std::to_string(fps) + ",\"per_base\":" + std::to_string(perBase) +
-        ",\"interval_us\":" + std::to_string(interval) + ",\"result\":" + std::to_string(int(result)));
+        ",\"interval_us\":" + std::to_string(interval) + ",\"auto\":" + (automatic && fps ? "true" : "false") +
+        ",\"result\":" + std::to_string(int(result)));
 }
 
 // ---------------------------------------------------------------- takeover policy
@@ -473,11 +482,40 @@ void Configure(bool enabled, uint32_t frames) noexcept
 {
     const bool was = gEnabled.exchange(enabled);
     const uint32_t previous = gFrames.exchange(std::clamp<uint32_t>(frames ? frames : 2, 2, 6));
+    // xemfglive.1: a new generation for the menu proxies (each asks once for the resize that moves its chain), and a
+    // move awaited from the last one ends.
+    if (was != enabled) {
+        gSwitchGeneration.fetch_add(1);
+        gMoveDeadlineMs = 0;
+        WantDlssgRelease(false);   // xemfglive.6: a move of the new generation asks again
+        std::lock_guard lock(gHost.mutex);
+        gHost.moveReason.clear();
+    }
     if (was != enabled || previous != gFrames.load())
-        Log("d3d12_config", std::string("\"enabled\":") + (enabled ? "true" : "false") + ",\"frames\":" + std::to_string(gFrames.load()));
+        Log("d3d12_config", std::string("\"enabled\":") + (enabled ? "true" : "false") + ",\"frames\":" + std::to_string(gFrames.load()) +
+            ",\"generation\":" + std::to_string(gSwitchGeneration.load()));
 }
 
 bool Enabled() noexcept { return gEnabled.load(); }
+
+bool Ready() noexcept
+{
+    if (gEnabled.load()) return true;
+    if (optiscaler_host::Detected()) return false;
+    static std::once_flag once;
+    static bool found = false;
+    std::call_once(once, [] {
+        try {
+            const auto bases = xess_runtime_search::ReadBases(xess_runtime_search::ModulePath(single_module::Self()),
+                xess_runtime_search::ModulePath(nullptr));
+            found = xess_runtime_search::Find(bases, xess_runtime_search::Order::eD3D12).found != SIZE_MAX;
+        } catch (...) {
+            found = false;
+        }
+        Log("d3d12_ready", std::string("\"pair_installed\":") + (found ? "true" : "false"));
+    });
+    return found;
+}
 
 void SetFpsLimit(uint32_t fps) noexcept
 {
@@ -486,29 +524,34 @@ void SetFpsLimit(uint32_t fps) noexcept
 
 void SetDynamic(bool enabled, uint32_t targetFps, int rounding, bool allow1x, bool targetAsCap) noexcept
 {
-    try {
-        std::lock_guard lock(gHost.mutex);
-        auto next = gHost.dynamic;
-        next.enabled = enabled;
-        next.targetFps = std::min<uint32_t>(targetFps, 1000);
-        next.rounding = std::clamp(rounding, 0, 2);
-        next.allow1x = allow1x;
-        next.targetAsCap = targetAsCap;
-        if (next == gHost.dynamic) return;
-        gHost.dynamic = next;
-        Log("d3d12_dynamic_config", std::string("\"enabled\":") + (enabled ? "true" : "false") + ",\"target\":" +
-            std::to_string(next.targetFps) + ",\"rounding\":" + std::to_string(next.rounding) + ",\"allow_1x\":" +
-            (allow1x ? "true" : "false") + ",\"target_as_cap\":" + (targetAsCap ? "true" : "false"));
-    } catch (...) {}
+    xemfg_host::ConfigureDynamic(gHost.mutex, gHost.dynamic, "d3d12_dynamic_config", enabled, targetFps, rounding, allow1x,
+                                 targetAsCap);
 }
 
 bool InsideTakeover() noexcept { return tInsideHost; }
 
+namespace
+{
+// xemfglive.1: a move asked for is under way (its resize not yet seen, or not yet given up).
+bool MovePending() noexcept
+{
+    const uint64_t deadline = gMoveDeadlineMs.load();
+    return deadline && NowMs() < deadline;
+}
+}
+
 bool ReplacesFrameGeneration() noexcept
 {
-    if (!gEnabled.load() || gRuntimeFailed.load() || optiscaler_host::Detected()) return false;
+    if (gDlssgRetired.load()) return true;   // xemfglive.5: until a restart, whatever else happens
+    if (gRuntimeFailed.load() || optiscaler_host::Detected()) return false;
+    const bool pending = MovePending();
     std::lock_guard lock(gHost.mutex);
-    return !gHost.chains.empty() || (!gDeclinedWhileOn.load() && !gNativeBeforeOn.load());
+    // xemfglive.1: switched off, the hold stays for as long as XeFG has the chain (not only once its move back is asked
+    // for, at the game's next Present), so the game's DLSS-G never starts on XeFG's chain: with no Streamline chain of
+    // its own it would stay On through the move and crash in sl.dlss_g's Present. Switched on, it starts with the move
+    // asked for; a move that does not happen gives the game its DLSS-G back (gNativeBeforeOn) when the wait ends.
+    if (!gEnabled.load()) return !gHost.chains.empty();
+    return !gHost.chains.empty() || pending || (!gDeclinedWhileOn.load() && !gNativeBeforeOn.load());
 }
 
 void GameFrameGeneration(bool on) noexcept
@@ -519,6 +562,12 @@ void GameFrameGeneration(bool on) noexcept
 }
 
 // ---------------------------------------------------------------- swap chains
+namespace
+{
+bool TakeOver(ID3D12CommandQueue* native, HWND window, const DXGI_SWAP_CHAIN_DESC1* desc,
+    const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen, bool live, IDXGISwapChain1** output, std::string& reason) noexcept;
+}
+
 bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* desc,
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen, IDXGIOutput*, void* caller, IDXGISwapChain1** output,
     HRESULT& hr) noexcept
@@ -526,7 +575,7 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
     if (!output || !desc || !queue) return false;
     ComPtr<ID3D12CommandQueue> native;
     if (!single_overlay::native::Unwrap(queue, native) || !native) {   // not a D3D12 chain
-        // alpha.15 (B4-26): said once while XeMFG standalone is on (Metro Redux's DirectX 11 chain was silent).
+        // Said once while XeMFG standalone is on, so a DirectX 11 chain is not refused silently.
         static std::atomic<bool> logged{false};
         if (gEnabled.load() && !logged.exchange(true))
             Log("d3d12_takeover_refused", "\"reason\":\"not_d3d12\",\"width\":" + std::to_string(desc->Width) +
@@ -546,6 +595,43 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
         return false;
     }
     std::string reason;
+    if (!TakeOver(native.Get(), window, desc, fullscreen, false, output, reason)) {
+        if (reason != "takeover_exception") {
+            gDeclinedWhileOn = true;
+            Log("d3d12_takeover_failed", "\"reason\":\"" + Escape(reason) + "\"");
+        }
+        NoteReason(reason);
+        return false;
+    }
+    hr = S_OK;
+    return true;
+}
+
+bool CreateSwapChainLive(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1& desc,
+    const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen, bool force, IDXGISwapChain1** output, std::string& reason) noexcept
+{
+    if (output) *output = nullptr;
+    try {
+        ComPtr<ID3D12CommandQueue> native;
+        if (!output || !queue || !single_overlay::native::Unwrap(queue, native) || !native) reason = "not_d3d12";
+        else if (!force && !gEnabled.load()) reason = "switched_off";
+        else if (const char* refused = Refusal(window, desc, nullptr)) reason = refused;
+        else if (TakeOver(native.Get(), window, &desc, fullscreen, true, output, reason)) return true;
+        if (reason.empty()) reason = "takeover";
+    } catch (...) {
+        reason = "takeover_exception";
+    }
+    return false;
+}
+
+namespace
+{
+// The takeover (CreateSwapChain at the game's creation, CreateSwapChainLive for a running game): XeFG creates the
+// real chain on a system factory, and its proxy chain is the result (the caller's reference). `live`: a running game's
+// chain, whose game may still apply DLSS-G On (generation waits until it is applied Off).
+bool TakeOver(ID3D12CommandQueue* native, HWND window, const DXGI_SWAP_CHAIN_DESC1* desc,
+    const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen, bool live, IDXGISwapChain1** output, std::string& reason) noexcept
+{
     auto chain = std::make_shared<Chain>();
     try {
         tInsideHost = true;
@@ -568,7 +654,7 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
         if (reason.empty()) {
             std::lock_guard lock(gHost.mutex);
             if (EnsureXell(device.Get(), reason)) {
-                // xemfgsa.3: no flip queue and the game's buffer count on this device (xess_mod ConfigureFlipQueue).
+                // No flip queue and the game's buffer count on this device (xess_mod ConfigureFlipQueue).
                 xess_mod::SetStandaloneHostDevice(device.Get());
                 xess_mod::VulkanHostCallScope scope;
                 if (rt.xefgSwapChainD3D12CreateContext(device.Get(), &chain->fg) != XEFG_SWAPCHAIN_RESULT_SUCCESS || !chain->fg) {
@@ -590,15 +676,15 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
             params.maxInterpolatedFrames = 5;
             params.uiMode = XEFG_SWAPCHAIN_UI_MODE_AUTO;
             xess_mod::VulkanHostCallScope scope;
-            auto result = rt.xefgSwapChainD3D12InitFromSwapChainDesc(chain->fg, window, desc, fullscreen, native.Get(), factory.Get(), &params);
+            auto result = rt.xefgSwapChainD3D12InitFromSwapChainDesc(chain->fg, window, desc, fullscreen, native, factory.Get(), &params);
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS) {
                 // Without the 5-frame allocation (an unlock the route refused leaves XeFG's stock limit).
                 params.maxInterpolatedFrames = XEFG_SWAPCHAIN_USE_MAX_SUPPORTED_INTERPOLATED_FRAMES;
-                result = rt.xefgSwapChainD3D12InitFromSwapChainDesc(chain->fg, window, desc, fullscreen, native.Get(), factory.Get(), &params);
+                result = rt.xefgSwapChainD3D12InitFromSwapChainDesc(chain->fg, window, desc, fullscreen, native, factory.Get(), &params);
             }
             const char* menu = nullptr;
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS) reason = "xefg_init_" + std::to_string(int(result));
-            // alpha.15 (B4-05): the game's chain gets no menu here, so a takeover whose output chain did not get it
+            // The game's chain gets no menu here, so a takeover whose output chain did not get it
             // either would leave no menu and no menu key (and the saved switch repeats it every launch). Fail it:
             // the game keeps its native chain with the menu, which shows this reason.
             else if (single_module::OverlayAllowed() && !xess_mod::HostOutputAttached(chain->fg, &menu))
@@ -615,9 +701,6 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
         if (!reason.empty()) {
             proxy.Reset();
             if (chain->fg) { xess_mod::VulkanHostCallScope scope; rt.xefgSwapChainDestroy(chain->fg); }
-            gDeclinedWhileOn = true;
-            NoteReason(reason);
-            Log("d3d12_takeover_failed", "\"reason\":\"" + Escape(reason) + "\"");
             return false;
         }
         chain->window = window;
@@ -628,6 +711,8 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
             if (GetClientRect(window, &client)) { chain->width = uint32_t(client.right); chain->height = uint32_t(client.bottom); }
         }
         chain->lastPresent = Now();
+        // xemfglive.1: the game's DLSS-G is still applied On until the hold reaches the provider (its next SetOptions).
+        chain->awaitDlssgOff = live && gDlssgApplied.load();
         chain->keys.push_back(proxy.Get());
         ComPtr<IDXGISwapChain3> version3;
         if (SUCCEEDED(proxy.As(&version3)) && version3.Get() != static_cast<IDXGISwapChain*>(proxy.Get()))
@@ -641,16 +726,18 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
         Log("d3d12_takeover", "\"width\":" + std::to_string(chain->width) + ",\"height\":" + std::to_string(chain->height) +
             ",\"format\":" + std::to_string(int(desc->Format)) + ",\"buffers\":" + std::to_string(desc->BufferCount) +
             ",\"flags\":" + std::to_string(desc->Flags) + ",\"inverted_depth\":" + (chain->invertedDepth ? "true" : "false") +
-            ",\"frames\":" + std::to_string(chain->framesApplied) + ",\"runtime\":\"" + Escape(Narrow(gRuntime.folder)) + "\"");
+            ",\"frames\":" + std::to_string(chain->framesApplied) + ",\"live\":" + (live ? "true" : "false") +
+            ",\"await_dlssg_off\":" + (chain->awaitDlssgOff ? "true" : "false") +
+            ",\"runtime\":\"" + Escape(Narrow(gRuntime.folder)) + "\"");
         *output = proxy.Detach();
-        hr = S_OK;
         return true;
     } catch (...) {
         if (chain->fg) { xess_mod::VulkanHostCallScope scope; gRuntime.xefgSwapChainDestroy(chain->fg); }
-        NoteReason("takeover_exception");
+        reason = "takeover_exception";
         return false;
     }
 }
+} // namespace
 
 namespace
 {
@@ -694,9 +781,225 @@ bool Owns(IDXGISwapChain* chain) noexcept
     return FindLocked(chain) != nullptr;
 }
 
-void ChainReleased(IDXGISwapChain* chain) noexcept
+void ChainReleased(IDXGISwapChain* chain, const char* why) noexcept
 {
-    try { Destroy(Remove(chain), "game_release"); } catch (...) {}
+    try { Destroy(Remove(chain), why ? why : "game_release"); } catch (...) {}
+}
+
+// ---------------------------------------------------------------- live switching (xemfglive.1)
+Move WantedMove(bool hostChain) noexcept
+{
+    if (optiscaler_host::Detected()) return Move::eNone;
+    if (gMoveBlockedGeneration.load() == gSwitchGeneration.load()) return Move::eNone;
+    // xemfglive.5: with the game's DLSS-G held until a restart, XeFG keeps the chain when switched off.
+    if (hostChain) return gEnabled.load() || gDlssgRetired.load() ? Move::eNone : Move::eToNative;
+    return gEnabled.load() && !gRuntimeFailed.load() ? Move::eToXefg : Move::eNone;
+}
+
+uint32_t SwitchGeneration() noexcept { return gSwitchGeneration.load(); }
+
+namespace
+{
+struct ResizeRequest
+{
+    HWND window;
+    uint32_t generation;
+    uint64_t attempts;
+    HMODULE self;
+};
+
+// Shrinks the game's window by one pixel and restores it, both posted to the window's own thread
+// (SWP_ASYNCWINDOWPOS: this thread never waits on the game's message loop). Most games answer the size change with
+// ResizeBuffers, in which the chain moves; the restore waits for that resize (or 750 ms) so the two size changes are
+// not merged into none.
+const char* ResizeWindow(const ResizeRequest& request, int& width, int& height)
+{
+    const HWND window = request.window;
+    if (!IsWindow(window)) return "window_gone";
+    if (GetAncestor(window, GA_ROOT) != window) return "child_window";
+    if (IsIconic(window)) return "window_minimized";
+    RECT rect{};
+    if (!GetWindowRect(window, &rect)) return "window_rect";
+    width = rect.right - rect.left;
+    height = rect.bottom - rect.top;
+    if (width < 64 || height < 64) return "window_size";
+    constexpr UINT flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS;
+    if (!SetWindowPos(window, nullptr, 0, 0, width, height - 1, flags)) return "set_window_pos";
+    const uint64_t until = NowMs() + 750;
+    while (gMoveAttempts.load() == request.attempts && NowMs() < until) Sleep(10);
+    const bool resized = gMoveAttempts.load() != request.attempts;
+    SetWindowPos(window, nullptr, 0, 0, width, height, flags);
+    return resized ? nullptr : "resize_ignored";
+}
+
+DWORD WINAPI ResizeThread(void* raw)
+{
+    const std::unique_ptr<ResizeRequest> request(static_cast<ResizeRequest*>(raw));
+    const HMODULE self = request->self;
+    try {
+        int width = 0, height = 0;
+        const char* refused = ResizeWindow(*request, width, height);
+        Log("d3d12_live_resize", "\"generation\":" + std::to_string(request->generation) + ",\"width\":" + std::to_string(width) +
+            ",\"height\":" + std::to_string(height) + ",\"resized\":" + (refused ? "false" : "true") +
+            (refused ? std::string(",\"reason\":\"") + refused + "\"" : std::string()));
+        // A game that did not resize keeps its chain: the wait ends now (its DLSS-G hold with it), and the menu says why.
+        // xemfglive.3: one that ignored the nudge gets the proxy's back buffers from its next launch (remembered beside
+        // it), and the menu says so.
+        if (refused && !strcmp(refused, "resize_ignored") && single_overlay::proxy::RememberIgnoredResize())
+            refused = "resize_ignored_remembered";
+        if (refused && gSwitchGeneration.load() == request->generation) {
+            gMoveDeadlineMs = 0;
+            WantDlssgRelease(false);   // xemfglive.6: no move comes, the game's own requests are its own again
+            std::lock_guard lock(gHost.mutex);
+            if (gHost.moveReason.empty()) gHost.moveReason = refused;
+        }
+    } catch (...) {}
+    if (self) FreeLibraryAndExitThread(self, 0);
+    return 0;
+}
+}
+
+void RequestResize(HWND window, uint32_t generation) noexcept
+{
+    try {
+        // Once per generation, for the first proxy that asks (the game's main chain).
+        uint32_t asked = gResizeGeneration.load();
+        if (asked == generation || !gResizeGeneration.compare_exchange_strong(asked, generation)) return;
+        if (generation != gSwitchGeneration.load() || !window) return;
+        gMoveDeadlineMs = NowMs() + kMoveWindowMs;
+        HMODULE self = nullptr;   // the thread's own reference: the module outlives it
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(&ResizeThread), &self)) self = nullptr;
+        auto* request = new (std::nothrow) ResizeRequest{window, generation, gMoveAttempts.load(), self};
+        HANDLE thread = request && self ? CreateThread(nullptr, 0, ResizeThread, request, 0, nullptr) : nullptr;
+        if (thread) { CloseHandle(thread); return; }
+        delete request;
+        if (self) FreeLibrary(self);
+        gMoveDeadlineMs = 0;
+        std::lock_guard lock(gHost.mutex);
+        gHost.moveReason = "resize_thread";
+    } catch (...) {}
+}
+
+void HoldForMove(uint32_t generation, bool first) noexcept
+{
+    try {
+        if (generation != gSwitchGeneration.load()) return;
+        gMoveDeadlineMs = NowMs() + kMoveWindowMs;
+        if (first) {
+            Log("d3d12_live_move_begin", "\"route\":\"back_buffers\",\"generation\":" + std::to_string(generation) +
+                ",\"dlssg_on\":" + (gDlssgApplied.load() ? "true" : "false"));
+            std::lock_guard lock(gHost.mutex);
+            gHost.moveReason.clear();
+        }
+    } catch (...) {}
+}
+
+bool DlssgOn() noexcept { return gDlssgApplied.load(); }
+
+bool LivePreflight(HWND window, const DXGI_SWAP_CHAIN_DESC1& desc, std::string& reason) noexcept
+{
+    try {
+        if (const char* refused = Refusal(window, desc, nullptr)) { reason = refused; return false; }
+        Runtime& rt = LoadRuntime();
+        if (!rt.ready) { reason = rt.reason; return false; }
+        return true;
+    } catch (...) {
+        reason = "preflight_exception";
+        return false;
+    }
+}
+
+void MoveAttempt() noexcept { gMoveAttempts.fetch_add(1); }
+
+void MoveResult(Move move, const char* refused, bool retried) noexcept
+{
+    try {
+        const char* direction = move == Move::eToXefg ? "to_xefg" : "to_native";
+        Log("d3d12_live_move", std::string("\"direction\":\"") + direction + "\",\"moved\":" + (refused ? "false" : "true") +
+            (refused ? std::string(",\"reason\":\"") + refused + "\"" : std::string()) +
+            (retried ? ",\"recreated\":true" : "") + ",\"generation\":" + std::to_string(gSwitchGeneration.load()));
+        if (refused && retried) gMoveBlockedGeneration = gSwitchGeneration.load();
+        // A native chain again (moved back, or kept when XeFG's failed): switching on moves it once more.
+        if ((move == Move::eToNative) == !refused) gNativeBeforeOn = true;
+        gMoveDeadlineMs = 0;
+        WantDlssgRelease(false);   // xemfglive.6: the game's own DLSS-G requests keep their retention again
+        std::lock_guard lock(gHost.mutex);
+        gHost.moveReason = refused ? refused : "";
+    } catch (...) {}
+}
+
+void DlssgApplied(bool on) noexcept
+{
+    if (on) gDlssgEverApplied = true;
+    if (gDlssgApplied.exchange(on) != on) Log("d3d12_dlssg_applied", std::string("\"on\":") + (on ? "true" : "false"));
+}
+
+void NativeChainReleased() noexcept
+{
+    if (!gDlssgEverApplied.load()) return;
+    // xemfglive.6: no live feature, exactly: a later On re-creates DLSS-G from that release.
+    if (DlssgReleased()) {
+        Log("d3d12_dlssg_released", "\"why\":\"live_move\",\"generation\":" + std::to_string(gSwitchGeneration.load()));
+        return;
+    }
+    if (!gDlssgRetired.exchange(true)) {
+        const auto liveness = ampere_backend::ReadFrameGenerationLiveness();
+        Log("d3d12_dlssg_retired", "\"why\":\"live_move\",\"until\":\"restart\",\"live_features\":" +
+            std::to_string(liveness.liveFeatures) + ",\"creates_in_flight\":" + std::to_string(liveness.createsInFlight) +
+            ",\"tracker_exact\":" + (liveness.exact ? "true" : "false") + ",\"generation\":" +
+            std::to_string(gSwitchGeneration.load()));
+    }
+}
+
+void WantDlssgRelease(bool want) noexcept
+{
+    if (gDlssgReleaseWanted.exchange(want) != want)
+        Log("d3d12_dlssg_release_wanted", std::string("\"want\":") + (want ? "true" : "false"));
+}
+
+bool DlssgReleaseWanted() noexcept { return gDlssgReleaseWanted.load(); }
+
+bool DlssgEverApplied() noexcept { return gDlssgEverApplied.load(); }
+
+bool DlssgReleased() noexcept { return ampere_backend::FrameGenerationQuiescent(); }
+
+void LogVideoMemory(IUnknown* queue, const char* point) noexcept
+{
+    try {
+        ComPtr<ID3D12CommandQueue> native;
+        ComPtr<ID3D12Device> device;
+        if (!queue || !point || !single_overlay::native::Unwrap(queue, native) || !native
+            || FAILED(native->GetDevice(IID_PPV_ARGS(&device))) || !device) return;
+        // A system factory, as the takeover's: a factory proxy above us adds nothing to an adapter query.
+        using CreateFactory2 = HRESULT(WINAPI*)(UINT, REFIID, void**);
+        const HMODULE dxgi = single_module::LoadSystemModule(L"dxgi.dll");
+        auto create = dxgi ? reinterpret_cast<CreateFactory2>(GetProcAddress(dxgi, "CreateDXGIFactory2")) : nullptr;
+        ComPtr<IDXGIFactory4> factory;
+        ComPtr<IDXGIAdapter3> adapter;
+        if (!create || FAILED(create(0, IID_PPV_ARGS(&factory))) || !factory
+            || FAILED(factory->EnumAdapterByLuid(device->GetAdapterLuid(), IID_PPV_ARGS(&adapter))) || !adapter) return;
+        DXGI_QUERY_VIDEO_MEMORY_INFO local{}, nonLocal{};
+        if (FAILED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local))
+            || FAILED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &nonLocal))) return;
+        const auto mib = [](UINT64 bytes) { return std::to_string(bytes >> 20); };
+        Log("d3d12_live_move_vram", std::string("\"point\":\"") + point + "\",\"local_mib\":" + mib(local.CurrentUsage) +
+            ",\"local_budget_mib\":" + mib(local.Budget) + ",\"non_local_mib\":" + mib(nonLocal.CurrentUsage) +
+            ",\"dlssg_released\":" + (DlssgReleased() ? "true" : "false") +
+            ",\"generation\":" + std::to_string(gSwitchGeneration.load()));
+    } catch (...) {}
+}
+
+void ChainResized(IDXGISwapChain* key) noexcept
+{
+    try {
+        void* fg = nullptr;
+        {
+            std::lock_guard lock(gHost.mutex);
+            auto chain = FindLocked(key);
+            if (chain) fg = chain->fg;
+        }
+        if (fg) sdk_pacing::RecheckCapacity(fg);
+    } catch (...) {}
 }
 
 void BeforePresent(IDXGISwapChain* key) noexcept
@@ -732,6 +1035,9 @@ void BeforePresent(IDXGISwapChain* key) noexcept
         inputs.gameFrameGeneration = gGameFrameGeneration.load();
         inputs.fsrFrameGeneration = gFsrFrameGeneration.load();
         const char* why = xemfg_standalone::WhyNotGenerating(inputs);
+        // xemfglive.1: a chain moved while the game's DLSS-G was applied On generates once the hold reached the provider.
+        if (chain->awaitDlssgOff && !gDlssgApplied.load()) chain->awaitDlssgOff = false;
+        if (!why && chain->awaitDlssgOff) why = "dlssg_still_on";
         bool tagged = false;
         xess_mod::VulkanHostCallScope scope;
         if (!why) {
@@ -760,7 +1066,7 @@ void BeforePresent(IDXGISwapChain* key) noexcept
             tagged = rt.xefgSwapChainTagFrameConstants(chain->fg, id, &constants) == XEFG_SWAPCHAIN_RESULT_SUCCESS;
             if (!tagged) why = "constants";
         }
-        // xemfgsa.6: Dynamic MFG picks this frame's count, up to the frames set (1 = generation off, 1X: XeFG keeps its
+        // Dynamic MFG picks this frame's count, up to the frames set (1 = generation off, 1X: XeFG keeps its
         // count and comes back on in microseconds). It runs while XeFG could generate; when generation comes back
         // (the game's switch, inputs) its averages start over and what it learned stays.
         uint32_t frames = gFrames.load();
@@ -792,9 +1098,13 @@ void BeforePresent(IDXGISwapChain* key) noexcept
             dynamicOff = wanted <= 1;
             if (!dynamicOff) frames = wanted;
             chain->dynamicRan = true;
+            // autofps.1: DLSS 5 Auto follows this target while there is one (frame_gen_target.h); 1X counts when allowed.
+            frame_gen_target::Publish(frame_gen_target::Source::eXemfg, chain->dynamic.TargetFps() > 0.0, float(chain->dynamic.TargetFps()),
+                settings.allow1x && !chain->dynamic.CapActive() ? 1u : 2u, settings.maxFrames);
         } else {
             if (!gHost.dynamic.enabled && chain->dynamic.Active()) chain->dynamic.Reset();
             chain->dynamicRan = false;
+            frame_gen_target::Publish(frame_gen_target::Source::eXemfg, false, 0.0f, 0, 0);
         }
         const bool enabled = !why && !dynamicOff;
         if (enabled != chain->enabledApplied) {
@@ -822,11 +1132,16 @@ void BeforePresent(IDXGISwapChain* key) noexcept
         chain->generating = enabled;
         gHost.reason = why ? why : "";
         chain->presentStart = Now();
+        // pacerfix.1: the low-latency pacing times the game thread's wait in XeFG's Present (EndGamePresent in AfterPresent).
+        // pacerfix.2: on this context, whose flip queue takes the wait as evidence.
+        sdk_pacing::BeginGamePresent(chain->fg);
     } catch (...) {}
 }
 
 void AfterPresent(IDXGISwapChain* key, HRESULT result) noexcept
 {
+    // pacerfix.1: first, before the host's lock (its wait is not the Present's), and before the sleep point below.
+    sdk_pacing::EndGamePresent();
     try {
         uint32_t next = 0;
         bool sleep = false;
@@ -843,10 +1158,10 @@ void AfterPresent(IDXGISwapChain* key, HRESULT result) noexcept
             gHost.ids.Presented(id);
             ++chain->presents;
             ++gBasePresents;
-            gHost.fps.Add(now, gBasePresents.load(), sdk_pacing::OutputPresents());   // xemfgsa.5
+            gHost.fps.Add(now, gBasePresents.load(), sdk_pacing::OutputPresents());
             if (chain->presentStart) {
                 gHost.presentTicks += Now() - chain->presentStart;
-                chain->lastPresentMs = Milliseconds(Now() - chain->presentStart);   // xemfgsa.6: Dynamic MFG's wait
+                chain->lastPresentMs = Milliseconds(Now() - chain->presentStart);   // Dynamic MFG's wait
             }
             chain->presentStart = 0;
             ++gHost.intervalPresents;
@@ -855,7 +1170,7 @@ void AfterPresent(IDXGISwapChain* key, HRESULT result) noexcept
                 gRuntime.xefgSwapChainGetLastPresentStatus(chain->fg, &chain->status);
             }
             if (chain->presents == 1 || (chain->presents % 600) == 0) {
-                // xemfgsa.2: where the frame's time goes, per base frame over the interval.
+                // Where the frame's time goes, per base frame over the interval.
                 const double frames = double(std::max<uint32_t>(gHost.intervalPresents, 1));
                 char timing[160]{};
                 snprintf(timing, sizeof(timing), ",\"present_ms\":%.3f,\"xell_sleep_ms\":%.3f", Milliseconds(gHost.presentTicks) / frames,
@@ -866,8 +1181,8 @@ void AfterPresent(IDXGISwapChain* key, HRESULT result) noexcept
                     ",\"source\":\"" + xemfg_standalone::SourceName(gHost.lastSource) + "\"" + timing +
                     ",\"game_markers\":" + std::to_string(gHost.markers) + ",\"reflex_sleeps_to_xell\":" + std::to_string(gHost.reflexSleeps) +
                     ",\"own_xell_sleeps\":" + std::to_string(gHost.ownSleeps) + ",\"interval_presents\":" + std::to_string(gHost.intervalPresents) +
-                    ",\"game_thread\":" + std::to_string(GetCurrentThreadId()) +   // xemfgsa.4: names a fault's thread
-                    ",\"streamline_refused\":" + std::to_string(gHost.streamlineRefused));   // xemfgsa.5
+                    ",\"game_thread\":" + std::to_string(GetCurrentThreadId()) +   // names a fault's thread
+                    ",\"streamline_refused\":" + std::to_string(gHost.streamlineRefused));
                 gHost.markers = gHost.reflexSleeps = gHost.ownSleeps = 0;
                 gHost.streamlineRefused = 0;
                 gHost.presentTicks = gHost.sleepTicks = 0;
@@ -890,9 +1205,12 @@ void AfterPresent(IDXGISwapChain* key, HRESULT result) noexcept
             }
             std::lock_guard lock(gHost.mutex);
             gHost.sleepTicks += Now() - start;
-            gHost.frameSleepTicks += Now() - start;   // xemfgsa.6
+            gHost.frameSleepTicks += Now() - start;
             ++gHost.ownSleeps;
         }
+        // latency.1: the low-latency pacing's sleep, after XeLL's and before the next frame's simulation starts.
+        // pacerfix.2: the host's own fallback point, not the game's: sized by the real frame's own hold.
+        if (xell && sleep) sdk_pacing::SleepBeforeInput(false);
         if (xell) { std::lock_guard lock(gHost.mutex); Marker(next, XELL_SIMULATION_START); }
     } catch (...) {}
 }
@@ -900,15 +1218,30 @@ void AfterPresent(IDXGISwapChain* key, HRESULT result) noexcept
 // ---------------------------------------------------------------- Streamline inputs
 namespace
 {
-// xemfgsa.5 (log): a Streamline call whose token mapped to no frame (host lock held).
+// Logs a Streamline call whose token mapped to no frame (host lock held).
 void NoteStreamlineRefusedLocked(const char* call, uint32_t token)
 {
     ++gHost.streamlineRefused;
+    gHost.ids.Refused(token);
     if (gHost.streamlineRefusedLogs++ >= 8) return;
     Log("d3d12_streamline_refused", std::string("\"call\":\"") + call + "\",\"token\":" + std::to_string(token) +
         ",\"offset\":" + std::to_string(gHost.ids.Offset()) + ",\"last_presented\":" + std::to_string(gHost.ids.Last()) +
         ",\"render_token\":" + std::to_string(gHost.renderToken) + ",\"present_token\":" + std::to_string(gHost.presentToken) +
         ",\"latest_token\":" + std::to_string(gHost.latestToken));
+}
+// idanchor.1: the id of the frame a present-start marker names (FrameIds::FromPresentToken); logs the first anchors
+// (host lock held).
+uint32_t PresentIdFromTokenLocked(uint32_t token)
+{
+    const int64_t offset = gHost.ids.Offset();
+    const uint64_t anchors = gHost.ids.Anchors();
+    const uint32_t id = gHost.ids.FromPresentToken(token);
+    if (gHost.ids.Anchors() != anchors && gHost.anchorLogs++ < 8)
+        Log("d3d12_frame_ids_anchored", std::string("\"token\":") + std::to_string(token) + ",\"offset\":" +
+            std::to_string(offset) + ",\"new_offset\":" + std::to_string(gHost.ids.Offset()) + ",\"id\":" + std::to_string(id) +
+            ",\"render_token\":" + std::to_string(gHost.renderToken) + ",\"latest_token\":" + std::to_string(gHost.latestToken) +
+            ",\"streamline_refused\":" + std::to_string(gHost.streamlineRefused));
+    return id;
 }
 }
 
@@ -921,7 +1254,16 @@ void StreamlineTags(uint32_t viewport, bool framed, uint32_t frame, const sl::Re
         auto chain = ActiveLocked();
         if (!chain || !chain->fg) return;
         if (gHost.viewport != UINT32_MAX && gHost.viewport != viewport) return;
-        const uint32_t token = framed ? frame : gHost.latestToken;
+        // tagframe.1: a legacy tag belongs to the frame being rendered (standalone_policy.h LegacyTagToken).
+        const bool renderMarkers = gHost.renderMarkersMs && NowMs() - gHost.renderMarkersMs < 1000;
+        const uint32_t token = framed ? frame
+            : xemfg_standalone::LegacyTagToken(gHost.latestToken, gHost.renderToken, renderMarkers);
+        if (!framed && gHost.legacyTagLogs < 4 && token) {
+            ++gHost.legacyTagLogs;
+            Log("d3d12_streamline_legacy_tags", "\"token\":" + std::to_string(token) + ",\"render_token\":" +
+                std::to_string(gHost.renderToken) + ",\"latest_token\":" + std::to_string(gHost.latestToken) +
+                ",\"route\":\"" + (renderMarkers && gHost.renderToken ? "render_submit" : "latest") + "\"");
+        }
         if (!token && !framed) return;
         if (framed && frame > gHost.latestToken) gHost.latestToken = frame;
         const uint32_t id = gHost.ids.FromToken(token);
@@ -948,8 +1290,6 @@ void StreamlineTags(uint32_t viewport, bool framed, uint32_t frame, const sl::Re
             if (!Tag(*chain, list.Get(), id, type, d3d, area, resource->state, validity == xemfg_standalone::Validity::eOnlyNow)) continue;
             if (type == XEFG_SWAPCHAIN_RES_DEPTH) { record.depth = true; record.depthWidth = area.width; record.depthHeight = area.height; }
             else if (type == XEFG_SWAPCHAIN_RES_MOTION_VECTOR) { record.motion = true; record.motionWidth = area.width; record.motionHeight = area.height; }
-            else if (type == XEFG_SWAPCHAIN_RES_HUDLESS_COLOR) record.hudless = true;
-            else record.ui = true;
         }
         if (record.depth && record.motion) {
             if (gHost.viewport == UINT32_MAX) gHost.viewport = viewport;
@@ -972,7 +1312,6 @@ void StreamlineConstants(const sl::Constants& constants, uint32_t frame, uint32_
         auto& record = gHost.ring.At(id);
         if (!xemfg_standalone::Claim(record, Source::eStreamline)) return;
         const auto valid = [](float value) { return std::isfinite(value) && std::fabs(value) < 1e30f; };
-        record.constants = true;
         record.jitterX = valid(constants.jitterOffset.x) ? constants.jitterOffset.x : 0.0f;
         record.jitterY = valid(constants.jitterOffset.y) ? constants.jitterOffset.y : 0.0f;
         record.motionScaleX = valid(constants.mvecScale.x) ? constants.mvecScale.x : 0.0f;
@@ -997,7 +1336,7 @@ void LatencyMarker(uint32_t marker, uint32_t frame) noexcept
         std::lock_guard lock(gHost.mutex);
         if (!gHost.xell || !ActiveLocked()) return;
         if (frame > gHost.latestToken) gHost.latestToken = frame;
-        const uint32_t id = gHost.ids.FromToken(frame);
+        const uint32_t id = marker == XELL_PRESENT_START ? PresentIdFromTokenLocked(frame) : gHost.ids.FromToken(frame);
         if (!id) return;
         gHost.markersMs = NowMs();
         ++gHost.markers;
@@ -1017,7 +1356,7 @@ bool ReplacesReflexSleep() noexcept
     try {
         std::lock_guard lock(gHost.mutex);
         const auto chain = ActiveLocked();
-        // xemfgsa.6: also at Dynamic MFG's 1X, which XeLL still paces (its FPS limit, the waits Dynamic MFG reads).
+        // Also at Dynamic MFG's 1X, which XeLL still paces (its FPS limit, the waits Dynamic MFG reads).
         return gHost.xell && chain && chain->fg && (chain->generating || chain->dynamicOff);
     } catch (...) {
         return false;
@@ -1049,9 +1388,12 @@ void LatencySleep(uint32_t frame, bool slept) noexcept
             }
             std::lock_guard lock(gHost.mutex);
             gHost.sleepTicks += Now() - start;
-            gHost.frameSleepTicks += Now() - start;   // xemfgsa.6
+            gHost.frameSleepTicks += Now() - start;
             ++gHost.reflexSleeps;
         }
+        // latency.1: the low-latency pacing's sleep, after XeLL's (the game's markers follow this sleep).
+        // pacerfix.2: the game's own Reflex sleep, before its input: a proven point.
+        if (xell && id) sdk_pacing::SleepBeforeInput(true);
     } catch (...) {}
 }
 
@@ -1406,18 +1748,20 @@ void HookFfx(HMODULE module)
 
 void DiscoverUpscalers() noexcept
 {
-    if (!gEnabled.load() || optiscaler_host::Detected()) return;
+    // xemfglive.1: also while XeMFG is off but could be switched on live (Ready): the hooks pass the calls through until
+    // XeMFG wants inputs, and switching on finds them in place.
+    if (!Ready() || optiscaler_host::Detected()) return;
     try {
-        std::array<HMODULE, 2048> modules{};
-        DWORD bytes = 0;
-        if (!EnumProcessModulesEx(GetCurrentProcess(), modules.data(), sizeof(modules), &bytes, LIST_MODULES_64BIT) ||
-            bytes > sizeof(modules))
+        // sdkscan.1: psapi's list without the fixed 2048 cap, Toolhelp's when psapi fails (worker thread only).
+        std::vector<HMODULE> modules;
+        xess_mod::ModuleListStats listing;
+        if (!xess_mod::LoadedModules(modules, listing, xess_mod::ToolhelpList::eFallback))
             return;
         static std::unordered_set<HMODULE> seen;
         std::lock_guard lock(gHookMutex);
         const auto init = MH_Initialize();
         if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return;
-        for (size_t i = 0; i < bytes / sizeof(HMODULE); ++i) {
+        for (size_t i = 0; i < modules.size(); ++i) {
             const HMODULE module = modules[i];
             if (!module || module == single_module::Self() || seen.contains(module)) continue;
             const bool xess = GetProcAddress(module, "xessD3D12Execute") && GetProcAddress(module, "xessGetVersion");
@@ -1453,37 +1797,52 @@ Snapshot ReadSnapshot() noexcept
         snapshot.basePresents = gBasePresents.load();
         snapshot.inputFrames = gInputFrames.load();
         if (gRuntimeTried.load()) snapshot.runtime = Narrow(gRuntime.folder);
-        // alpha.15 (B4-12): where the pair belongs and the near-miss name, for the menu's note (UTF-8).
+        // Where the pair belongs and the near-miss name, for the menu's note (UTF-8).
         if (gRuntimeTried.load() && gRuntimeFailed.load()) {
             snapshot.runtimeSearch = xess_runtime_search::Utf8(gRuntime.search.recommended.wstring());
             snapshot.runtimeGame = xess_runtime_search::Utf8(gRuntime.search.gameFolder.wstring());
             snapshot.runtimeMisnamed = xess_runtime_search::Utf8(gRuntime.search.misnamed);
+            // oldruntime.1: the pair loaded without every export: the short file, where and its version.
+            if (gRuntime.outdated.file) {
+                snapshot.runtimeOld = xess_runtime_search::Utf8(gRuntime.folder);
+                snapshot.runtimeOldFile = xess_runtime_search::Utf8(gRuntime.outdated.file);
+                snapshot.runtimeOldVersion = gRuntime.outdated.version;
+                snapshot.runtimeNewer = xess_runtime_search::Utf8(xess_runtime_search::NewerPairFolder(gRuntime.search).wstring());
+            }
         }
         std::lock_guard lock(gHost.mutex);
         snapshot.source = uint32_t(gHost.lastSource);
         snapshot.reason = gHost.reason;
         if (auto chain = ActiveLocked()) {
             snapshot.active = true;
-            // xemfgsa.6: Dynamic MFG's 1X (generation off) is XeMFG at work, at one presented frame per game frame.
+            // Dynamic MFG's 1X (generation off) is XeMFG at work, at one presented frame per game frame.
             snapshot.generating = chain->generating || chain->dynamicOff;
             snapshot.frames = chain->dynamicOff ? 1 : chain->framesApplied;
             snapshot.dynamic = chain->dynamicRan;
             snapshot.dynamicCap = chain->dynamicRan && chain->dynamic.CapActive();
             snapshot.dynamicTargetMilli = chain->dynamicRan ? uint32_t(chain->dynamic.TargetFps() * 1000.0 + 0.5) : 0;
         }
-        // xemfgsa.5
         snapshot.baseFpsMilli = gHost.fps.baseMilli;
         snapshot.outputFpsMilli = gHost.fps.outputMilli;
         snapshot.fpsAgeMs = gHost.fps.sampleMs ? NowMs() - gHost.fps.sampleMs : UINT64_MAX;
         snapshot.fpsLimit = gFpsLimit.load();
         snapshot.limitIntervalUs = gHost.limitIntervalUs;
-        snapshot.restartNeeded = snapshot.enabled && !snapshot.active && gNativeBeforeOn.load();
-        snapshot.state = !snapshot.enabled ? "off"
+        // xemfglive.1: a move asked for is under way ("switching"); switched off while XeFG still has the chain
+        // ("returning", until the game's next resize); a running game's chain that did not move ("restart", with why).
+        snapshot.moving = MovePending();
+        snapshot.restartNeeded = snapshot.enabled && !snapshot.active && gNativeBeforeOn.load() && !snapshot.moving;
+        // xemfglive.5: switched off once the game's DLSS-G is held until a restart ("held").
+        snapshot.dlssgRetired = gDlssgRetired.load();
+        snapshot.state = !snapshot.enabled ? (snapshot.dlssgRetired ? "held"
+                : snapshot.active && !optiscaler_host::Detected() ? "returning" : "off")
             : optiscaler_host::Detected() ? "optiscaler"
             : snapshot.active ? (snapshot.generating ? "active" : "waiting")
             : gRuntimeFailed.load() ? "unavailable"
+            : snapshot.moving ? "switching"
             : snapshot.restartNeeded ? "restart"
             : "waiting";
+        if ((snapshot.state == "restart" || snapshot.state == "returning") && !gHost.moveReason.empty())
+            snapshot.reason = gHost.moveReason;
         if (gRuntimeFailed.load() && snapshot.reason.empty()) snapshot.reason = gRuntime.reason;
     } catch (...) {}
     return snapshot;

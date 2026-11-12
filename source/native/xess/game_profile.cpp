@@ -57,4 +57,29 @@ void LogSdkModule(void* value, const char* kind) noexcept
             std::to_string(minor)+"."+std::to_string(patch)+"\"");
     } catch (...) { WriteLog("native_sdk_module", "\"identity_log_unavailable\":true"); }
 }
+namespace {
+void LogModuleIdentity(const char* stage, void* value, const std::string& fields, bool withHash) noexcept
+{
+    try {
+        std::wstring path(32768,L'\0');
+        const auto n = GetModuleFileNameW(static_cast<HMODULE>(value),path.data(),static_cast<DWORD>(path.size()));
+        path.resize(n && n < path.size() ? n : 0);
+        std::string line = fields+",\"path\":\""+escape(utf8(path))+"\"";
+        if (withHash) {
+            std::string hash = "unavailable";
+            if (!path.empty()) try { hash = sha256(path); } catch (...) {}
+            line += ",\"sha256\":\""+hash+"\"";
+        }
+        WriteLog(stage, line);
+    } catch (...) {}
+}
+}
+void LogSdkCandidateRejected(void* value, const std::string& fields) noexcept
+{
+    LogModuleIdentity("sdk_candidate_rejected", value, fields, true);
+}
+void LogSdkModuleSeen(void* value, const std::string& fields, bool withHash) noexcept
+{
+    LogModuleIdentity("sdk_module_seen", value, fields, withHash);
+}
 }

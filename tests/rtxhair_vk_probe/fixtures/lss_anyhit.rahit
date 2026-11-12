@@ -1,0 +1,13 @@
+#version 460
+// rtxhair-spirv fixture: an any hit that skips thin LSS hits (alpha-tested hair tips). Expect: Rewritten,
+// one hit entry point, two LSS built-ins.
+#extension GL_EXT_ray_tracing : require
+#extension GL_NV_linear_swept_spheres : require
+
+layout(location = 0) rayPayloadInEXT vec4 payload;
+
+void main()
+{
+    if (gl_HitIsLSSNV && gl_HitLSSRadiiNV[1] < 0.001)
+        ignoreIntersectionEXT;
+}

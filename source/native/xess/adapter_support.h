@@ -77,7 +77,7 @@ inline UINT VendorOf(ID3D12Device* device) noexcept
     return vendor;
 }
 
-// V1.6.2-alpha.22 amdqueue.2: an AMD RDNA 3 or later GPU (RX 7000/9000 and their APUs) by PCI device ID. The set is the
+// An AMD RDNA 3 or later GPU (RX 7000/9000 and their APUs) by PCI device ID. The set is the
 // one AMD's Adrenalin 26.10.1 installs its RX 7000/9000 driver branch for (u0205306.inf: Navi 31/32/33 0x7448-0x7499,
 // Navi 48/44 0x7550/0x7551/0x7590, APUs 0x1114/0x150E/0x1586/0x15BF/0x15C8/0x1900-0x1902) and not its RX 6000 branch
 // (u0205305.inf: RDNA 2 and older, discrete up to Navi 24's 0x743F). Discrete IDs from Navi 31's block (0x7440) on count,

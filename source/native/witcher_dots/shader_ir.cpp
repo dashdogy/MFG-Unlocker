@@ -128,7 +128,7 @@ constexpr std::array<TranslucencySite,12> kPathTracerSites{{
 // Colour-aware loops (dominator-checked on the game DXC disassembly): the pixel
 // colour dominates the preheader's branch, the payload the latch's branch. The
 // pixel colour is the hair albedo, GBuffer0 after the game's pow 2.2 decode
-// (hairtrans.4; hairtrans.3 took GBuffer2, the specular colour).
+// (not GBuffer2, the specular colour).
 constexpr std::array<TranslucencyLoop,2> kPathTracerLoops{{
     {"PTRGSWithSERFinal","910","902","15468","662,663,664","5892"},
     {"PTRGSFinal","908","900","15401","660,661,662","5843"},
@@ -639,6 +639,21 @@ bool TranslationWanted(const ShaderIdentity& shader) noexcept {
 const ShaderIdentity* FindShader(std::span<const std::byte> bytes,ShaderKind kind) {
     for(const auto& shader:kShaders)if(shader.kind==kind&&bytes.size()==shader.size&&HashEquals(bytes,shader.sha256))return &shader;
     return nullptr;
+}
+bool ApplyHairLook(std::string_view rewritten,const ShaderIdentity& shader,std::string& translated,std::string& applied,std::string& error) {
+    try {
+        translated.clear();applied.clear();
+        if(shader.kind==ShaderKind::PathTracer)throw std::runtime_error("not a hair shader");
+        std::string s=Named(std::string(rewritten));
+        const auto note=[&](const char* fix) {applied+=applied.empty()?fix:std::string(", ")+fix;};
+        if(HairAlbedoLinear()&&shader.albedo) {AlbedoGamma(s,*shader.albedo);note("linear albedo");}
+        if(shader.kind==ShaderKind::Prepass) {
+            if(HairDebugLighting()&&shader.debug) {DebugLines(s,*shader.debug,HairDebugLighting());note("debug lighting");}
+            if(HairTranslucency()&&shader.translucency) {Translucent(s,*shader.translucency,HairTranslucency());note("translucency");}
+        }
+        Prune(s);
+        translated=std::move(s);return true;
+    } catch(const std::exception& e) {translated.clear();applied.clear();error=e.what();return false;}
 }
 bool TranslateIr(std::string_view original,const ShaderIdentity& shader,std::string& translated,std::string& error) {
     try {

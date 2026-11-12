@@ -1,4 +1,4 @@
-# Universal MFG Unlocker V1.7.0
+# Universal MFG Unlocker V1.7.1
 
 **README** · [Install](docs/install.md) · [Using the menu](docs/menu.md) · [Game compatibility](docs/compatibility.md) · [OptiScaler](docs/optiscaler.md) · [XeMFG](docs/xemfg.md) · [Troubleshooting](docs/troubleshooting.md)
 
@@ -24,7 +24,7 @@ If this mod helps you, [help me get through university on Ko-fi](https://ko-fi.c
 
 ## Quick start
 
-1. Download `MFGUnlocker-v1.7.0.zip` from
+1. Download `MFGUnlocker-v1.7.1.zip` from
    [Releases](https://github.com/dashdogy/MFG-Unlocker/releases) and extract it.
 2. Rename `MFGUnlocker.dll` to a filename the game loads early, usually
    `version.dll` or `winmm.dll`. [Game compatibility](docs/compatibility.md)
@@ -38,20 +38,23 @@ filename, upgrading and uninstalling. To use OptiScaler, see
 [OptiScaler](docs/optiscaler.md). MFG Unlocker is not supported in games with
 [anti-cheat](docs/compatibility.md#games-with-anti-cheat).
 
-## What's new in V1.7.0
+## What's new in V1.7.1
 
-- **DLSS 5 in the menu:** a [DLSS 5 tab](docs/menu.md#dlss-5) with Hook Method,
-  Look, Resolution Scale (with Auto) and Half rate.
-- **[XeMFG standalone](docs/xemfg.md#xemfg-standalone) (experimental):** XeSS
-  Multi Frame Generation without OptiScaler, in DirectX 12 and Vulkan games, at
-  2x to 6x or Dynamic.
-- **MFG Unlocker's menu beside OptiScaler's** for the DLSS presets and DLSS 5
-  ([OptiScaler](docs/optiscaler.md#menus)).
-- **Smoother XeMFG:** a new [flip queue](docs/xemfg.md#pacing) presents each
-  batch of frames on an even cadence.
-- **XeMFG in Vulkan games through OptiScaler**, with any frame generation input.
-- **RTX 30 and RTX 20:** DLSS Frame Generation starts in more games, and stays
-  off cleanly when it can't.
+- **DLSS 5 presets:** save your settings under a name and share them as a code
+  ([DLSS 5](docs/menu.md#dlss-5)); Auto resolution scale changes smoothly.
+- **DirectX 11 games:** the menu and DLSS 5 now run there too.
+- **[XeMFG as OptiScaler's DLSS Frame Generation](docs/xemfg.md#xemfg-as-optiscalers-dlss-frame-generation)
+  (experimental):** up to 6x and Dynamic MFG in DirectX 12 and Vulkan games,
+  with no extra DLL.
+- **[RTX Hair on RTX 40 and RTX 30](docs/compatibility.md#path-traced-hair)**,
+  on by default, Vulkan games included.
+- **An MFG Unlocker tab in OptiScaler's menu**
+  ([OptiScaler](docs/optiscaler.md#menus)), and a
+  [Keybinds tab](docs/menu.md#keys) in MFG Unlocker's own menu.
+- **XeMFG pacing:** a reworked pacer on AMD for smoother frames and lower
+  latency.
+- **RTX 30 and RTX 20** are no longer held at 2x in Streamline 2.12 games
+  (Darktide).
 
 The full list, and every earlier release, is in the [changelog](CHANGELOG.md).
 

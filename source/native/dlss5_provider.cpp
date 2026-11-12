@@ -122,26 +122,24 @@ bool InstallCallerImport(HMODULE module,const char* symbol,void* expected,void* 
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 NVSDK_NGX_Result FaultResult() noexcept { return static_cast<NVSDK_NGX_Result>(kProviderFault); }
-__declspec(noinline) NVSDK_NGX_Result CallCreate(CreateFn fn, ID3D12GraphicsCommandList* cmd,
-    const NVSDK_NGX_Parameter* params, NVSDK_NGX_Handle** handle) noexcept {
-    __try { volatile auto result=fn(cmd,static_cast<NVSDK_NGX_Feature>(kFeature),params,handle); return result; }
+// Keep SEH in a helper without C++ destructors and retain a real return address.
+template <class Fn, class... Args>
+__declspec(noinline) NVSDK_NGX_Result CallProvider(Fn fn, Args... args) noexcept {
+    __try { volatile auto result=fn(args...); return result; }
     __except(EXCEPTION_EXECUTE_HANDLER) { return FaultResult(); }
 }
-__declspec(noinline) NVSDK_NGX_Result CallEvaluate(EvaluateFn fn, ID3D12GraphicsCommandList* cmd,
-    const NVSDK_NGX_Handle* handle, const NVSDK_NGX_Parameter* params) noexcept {
-    __try { volatile auto result=fn(cmd,handle,params,nullptr); return result; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return FaultResult(); }
-}
-__declspec(noinline) NVSDK_NGX_Result CallRelease(ReleaseFn fn,NVSDK_NGX_Handle* handle) noexcept {
-    __try { volatile auto result=fn(handle); return result; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return FaultResult(); }
-}
-}
-bool DirectProvider::Open(const wchar_t* path, HMODULE runtime) noexcept {
+// One graphics API's entries: the runtime's parameter allocation pair and the
+// provider's Init, Create, Evaluate and Release.
+struct Entries { const char *allocate, *destroy, *init, *create, *evaluate, *release; };
+// The admission of DirectProvider::Open and VulkanDirectProvider::Open: the
+// provider's members (held*) are set once, and only when every check passed.
+template <class Init, class Create, class Evaluate>
+bool AdmitProvider(const wchar_t* path, HMODULE runtime, const Entries& names, HMODULE& heldRuntime, HMODULE& heldModule,
+    Init& heldInit, Create& heldCreate, Evaluate& heldEvaluate, ReleaseFn& heldRelease) noexcept {
     std::lock_guard lock(gImports);
-    if (module_) return runtime_==runtime && init_ && create_ && evaluate_ && release_;
-    if (!path || !runtime || !GetProcAddress(runtime,"NVSDK_NGX_D3D12_AllocateParameters")
-        || !GetProcAddress(runtime,"NVSDK_NGX_D3D12_DestroyParameters")) return false;
+    if (heldModule) return heldRuntime==runtime && heldInit && heldCreate && heldEvaluate && heldRelease;
+    if (!path || !runtime || !GetProcAddress(runtime,names.allocate)
+        || !GetProcAddress(runtime,names.destroy)) return false;
     // Absolute paths prevent DLL search-path substitution.
     if (!(path[0] && path[1]==L':' && (path[2]==L'\\' || path[2]==L'/'))) return false;
     if (!gPcToHeader) gPcToHeader=reinterpret_cast<PcToHeaderFn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"RtlPcToFileHeader"));
@@ -154,10 +152,10 @@ bool DirectProvider::Open(const wchar_t* path, HMODULE runtime) noexcept {
     wchar_t actual[32768]{};
     const DWORD actualLength=GetModuleFileNameW(loaded,actual,32768);
     if(!actualLength || actualLength>=32768 || !SameFile(actual,path)){FreeLibrary(loaded);return false;}
-    const auto init=reinterpret_cast<InitFn>(GetProcAddress(loaded,"NVSDK_NGX_D3D12_Init_Ext"));
-    const auto create=reinterpret_cast<CreateFn>(GetProcAddress(loaded,"NVSDK_NGX_D3D12_CreateFeature"));
-    const auto evaluate=reinterpret_cast<EvaluateFn>(GetProcAddress(loaded,"NVSDK_NGX_D3D12_EvaluateFeature"));
-    const auto release=reinterpret_cast<ReleaseFn>(GetProcAddress(loaded,"NVSDK_NGX_D3D12_ReleaseFeature"));
+    const auto init=reinterpret_cast<Init>(GetProcAddress(loaded,names.init));
+    const auto create=reinterpret_cast<Create>(GetProcAddress(loaded,names.create));
+    const auto evaluate=reinterpret_cast<Evaluate>(GetProcAddress(loaded,names.evaluate));
+    const auto release=reinterpret_cast<ReleaseFn>(GetProcAddress(loaded,names.release));
     if (!ExecutableOwner(reinterpret_cast<void*>(init),loaded) || !ExecutableOwner(reinterpret_cast<void*>(create),loaded)
         || !ExecutableOwner(reinterpret_cast<void*>(evaluate),loaded) || !ExecutableOwner(reinterpret_cast<void*>(release),loaded)
         || !GetProcAddress(loaded,"NVSDK_NGX_GetSnippetVersion")
@@ -171,119 +169,68 @@ bool DirectProvider::Open(const wchar_t* path, HMODULE runtime) noexcept {
     HMODULE retained=nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
         reinterpret_cast<LPCWSTR>(runtime),&retained) || retained!=runtime) return false;
-    runtime_=runtime; module_=loaded; init_=init; create_=create; evaluate_=evaluate; release_=release;
+    heldRuntime=runtime; heldModule=loaded; heldInit=init; heldCreate=create; heldEvaluate=evaluate; heldRelease=release;
     return true;
 }
-// Keep SEH in a helper without C++ destructors and retain a real return address.
-namespace {
-using RawInit=NVSDK_NGX_Result(NVSDK_CONV*)(unsigned long long,const wchar_t*,ID3D12Device*,NVSDK_NGX_Version,const NVSDK_NGX_Parameter*);
-__declspec(noinline) NVSDK_NGX_Result CallInit(RawInit fn,ID3D12Device* device,NVSDK_NGX_Parameter* params) noexcept {
-    __try { volatile auto result=fn(0x24480451ull,L"",device,NVSDK_NGX_Version_API,params); return result; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return FaultResult(); }
 }
+bool DirectProvider::Open(const wchar_t* path, HMODULE runtime) noexcept {
+    return AdmitProvider(path,runtime,{"NVSDK_NGX_D3D12_AllocateParameters","NVSDK_NGX_D3D12_DestroyParameters",
+        "NVSDK_NGX_D3D12_Init_Ext","NVSDK_NGX_D3D12_CreateFeature","NVSDK_NGX_D3D12_EvaluateFeature",
+        "NVSDK_NGX_D3D12_ReleaseFeature"},runtime_,module_,init_,create_,evaluate_,release_);
 }
 NVSDK_NGX_Result DirectProvider::Initialize(ID3D12Device* device,NVSDK_NGX_Parameter* params) noexcept {
     if (!module_ || !device || faulted_ || (device_ && device_!=device)) return NVSDK_NGX_Result_FAIL_NotInitialized;
     if (initialized_) return NVSDK_NGX_Result_Success;
     Scope scope(runtime_);
-    const auto result=CallInit(init_,device,params);
+    const auto result=CallProvider(init_,0x24480451ull,L"",device,NVSDK_NGX_Version_API,params);
     faulted_=static_cast<uint32_t>(result)==kProviderFault;
     if (result==NVSDK_NGX_Result_Success) { initialized_=true; device_=device; device_->AddRef(); }
     return result;
 }
 NVSDK_NGX_Result DirectProvider::Create(ID3D12GraphicsCommandList* cmd,const NVSDK_NGX_Parameter* params,NVSDK_NGX_Handle** out) noexcept {
     if (!initialized_ || faulted_) return NVSDK_NGX_Result_FAIL_NotInitialized;
-    Scope scope(runtime_); const auto result=CallCreate(create_,cmd,params,out);
+    Scope scope(runtime_); const auto result=CallProvider(create_,cmd,static_cast<NVSDK_NGX_Feature>(kFeature),params,out);
     faulted_=static_cast<uint32_t>(result)==kProviderFault; return result;
 }
 NVSDK_NGX_Result DirectProvider::Evaluate(ID3D12GraphicsCommandList* cmd,const NVSDK_NGX_Handle* handle,const NVSDK_NGX_Parameter* params) noexcept {
     if (!initialized_ || faulted_) return NVSDK_NGX_Result_FAIL_NotInitialized;
-    Scope scope(runtime_); const auto result=CallEvaluate(evaluate_,cmd,handle,params);
+    Scope scope(runtime_); const auto result=CallProvider(evaluate_,cmd,handle,params,nullptr);
     faulted_=static_cast<uint32_t>(result)==kProviderFault; return result;
 }
 NVSDK_NGX_Result DirectProvider::Release(NVSDK_NGX_Handle* handle) noexcept {
     if (!initialized_ || faulted_) return NVSDK_NGX_Result_FAIL_NotInitialized;
-    Scope scope(runtime_); const auto result=CallRelease(release_,handle);
+    Scope scope(runtime_); const auto result=CallProvider(release_,handle);
     faulted_=static_cast<uint32_t>(result)==kProviderFault; return result;
 }
-// vkdlss5.1: the Vulkan entries, admitted exactly as DirectProvider::Open admits the D3D12 ones.
+// The Vulkan entries, admitted exactly as DirectProvider::Open admits the D3D12 ones.
 bool VulkanDirectProvider::Open(const wchar_t* path, HMODULE runtime) noexcept {
-    std::lock_guard lock(gImports);
-    if (module_) return runtime_==runtime && init_ && create_ && evaluate_ && release_;
-    if (!path || !runtime || !GetProcAddress(runtime,"NVSDK_NGX_VULKAN_AllocateParameters")
-        || !GetProcAddress(runtime,"NVSDK_NGX_VULKAN_DestroyParameters")) return false;
-    if (!(path[0] && path[1]==L':' && (path[2]==L'\\' || path[2]==L'/'))) return false;
-    if (!gPcToHeader) gPcToHeader=reinterpret_cast<PcToHeaderFn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"RtlPcToFileHeader"));
-    if(!gHandleExA)gHandleExA=reinterpret_cast<HandleExAFn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"GetModuleHandleExA"));
-    if(!gHandleExW)gHandleExW=reinterpret_cast<HandleExWFn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"GetModuleHandleExW"));
-    if (!gPcToHeader || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(&DirectCallerHeader), &gSelf)) return false;
-    HMODULE loaded=LoadLibraryExW(path,nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-    if (!loaded) return false;
-    wchar_t actual[32768]{};
-    const DWORD actualLength=GetModuleFileNameW(loaded,actual,32768);
-    if(!actualLength || actualLength>=32768 || !SameFile(actual,path)){FreeLibrary(loaded);return false;}
-    const auto init=reinterpret_cast<InitFn>(GetProcAddress(loaded,"NVSDK_NGX_VULKAN_Init_Ext2"));
-    const auto create=reinterpret_cast<CreateFn>(GetProcAddress(loaded,"NVSDK_NGX_VULKAN_CreateFeature1"));
-    const auto evaluate=reinterpret_cast<EvaluateFn>(GetProcAddress(loaded,"NVSDK_NGX_VULKAN_EvaluateFeature"));
-    const auto release=reinterpret_cast<ReleaseFn>(GetProcAddress(loaded,"NVSDK_NGX_VULKAN_ReleaseFeature"));
-    if (!ExecutableOwner(reinterpret_cast<void*>(init),loaded) || !ExecutableOwner(reinterpret_cast<void*>(create),loaded)
-        || !ExecutableOwner(reinterpret_cast<void*>(evaluate),loaded) || !ExecutableOwner(reinterpret_cast<void*>(release),loaded)
-        || !GetProcAddress(loaded,"NVSDK_NGX_GetSnippetVersion")
-        || !InstallCallerImport(loaded,"RtlPcToFileHeader",reinterpret_cast<void*>(gPcToHeader),reinterpret_cast<void*>(&DirectCallerHeader),false)
-        || !InstallCallerImport(loaded,"GetModuleHandleExA",reinterpret_cast<void*>(gHandleExA),reinterpret_cast<void*>(&DirectHandleExA),true)
-        || !InstallCallerImport(loaded,"GetModuleHandleExW",reinterpret_cast<void*>(gHandleExW),reinterpret_cast<void*>(&DirectHandleExW),true)) {
-        return false;
-    }
-    HMODULE retained=nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(runtime),&retained) || retained!=runtime) return false;
-    runtime_=runtime; module_=loaded; init_=init; create_=create; evaluate_=evaluate; release_=release;
-    return true;
-}
-namespace {
-using RawVkInit=NVSDK_NGX_Result(NVSDK_CONV*)(unsigned long long,const wchar_t*,void*,void*,void*,void*,void*,NVSDK_NGX_Version,const NVSDK_NGX_Parameter*);
-using RawVkCreate=NVSDK_NGX_Result(NVSDK_CONV*)(void*,void*,NVSDK_NGX_Feature,const NVSDK_NGX_Parameter*,NVSDK_NGX_Handle**);
-using RawVkEvaluate=NVSDK_NGX_Result(NVSDK_CONV*)(void*,const NVSDK_NGX_Handle*,const NVSDK_NGX_Parameter*,PFN_NVSDK_NGX_ProgressCallback);
-__declspec(noinline) NVSDK_NGX_Result CallVkInit(RawVkInit fn,void* instance,void* physical,void* device,void* gipa,void* gdpa,
-    NVSDK_NGX_Parameter* params) noexcept {
-    __try { volatile auto result=fn(0x24480451ull,L"",instance,physical,device,gipa,gdpa,NVSDK_NGX_Version_API,params); return result; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return FaultResult(); }
-}
-__declspec(noinline) NVSDK_NGX_Result CallVkCreate(RawVkCreate fn,void* device,void* cmd,const NVSDK_NGX_Parameter* params,
-    NVSDK_NGX_Handle** handle) noexcept {
-    __try { volatile auto result=fn(device,cmd,static_cast<NVSDK_NGX_Feature>(kFeature),params,handle); return result; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return FaultResult(); }
-}
-__declspec(noinline) NVSDK_NGX_Result CallVkEvaluate(RawVkEvaluate fn,void* cmd,const NVSDK_NGX_Handle* handle,
-    const NVSDK_NGX_Parameter* params) noexcept {
-    __try { volatile auto result=fn(cmd,handle,params,nullptr); return result; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return FaultResult(); }
-}
+    return AdmitProvider(path,runtime,{"NVSDK_NGX_VULKAN_AllocateParameters","NVSDK_NGX_VULKAN_DestroyParameters",
+        "NVSDK_NGX_VULKAN_Init_Ext2","NVSDK_NGX_VULKAN_CreateFeature1","NVSDK_NGX_VULKAN_EvaluateFeature",
+        "NVSDK_NGX_VULKAN_ReleaseFeature"},runtime_,module_,init_,create_,evaluate_,release_);
 }
 NVSDK_NGX_Result VulkanDirectProvider::Initialize(void* instance,void* physical,void* device,void* gipa,void* gdpa,
     NVSDK_NGX_Parameter* params) noexcept {
     if (!module_ || !instance || !physical || !device || faulted_ || (device_ && device_!=device)) return NVSDK_NGX_Result_FAIL_NotInitialized;
     if (initialized_) return NVSDK_NGX_Result_Success;
     Scope scope(runtime_);
-    const auto result=CallVkInit(init_,instance,physical,device,gipa,gdpa,params);
+    const auto result=CallProvider(init_,0x24480451ull,L"",instance,physical,device,gipa,gdpa,NVSDK_NGX_Version_API,params);
     faulted_=static_cast<uint32_t>(result)==kProviderFault;
     if (result==NVSDK_NGX_Result_Success) { initialized_=true; device_=device; }
     return result;
 }
 NVSDK_NGX_Result VulkanDirectProvider::Create(void* device,void* cmd,const NVSDK_NGX_Parameter* params,NVSDK_NGX_Handle** out) noexcept {
     if (!initialized_ || faulted_ || device!=device_) return NVSDK_NGX_Result_FAIL_NotInitialized;
-    Scope scope(runtime_); const auto result=CallVkCreate(create_,device,cmd,params,out);
+    Scope scope(runtime_); const auto result=CallProvider(create_,device,cmd,static_cast<NVSDK_NGX_Feature>(kFeature),params,out);
     faulted_=static_cast<uint32_t>(result)==kProviderFault; return result;
 }
 NVSDK_NGX_Result VulkanDirectProvider::Evaluate(void* cmd,const NVSDK_NGX_Handle* handle,const NVSDK_NGX_Parameter* params) noexcept {
     if (!initialized_ || faulted_) return NVSDK_NGX_Result_FAIL_NotInitialized;
-    Scope scope(runtime_); const auto result=CallVkEvaluate(evaluate_,cmd,handle,params);
+    Scope scope(runtime_); const auto result=CallProvider(evaluate_,cmd,handle,params,nullptr);
     faulted_=static_cast<uint32_t>(result)==kProviderFault; return result;
 }
 NVSDK_NGX_Result VulkanDirectProvider::Release(NVSDK_NGX_Handle* handle) noexcept {
     if (!initialized_ || faulted_) return NVSDK_NGX_Result_FAIL_NotInitialized;
-    Scope scope(runtime_); const auto result=CallRelease(release_,handle);
+    Scope scope(runtime_); const auto result=CallProvider(release_,handle);
     faulted_=static_cast<uint32_t>(result)==kProviderFault; return result;
 }
 }

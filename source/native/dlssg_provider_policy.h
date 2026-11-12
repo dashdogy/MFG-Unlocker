@@ -33,7 +33,7 @@ inline constexpr std::array<VersionTriplet, 16> kSupportedVersions{{
     {310, 8, 0},
     {310, 9, 0},
     {310, 9, 1},
-    // NVIDIA app beta (13 Oct 2026): Frame Generation Preset C.
+    // NVIDIA app beta: Frame Generation Preset C.
     {310, 9, 16},
 }};
 
@@ -71,7 +71,7 @@ constexpr bool IsSupportedVersion(VersionTriplet version) noexcept
 }
 
 // Builds whose kernels the RTX 30 port has no SM86 program for. Every RTX 30 admission (OTA selection,
-// preparation, runtime routing) rejects them before any provider mutation. Empty since 1.5.0.931: 310.9.16
+// preparation, runtime routing) rejects them before any provider mutation. Empty: 310.9.16
 // (Preset C, BlendCandidatesFGLite) has its RTX 30 profile; its new kernels compile for SM86 unchanged.
 inline constexpr std::array<VersionTriplet, 0> kAdaOnlyVersions{};
 

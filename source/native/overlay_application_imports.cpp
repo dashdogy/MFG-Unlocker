@@ -3,9 +3,7 @@
 #include "overlay_build.h"
 #include "overlay_slots.h"
 #include "overlay_platform.h"
-#if MFG_UNLOCK_XESS
 #include "xess/xess_mod.h"
-#endif
 #include <intrin.h>
 #include <array>
 #include <atomic>
@@ -33,12 +31,8 @@ template<size_t I> __declspec(noinline) FARPROC WINAPI Resolve(HMODULE module,LP
     const auto original=bindings[I].original.load(std::memory_order_acquire);
     if (!original) return nullptr;
     FARPROC result=nullptr;
-#if MFG_UNLOCK_XESS
     if (!xess_mod::ResolveNativeSdkCreate(bindings[I].importer.load(std::memory_order_acquire),
             _ReturnAddress(),module,name,result)) result=original(module,name);
-#else
-    result=original(module,name);
-#endif
     const DWORD error=GetLastError();
     if (result && name && reinterpret_cast<uintptr_t>(name)>0xffff) {
         // Resolve a renderer's dependencies before returning their exports to

@@ -6,6 +6,8 @@
 #include <string>
 #include <cstdio>
 #include <cstdlib>
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 unsigned checks=0;
 void Check(bool condition,const char* message){++checks;std::printf("%s %s\n",condition?"PASS":"FAIL",message);std::fflush(stdout);if(!condition)std::exit(1);}
 std::string Read(const std::filesystem::path& path){std::ifstream f(path);return {std::istreambuf_iterator<char>(f),{}};}
@@ -32,6 +34,8 @@ int wmain(int argc,wchar_t**argv){
      &&Has(text,"dlss5CharacterMask","true")&&Has(text,"dlss5UseExposureValue","1")&&Has(text,"dlss5DefaultsVersion","3")
      &&Has(text,"dlss5CompareSplitView","false")&&Has(text,"dlss5CompareSplit","50")&&Has(text,"dlss5CompareKey","0")&&Has(text,"dlss5FrameMs","0.000"),
      "old configs default to DLSS 5 off with the provider's look and Resolution Scale Auto off");
+ // dx11nr.1: no DirectX 11 DLSS feature, no bridge refusal.
+ Check(Has(text,"dlss5D3D11","false")&&Has(text,"dlss5D3D11Refusal","0"),"the DirectX 11 bridge reports nothing without a DirectX 11 game");
  Write(config,"{\"multiplier\":2,\"followGame\":true,\"dlss5\":true,\"dlss5Intensity\":37,\"dlss5Quality\":1,\"futureOption\":17}");
  text=Wait(status,"dlss5OverallIntensity","0.37");
  Check(Has(text,"dlss5","true")&&Has(text,"dlss5ResolutionScale","85")&&Has(text,"dlss5State","1"),"pre-dlss5.2 intent reaches the backend while waiting for real DLSS");
@@ -50,13 +54,13 @@ int wmain(int argc,wchar_t**argv){
  }
  Write(config,"{\"multiplier\":2,\"dlss5\":false,\"dlss5Model\":1}");text=Wait(status,"dlss5Model","1");
  Check(Has(text,"dlss5","false")&&Has(text,"dlss5State","0"),"off applies without a game or generated frame");
- // autoscale.2: a config saved before it with the old default look and Auto reaches the backend on the new defaults.
+ // A generation 1 config with the old default look and Auto reaches the backend on the new defaults.
  Write(config,"{\"multiplier\":2,\"dlss5\":true,\"dlss5Model\":0,\"dlss5OverallIntensity\":1,\"dlss5StructureIntensity\":0.7,"
      "\"dlss5ToneIntensity\":0.3,\"dlss5CharacterIntensity\":0.5,\"dlss5ResolutionScale\":100,\"dlss5ResolutionScaleAuto\":true}");
  text=Wait(status,"dlss5","true");
  Check(Has(text,"dlss5StructureIntensity","1")&&Has(text,"dlss5ToneIntensity","1")&&Has(text,"dlss5CharacterIntensity","-1")
      &&Has(text,"dlss5ResolutionScaleAuto","false")&&Has(text,"dlss5DefaultsVersion","3"),"an old default look and Auto move to the new defaults");
- // alpha.15 (generation 3): a generation 2 file's Adaptive exposure (its old default, on) reaches the backend off; a
+ // A generation 2 file's Adaptive exposure (its old default, on) reaches the backend off; a
  // generation 3 file's stays as saved.
  Write(config,"{\"multiplier\":2,\"dlss5\":true,\"dlss5DefaultsVersion\":2,\"dlss5AdaptiveExposure\":true,\"dlss5Model\":2}");
  text=Wait(status,"dlss5Model","2");

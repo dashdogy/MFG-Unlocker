@@ -11,6 +11,8 @@
 #include <array>
 #include <cstring>
 #include <cstdio>
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 static bool ok=true;
 static bool lockedMode=false;
@@ -122,6 +124,30 @@ int wmain(int argc,wchar_t** argv){
     Check(callSet(viewport,*options)==sl::Result::eOk,"unknown options version preserves the native result");
     auto unknown=Wait(status,"universalRouteFailure","5");
     Check(Has(unknown,"bridgeReady","false")&&Has(unknown,"universalRouteFailure","5"),"unknown structure version closes override eligibility");
+    // nulltoken.1: a null frame token to slPCLSetMarker (Indiana Jones) reaches Streamline unchanged; the latency
+    // monitor's wrap must not read it.
+    {
+        using PclAbi=sl::Result(*)(uint32_t,const sl::FrameToken*);
+        struct TestToken final:sl::FrameToken{
+            uint32_t id;
+            explicit TestToken(uint32_t value):id(value){}
+            operator uint32_t() const override{return id;}
+        };
+        auto pclCalls=Proc<unsigned(WINAPI*)()>(interposer,"FixturePclCalls");
+        auto pclAddress=Proc<void*(WINAPI*)()>(interposer,"FixturePclAddress");
+        void* pcl=nullptr;
+        const bool wrapped=pclCalls&&pclAddress&&lookup(sl::kFeaturePCL,"slPCLSetMarker",pcl)==sl::Result::eOk
+            &&pcl&&pcl!=pclAddress();
+        Check(wrapped,"slPCLSetMarker lookup returns the latency monitor's wrap");
+        if(wrapped){
+            const unsigned before=pclCalls();
+            Check(reinterpret_cast<PclAbi>(pcl)(0,nullptr)==sl::Result::eErrorMissingInputParameter&&pclCalls()==before+1,
+                "null frame token reaches Streamline unchanged and its answer is returned");
+            const TestToken token(7);
+            Check(reinterpret_cast<PclAbi>(pcl)(0,&token)==sl::Result::eOk&&pclCalls()==before+2,
+                "a valid frame token still forwards");
+        }
+    }
     if(lockedMode){
         Check(Read(status)==lockedContent,"candidate does not overwrite the game's locked snapshot in place");
         std::string alternate;

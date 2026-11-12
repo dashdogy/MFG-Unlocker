@@ -16,7 +16,7 @@ constexpr bool CapacityValid(uint32_t generated) noexcept
     return generated == 1 || generated == kMaximumGeneratedFrames;
 }
 
-// ringcap.1: what a Create may certify. The wrapper's ring holds N+1 buffers
+// What a Create may certify. The wrapper's ring holds N+1 buffers
 // for the N its startup cached, so any N up to the program's five is proven.
 constexpr bool CertifiedCapacityValid(uint32_t generated) noexcept
 {
@@ -35,6 +35,30 @@ constexpr bool EvaluationFitsCapacity(int count, uint32_t created) noexcept
 constexpr uint32_t RingMaximumMultiplier(uint32_t startupMaximum, uint32_t certified) noexcept
 {
     return startupMaximum == kMaximumGeneratedFrames && CertifiedCapacityValid(certified) ? certified + 1 : 2;
+}
+
+// rtx30ngx.1: the RTX 30/20 options and ring policy governs NVIDIA's DLSS-G provider running the translated
+// program, whose ring a Create certifies. It does not govern an Nvngx replacement provider that owns
+// FrameGeneration: one that offered its maximum while no FrameGeneration Create reached NVIDIA's provider
+// (through the NGX hooks or the Ampere backend). The replacement allocates its own outputs, so no Ampere Create
+// will ever certify a ring and the uncertified 2x would cap it for good.
+// A Create on NVIDIA's provider hands the decision back to the certified ring.
+constexpr bool ReplacementOwnsFrameGeneration(bool replacementOffered,
+    uint64_t nvidiaFrameGenerationCreates, uint64_t ampereCreatedFeatures) noexcept
+{
+    return replacementOffered && nvidiaFrameGenerationCreates == 0 && ampereCreatedFeatures == 0;
+}
+
+// The safe maximum multiplier on RTX 30/20: a replacement's own maximum (its generated frames + 1, at most
+// six), else the certified ring's (RingMaximumMultiplier), else 2x before the backend is ready.
+constexpr uint32_t SafeMaximumMultiplier(bool replacementOwns, uint32_t replacementGeneratedFrames,
+    bool backendReady, uint32_t startupMaximum, uint32_t certified) noexcept
+{
+    if (replacementOwns)
+        return replacementGeneratedFrames < 1 ? 2
+            : replacementGeneratedFrames > kMaximumGeneratedFrames ? kMaximumGeneratedFrames + 1
+            : replacementGeneratedFrames + 1;
+    return backendReady ? RingMaximumMultiplier(startupMaximum, certified) : 2;
 }
 
 constexpr bool EvaluationCountValid(int count) noexcept
@@ -159,7 +183,7 @@ constexpr OptionsDecision DecideOptions(bool followGame, uint32_t controlMultipl
     return decision;
 }
 
-// admitoff.1: after startup admission failed (or the boundary turned fatal),
+// After startup admission failed (or the boundary turned fatal),
 // every FrameGeneration Create is refused before the provider, and Streamline
 // retries a refused Create on every frame. Off stops the retries; the frame
 // count is kept so the capacity checks read the same request.
@@ -178,7 +202,7 @@ constexpr OptionsDecision HoldOffWithoutAdmission(OptionsDecision decision, bool
 // multiplier ceiling, so a 4X title is not offered 5x/6x that the options
 // path would then clamp. A legacy 2x wrapper always reports one frame.
 // Once a Create has certified a smaller ring (ringMaximum, 0 = none yet), the
-// game is offered no more than that ring holds (ringcap.1).
+// game is offered no more than that ring holds.
 constexpr uint32_t AdvertisedGeneratedFrames(uint32_t startupMaximum,
     uint32_t policyMaximumMultiplier, uint32_t ringMaximum = 0) noexcept
 {

@@ -67,6 +67,84 @@ msgstr ""
 "Mostra gli FPS reali e quelli DLSS nell'angolo in alto a sinistra\n"
 "quando il menu è chiuso. La scelta viene salvata per i prossimi avvii."
 
+msgid ""
+"Shows the PC latency in the top-left corner\n"
+"while the menu is closed. Saved for the next launch."
+msgstr ""
+"Mostra la latenza del PC nell'angolo in alto a sinistra\n"
+"quando il menu è chiuso. Salvato per il prossimo avvio."
+
+msgid "Latency"
+msgstr "Latenza"
+
+msgid "%.1f ms, 1%% high %.1f ms"
+msgstr "%.1f ms, 1%% peggiore %.1f ms"
+
+msgid ""
+"PC latency: from the game starting a frame (its Reflex simulation start)\n"
+"to the first frame showing it reaching the screen."
+msgstr ""
+"Latenza del PC: dall'inizio di un frame nel gioco (l'inizio della simulazione Reflex)\n"
+"fino all'arrivo sullo schermo del primo frame che lo mostra."
+
+msgid "Game %.1f ms, frame generation %.1f ms, display %.1f ms."
+msgstr "Gioco %.1f ms, Frame Generation %.1f ms, schermo %.1f ms."
+
+msgid "The real frame reaches the screen after %.1f ms."
+msgstr "Il frame reale arriva sullo schermo dopo %.1f ms."
+
+msgid "Mouse and monitor delay are not included."
+msgstr "Il ritardo di mouse e monitor non è incluso."
+
+msgid "Unavailable"
+msgstr "Non disponibile"
+
+msgid "the game sends no Reflex markers"
+msgstr "il gioco non invia marcatori Reflex"
+
+msgid "no frames to time on this route"
+msgstr "nessun frame da misurare su questo percorso"
+
+msgid "Windows reports no flip times here"
+msgstr "Windows non fornisce qui i tempi di visualizzazione"
+
+msgid "Measuring..."
+msgstr "Misurazione..."
+
+msgid "Game / driver default"
+msgstr "Predefinito gioco / driver"
+
+msgid "Preset C (performance)"
+msgstr "Preset C (prestazioni)"
+
+msgid ""
+"The DLSS frame generation model preset.\n"
+"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
+"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
+"A change made while frame generation runs restarts it once, with a short pause;\n"
+"some older DLSS-G versions apply it after a game restart."
+msgstr ""
+"Il preset del modello DLSS Frame Generation.\n"
+"Il Preset C è la modalità Frame Generation più leggera di NVIDIA. Richiede DLSS-G 310.9.16 o superiore,\n"
+"tramite l'override DLSS della NVIDIA App; gli altri provider mantengono il preset gioco / driver.\n"
+"Se lo cambi con la Frame Generation attiva, questa si riavvia una volta, con una breve pausa;\n"
+"con alcune versioni di DLSS-G più vecchie si applica al riavvio del gioco."
+
+msgid "Preset %s is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Il Preset %s è salvato. Si applica al prossimo avvio della Frame Generation o al riavvio del gioco."
+
+msgid "The game / driver preset is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Il preset gioco / driver è salvato. Si applica al prossimo avvio della Frame Generation o al riavvio del gioco."
+
+msgid "Restarting frame generation with the new preset..."
+msgstr "Riavvio della Frame Generation con il nuovo preset..."
+
+msgid "The game / driver preset is saved. Restart the game to use it."
+msgstr "Il preset gioco / driver è salvato. Riavvia il gioco per applicarlo."
+
+msgid "Preset %s is saved. Restart the game to use it."
+msgstr "Il Preset %s è salvato. Riavvia il gioco per applicarlo."
+
 msgid "DLSS-G preset"
 msgstr "Preset DLSS-G"
 
@@ -103,42 +181,14 @@ msgstr "Questo provider DLSS-G supporta solo il proprio preset predefinito. Il P
 msgid "This DLSS-G provider supports its original preset only."
 msgstr "Questo provider DLSS-G supporta solo il proprio preset predefinito."
 
-msgid "Restarting frame generation with the new preset..."
-msgstr "Riavvio della Frame Generation con il nuovo preset..."
-
-msgid "The game / driver preset is saved. Restart the game to use it."
-msgstr "Il preset gioco / driver è salvato. Riavvia il gioco per applicarlo."
-
-msgid "Preset %s is saved. Restart the game to use it."
-msgstr "Il Preset %s è salvato. Riavvia il gioco per applicarlo."
-
 msgid "Preset C needs DLSS-G 310.9.16 or newer (NVIDIA app). This game's frame generation keeps the game / driver preset."
 msgstr "Il Preset C richiede DLSS-G 310.9.16 o superiore (NVIDIA App). La Frame Generation di questo gioco resta sul preset gioco / driver."
 
 msgid "The preset selection could not be saved."
 msgstr "Impossibile salvare il preset selezionato."
 
-msgid "Game / driver default"
-msgstr "Predefinito gioco / driver"
-
-msgid "Preset C (performance)"
-msgstr "Preset C (prestazioni)"
-
 msgid "Original preset"
 msgstr "Preset predefinito"
-
-msgid ""
-"The DLSS frame generation model preset.\n"
-"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
-"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
-"A change made while frame generation runs restarts it once, with a short pause;\n"
-"some older DLSS-G versions apply it after a game restart."
-msgstr ""
-"Il preset del modello DLSS Frame Generation.\n"
-"Il Preset C è la modalità Frame Generation più leggera di NVIDIA. Richiede DLSS-G 310.9.16 o superiore,\n"
-"tramite l'override DLSS della NVIDIA App; gli altri provider mantengono il preset gioco / driver.\n"
-"Se lo cambi con la Frame Generation attiva, questa si riavvia una volta, con una breve pausa;\n"
-"con alcune versioni di DLSS-G più vecchie si applica al riavvio del gioco."
 
 msgid "Performance"
 msgstr "Prestazioni"
@@ -293,6 +343,176 @@ msgstr "Metodo di aggancio non disponibile"
 msgid "Waiting for DLSS"
 msgstr "In attesa di DLSS"
 
+msgid "This game evaluates DLSS on a deferred DirectX 11 context. DLSS 5 needs the immediate context, so it leaves the frame as is."
+msgstr "Questo gioco esegue il DLSS su un contesto DirectX 11 differito. DLSS 5 richiede il contesto immediato, quindi lascia il fotogramma invariato."
+
+msgid "DLSS 5 on DirectX 11 needs shared fences (Windows 10 version 1703 or later and a current driver). It leaves the frame as is."
+msgstr "DLSS 5 con DirectX 11 richiede fence condivise (Windows 10 versione 1703 o successiva e un driver aggiornato). Lascia il fotogramma invariato."
+
+msgid "DLSS 5 could not create its DirectX 12 device for this DirectX 11 game; the log names the reason."
+msgstr "DLSS 5 non è riuscito a creare il proprio dispositivo DirectX 12 per questo gioco DirectX 11; il log indica il motivo."
+
+msgid "DLSS 5 could not share textures between this DirectX 11 game and its DirectX 12 device; the log names the reason."
+msgstr "DLSS 5 non è riuscito a condividere le texture tra questo gioco DirectX 11 e il proprio dispositivo DirectX 12; il log indica il motivo."
+
+msgid "DLSS 5 cannot attach to this game's DirectX 11 DLSS: MFG Unlocker did not see it being created (it came before the hook, or another hook covers NVIDIA's entries). The log names the reason."
+msgstr "DLSS 5 non può agganciarsi al DLSS DirectX 11 di questo gioco: MFG Unlocker non lo ha visto creare (è arrivato prima dell'aggancio, oppure un altro aggancio copre i punti di ingresso di NVIDIA). Il log indica il motivo."
+
+msgid ""
+"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
+"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
+"After upscaling processes the DLSS output after reconstruction.\n"
+"Present processes the final image, game UI included, before presentation and frame generation."
+msgstr ""
+"Auto elabora l'output DLSS dopo la ricostruzione; Scala risoluzione Auto ne tiene sotto controllo il costo.\n"
+"Prima dell'upscaling elabora l'input DLSS alla risoluzione di rendering, prima di DLSS SR, DLAA o Ray Reconstruction.\n"
+"Dopo l'upscaling elabora l'output DLSS dopo la ricostruzione.\n"
+"Presentazione elabora l'immagine finale, interfaccia del gioco inclusa, prima della presentazione e della frame generation."
+
+msgid ""
+"Subtle, Balanced and Strong set Intensity, Style, Structure, Tone and Faces & skin together.\n"
+"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
+"Pass Count under Advanced strengthens any look further, at extra GPU cost.\n"
+"Your saved presets are listed below them. Each loads its look, Hook Method and every other setting; Compare and Debug view stay as they are.\n"
+"Loading a saved preset turns DLSS 5 on. Delete removes the saved preset shown."
+msgstr ""
+"Delicato, Bilanciato e Intenso impostano insieme Intensità, Stile, Struttura, Tono e Volti e pelle.\n"
+"Bilanciato è l'impostazione predefinita del provider, Delicato ne dimezza l'effetto e Intenso va oltre.\n"
+"Numero di passaggi in Avanzate rafforza ulteriormente qualsiasi aspetto, con un costo GPU aggiuntivo.\n"
+"I tuoi preset salvati sono elencati sotto. Ognuno carica aspetto, metodo di aggancio e tutte le altre impostazioni; Confronto e vista di debug restano invariati.\n"
+"Caricare un preset salvato attiva DLSS 5. Elimina rimuove il preset salvato mostrato."
+
+msgid ""
+"How the network draws its look. All three cost the same.\n"
+"Neutral changes the game's image the least.\n"
+"Rich keeps skin warm and colourful, and deepens bright areas such as sky.\n"
+"Soft gives a flatter, softer image."
+msgstr ""
+"Come la rete disegna il suo aspetto. Tutti e tre hanno lo stesso costo.\n"
+"Neutro modifica meno di tutti l'immagine del gioco.\n"
+"Ricco mantiene la pelle calda e colorata e rende più profonde le zone chiare come il cielo.\n"
+"Morbido dà un'immagine più piatta e morbida."
+
+msgid ""
+"Which of the provider's two networks runs.\n"
+"Default lets the provider choose: DLSS 5 310.9.16 runs Fast.\n"
+"Quality is the larger network: stronger changes and a little more fine detail, at about 1.7x the GPU time.\n"
+"Fast is the smaller network."
+msgstr ""
+"Quale delle due reti del provider viene eseguita.\n"
+"Predefinito lascia scegliere al provider: DLSS 5 310.9.16 esegue Veloce.\n"
+"Qualità è la rete più grande: cambiamenti più marcati e un po' più di dettaglio fine, con circa 1,7x il tempo GPU.\n"
+"Veloce è la rete più piccola."
+
+msgid "Off while Character Mask is off."
+msgstr "Disattivato finché la Maschera personaggi è disattivata."
+
+msgid ""
+"Structure enhancement on detected skin and faces.\n"
+"Same as Structure takes the Structure strength, the provider's own default."
+msgstr ""
+"Miglioramento della struttura su pelle e volti rilevati.\n"
+"Come la Struttura usa l'intensità della struttura, l'impostazione predefinita del provider."
+
+msgid ""
+"Share of the hook method's resolution that the network processes.\n"
+"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
+"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
+msgstr ""
+"Quota della risoluzione del metodo di aggancio elaborata dalla rete.\n"
+"100 è nativa, valori più bassi sono più veloci, fino a 200 in supersampling. I valori sotto 25 usano 25.\n"
+"Auto la riduce quando DLSS 5 occupa più di circa un terzo di ogni frame renderizzato, non sotto 75, e la rialza quando c'è margine, mai oltre il cursore."
+
+msgid "Half rate is not available on Vulkan or with the Present hook method yet."
+msgstr "La mezza frequenza non è ancora disponibile con Vulkan o con il metodo di aggancio Presentazione."
+
+msgid ""
+"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
+"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
+msgstr ""
+"Esegue la rete un fotogramma sì e uno no. I fotogrammi intermedi applicano il suo ultimo aspetto alla propria immagine, così le superfici in movimento e animate lo mantengono senza scie.\n"
+"Circa metà del costo GPU. I dettagli fini seguono i vettori di movimento del gioco dove una superficie si è solo spostata."
+
+msgid "%s (changed)"
+msgstr "%s (modificato)"
+
+msgid "Preset %u"
+msgstr "Preset %u"
+
+msgid "Imported preset"
+msgstr "Preset importato"
+
+msgid "Saved \"%s\"."
+msgstr "Salvato \"%s\"."
+
+msgid "Deleted \"%s\"."
+msgstr "Eliminato \"%s\"."
+
+msgid "Imported \"%s\"."
+msgstr "Importato \"%s\"."
+
+msgid "Copied the preset code to the clipboard."
+msgstr "Codice del preset copiato negli appunti."
+
+msgid "The clipboard is unavailable. The code is in the field to copy by hand."
+msgstr "Gli appunti non sono disponibili. Il codice è nel campo, da copiare a mano."
+
+msgid "No preset code found. Codes start with DLSS5-."
+msgstr "Nessun codice preset trovato. I codici iniziano con DLSS5-."
+
+msgid "This preset code is damaged or incomplete. Copy it again in full."
+msgstr "Questo codice preset è danneggiato o incompleto. Copialo di nuovo per intero."
+
+msgid "This preset code needs a newer MFG Unlocker."
+msgstr "Questo codice preset richiede una versione più recente di MFG Unlocker."
+
+msgid "%u presets is the most. Delete one to save another."
+msgstr "Massimo %u preset. Eliminane uno per salvarne un altro."
+
+msgid "The presets file could not be read or written."
+msgstr "Impossibile leggere o scrivere il file dei preset."
+
+msgid "Some settings in this code need a newer MFG Unlocker and were left out."
+msgstr "Alcune impostazioni di questo codice richiedono una versione più recente di MFG Unlocker e sono state escluse."
+
+msgid ""
+"Saves the current DLSS 5 settings as a preset under this name; a preset with the same name is replaced.\n"
+"Presets are kept beside the game."
+msgstr ""
+"Salva le impostazioni DLSS 5 attuali come preset con questo nome; un preset con lo stesso nome viene sostituito.\n"
+"I preset sono salvati accanto al gioco."
+
+msgid ""
+"Export copies the current settings to the clipboard as a code starting with DLSS5-, to share with other players.\n"
+"Import applies a pasted code and saves it as a preset. With the field empty, Import reads the clipboard."
+msgstr ""
+"Esporta copia le impostazioni attuali negli appunti come codice che inizia con DLSS5-, da condividere con altri giocatori.\n"
+"Importa applica un codice incollato e lo salva come preset. Con il campo vuoto, Importa legge gli appunti."
+
+msgid "Delete"
+msgstr "Elimina"
+
+msgid "Save as"
+msgstr "Salva come"
+
+msgid "Save"
+msgstr "Salva"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Share"
+msgstr "Condividi"
+
+msgid "Import"
+msgstr "Importa"
+
+msgid "Export"
+msgstr "Esporta"
+
+msgid "Paste a code"
+msgstr "Incolla un codice"
+
 msgid "Neural Rendering"
 msgstr "Rendering neurale"
 
@@ -311,17 +531,6 @@ msgstr "Auto: %s"
 msgid "Hook Method"
 msgstr "Metodo di aggancio"
 
-msgid ""
-"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
-"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-"After upscaling processes the DLSS output after reconstruction.\n"
-"Present processes the final image, game UI included, before presentation and frame generation."
-msgstr ""
-"Auto elabora l'output DLSS dopo la ricostruzione; Scala risoluzione Auto ne tiene sotto controllo il costo.\n"
-"Prima dell'upscaling elabora l'input DLSS alla risoluzione di rendering, prima di DLSS SR, DLAA o Ray Reconstruction.\n"
-"Dopo l'upscaling elabora l'output DLSS dopo la ricostruzione.\n"
-"Presentazione elabora l'immagine finale, interfaccia del gioco inclusa, prima della presentazione e della frame generation."
-
 msgid "Subtle"
 msgstr "Delicato"
 
@@ -334,45 +543,26 @@ msgstr "Personalizzato"
 msgid "Look"
 msgstr "Aspetto"
 
-msgid ""
-"Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
-"Pass Count under Advanced strengthens any look further, at extra GPU cost."
-msgstr ""
-"Imposta insieme Intensità, Modello, Struttura, Tono e Volti e pelle.\n"
-"Bilanciato è l'impostazione predefinita del provider, Delicato ne dimezza l'effetto e Intenso va oltre.\n"
-"Numero di passaggi in Avanzate rafforza ulteriormente qualsiasi aspetto, con un costo GPU aggiuntivo."
-
 msgid "Intensity"
 msgstr "Intensità"
 
 msgid "Strength of the whole neural rendering effect."
 msgstr "Intensità dell'intero effetto di rendering neurale."
 
-msgid "Model A"
-msgstr "Modello A"
+msgid "Neutral"
+msgstr "Neutro"
 
-msgid "Model B"
-msgstr "Modello B"
+msgid "Rich"
+msgstr "Ricco"
 
-msgid "Model C"
-msgstr "Modello C"
+msgid "Soft"
+msgstr "Morbido"
 
-msgid "Model"
-msgstr "Modello"
+msgid "Style"
+msgstr "Stile"
 
 msgid "Faces & skin"
 msgstr "Volti e pelle"
-
-msgid "Off while Character Mask is off. Turn it on under Advanced."
-msgstr "Disattivato finché la Maschera personaggi è disattivata. Attivala in Avanzate."
-
-msgid ""
-"Structure enhancement on detected skin and faces.\n"
-"Same as Structure takes the Structure strength, the provider's own default."
-msgstr ""
-"Miglioramento della struttura su pelle e volti rilevati.\n"
-"Come la Struttura usa l'intensità della struttura, l'impostazione predefinita del provider."
 
 msgid "Resolution Scale"
 msgstr "Scala risoluzione"
@@ -383,27 +573,8 @@ msgstr "Auto"
 msgid "up to %.0f%%"
 msgstr "fino a %.0f%%"
 
-msgid ""
-"Share of the hook method's resolution that the network processes.\n"
-"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
-msgstr ""
-"Quota della risoluzione del metodo di aggancio elaborata dalla rete.\n"
-"100 è nativa, valori più bassi sono più veloci, fino a 200 in supersampling. I valori sotto 25 usano 25.\n"
-"Auto la riduce quando DLSS 5 occupa più di circa un terzo di ogni frame renderizzato, non sotto 75, e la rialza quando c'è margine, mai oltre il cursore."
-
 msgid "Half rate"
 msgstr "Mezza frequenza"
-
-msgid "Half rate is not available on Vulkan or with the Present hook method yet."
-msgstr "La mezza frequenza non è ancora disponibile con Vulkan o con il metodo di aggancio Presentazione."
-
-msgid ""
-"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
-"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
-msgstr ""
-"Esegue la rete un fotogramma sì e uno no. I fotogrammi intermedi applicano il suo ultimo aspetto alla propria immagine, così le superfici in movimento e animate lo mantengono senza scie.\n"
-"Circa metà del costo GPU. I dettagli fini seguono i vettori di movimento del gioco dove una superficie si è solo spostata."
 
 msgid "DLSS 5 settings could not be saved."
 msgstr "Impossibile salvare le impostazioni DLSS 5."
@@ -411,11 +582,11 @@ msgstr "Impossibile salvare le impostazioni DLSS 5."
 msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
 msgstr "Prima dell'upscaling e Presentazione non funzionano ancora con Vulkan. Scegli Auto o Dopo l'upscaling."
 
+msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
+msgstr "Presentazione non funziona ancora con DirectX 11. Scegli Auto, Prima dell'upscaling o Dopo l'upscaling."
+
 msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
 msgstr "La swapchain di questo gioco non può usare il metodo di aggancio Presentazione; il log indica il motivo. Prima e dopo l'upscaling funzionano comunque."
-
-msgid "Debug view is on (Advanced, Inspect)."
-msgstr "La vista di debug è attiva (Avanzate, Ispezione)."
 
 msgid "Compare"
 msgstr "Confronto"
@@ -442,6 +613,9 @@ msgid ""
 msgstr ""
 "Finché questo tasto è premuto, il gioco mostra l'immagine originale, così DLSS 5 si può confrontare in movimento.\n"
 "DLSS 5 resta attivo, quindi il suo costo GPU non cambia, e il tasto arriva comunque al gioco."
+
+msgid "Presets"
+msgstr "Preset"
 
 msgid "Status"
 msgstr "Stato"
@@ -481,6 +655,9 @@ msgstr "Provider diretto"
 
 msgid "Native NGX"
 msgstr "NGX nativo"
+
+msgid "DirectX 11 to DirectX 12"
+msgstr "Da DirectX 11 a DirectX 12"
 
 msgid "Waiting for DLSS 5 GPU work to complete before applying settings."
 msgstr "In attesa che il lavoro GPU di DLSS 5 termini prima di applicare le impostazioni."
@@ -526,8 +703,8 @@ msgstr "Maschera personaggi"
 msgid "Detects skin and faces so that Faces & skin applies to them."
 msgstr "Rileva pelle e volti, così Volti e pelle si applica a essi."
 
-msgid "Passes"
-msgstr "Passaggi"
+msgid "Look & passes"
+msgstr "Aspetto e passaggi"
 
 msgid "Pass Count"
 msgstr "Numero di passaggi"
@@ -542,10 +719,10 @@ msgid "Later passes"
 msgstr "Passaggi successivi"
 
 msgid ""
-"Passes 2 and later refine the previous pass's output. Custom gives them their own Model and strengths.\n"
+"Passes 2 and later refine the previous pass's output. Custom gives them their own Style and strengths.\n"
 "Tone adds up from pass to pass, so later passes usually want less of it."
 msgstr ""
-"Dal passaggio 2 in poi si affina l'uscita del passaggio precedente. Personalizzato dà loro un modello e intensità propri.\n"
+"Dal passaggio 2 in poi si affina l'uscita del passaggio precedente. Personalizzato dà loro uno stile e intensità propri.\n"
 "Il tono si somma da un passaggio all'altro, quindi ai passaggi successivi ne serve di solito meno."
 
 msgid "Later-pass settings apply when Pass Count is 2 or more."
@@ -644,23 +821,18 @@ msgstr "Residuo RGB"
 msgid "Processed image"
 msgstr "Immagine elaborata"
 
-msgid "Ratio"
-msgstr "Rapporto"
-
 msgid "Scale Reconstruction"
 msgstr "Ricostruzione scala"
 
 msgid ""
 "RGB residual adds the network's change to the full-resolution image.\n"
-"Processed image uses the upscaled network output directly.\n"
-"Ratio multiplies the full-resolution image by the network's change, so black stays black."
+"Processed image uses the upscaled network output directly."
 msgstr ""
 "Residuo RGB aggiunge la modifica della rete all'immagine a piena risoluzione.\n"
-"Immagine elaborata usa direttamente l'uscita ingrandita della rete.\n"
-"Rapporto moltiplica l'immagine a piena risoluzione per la modifica della rete, così il nero resta nero."
+"Immagine elaborata usa direttamente l'uscita ingrandita della rete."
 
-msgid "HDR and signal"
-msgstr "HDR e segnale"
+msgid "HDR"
+msgstr "HDR"
 
 msgid "Linear BT.709"
 msgstr "BT.709 lineare"
@@ -742,17 +914,11 @@ msgstr "Provider"
 msgid "Default"
 msgstr "Predefinito"
 
-msgid "Preset A"
-msgstr "Preset A"
+msgid "Fast"
+msgstr "Veloce"
 
-msgid "Preset B"
-msgstr "Preset B"
-
-msgid "Preset"
-msgstr "Preset"
-
-msgid "The provider's render preset hint."
-msgstr "Suggerimento del preset di rendering per il provider."
+msgid "Network"
+msgstr "Rete"
 
 msgid "UI Correction"
 msgstr "Correzione UI"
@@ -808,8 +974,8 @@ msgstr "Blocca immagine senza HUD"
 msgid "Present only: keeps the game's HUD-less image from DLSS frame generation, so generated frames match processed ones."
 msgstr "Solo Presentazione: impedisce che l'immagine senza HUD del gioco arrivi alla frame generation DLSS, così i frame generati corrispondono a quelli elaborati."
 
-msgid "Inspect"
-msgstr "Ispezione"
+msgid "Mask"
+msgstr "Maschera"
 
 msgid "Network input"
 msgstr "Ingresso della rete"
@@ -971,6 +1137,42 @@ msgstr "Lo stato di Reflex è temporaneamente non disponibile."
 msgid "Path traced hair"
 msgstr "Capelli in path tracing"
 
+msgid "Preparing"
+msgstr "In preparazione"
+
+msgid "Active"
+msgstr "Attivo"
+
+msgid "universal: game RTX hair converted"
+msgstr "universale: capelli RTX del gioco convertiti"
+
+msgid "no hair built in the last 2 s"
+msgstr "nessuna build dei capelli negli ultimi 2 s"
+
+msgid "Ready"
+msgstr "Pronto"
+
+msgid "waiting for game hair"
+msgstr "in attesa dei capelli del gioco"
+
+msgid "Universal hair runs the game's own RTX 50 hair on this GPU. It is on by default; set Universal=0 under [RtxHair] in RTXMFG.RtxHair.ini beside the game to turn it off."
+msgstr "I capelli universali eseguono i capelli RTX 50 del gioco su questa GPU. Sono attivi per impostazione predefinita; imposta Universal=0 sotto [RtxHair] in RTXMFG.RtxHair.ini accanto al gioco per disattivarli."
+
+msgid "%s updates"
+msgstr "%s aggiornamenti"
+
+msgid "Builds"
+msgstr "Build"
+
+msgid "%s not converted"
+msgstr "%s non convertiti"
+
+msgid "Hair shaders"
+msgstr "Shader dei capelli"
+
+msgid "Hair diagnostics"
+msgstr "Diagnostica capelli"
+
 msgid "Unknown"
 msgstr "Sconosciuto"
 
@@ -979,9 +1181,6 @@ msgstr "Disabilitato"
 
 msgid "Waiting for early device"
 msgstr "In attesa del dispositivo grafico"
-
-msgid "Preparing"
-msgstr "In preparazione"
 
 msgid "Unsupported game build"
 msgstr "Build del gioco non supportata"
@@ -992,17 +1191,11 @@ msgstr "GPU non supportata"
 msgid "Native LSS"
 msgstr "LSS nativo"
 
-msgid "Unavailable"
-msgstr "Non disponibile"
-
 msgid "Unsupported driver"
 msgstr "Driver non supportato"
 
 msgid "game Path Traced Hair setting"
 msgstr "impostazione Path Traced Hair del gioco"
-
-msgid "Active"
-msgstr "Attivo"
 
 msgid "tracing converted hair"
 msgstr "tracciamento dei capelli convertiti"
@@ -1010,26 +1203,11 @@ msgstr "tracciamento dei capelli convertiti"
 msgid "no hair traced in the last 2 s"
 msgstr "nessun capello tracciato negli ultimi 2 s"
 
-msgid "Ready"
-msgstr "Pronto"
-
-msgid "waiting for game hair"
-msgstr "in attesa dei capelli del gioco"
-
 msgid "Turn it on or off with HairWorks and Path Traced Hair in the game's graphics settings."
 msgstr "Attivalo o disattivalo con HairWorks e Path Traced Hair nelle impostazioni grafiche del gioco."
 
 msgid "Traced hair"
 msgstr "Capelli tracciati"
-
-msgid "%s updates"
-msgstr "%s aggiornamenti"
-
-msgid "Builds"
-msgstr "Build"
-
-msgid "Hair diagnostics"
-msgstr "Diagnostica capelli"
 
 msgid "Turn on frame generation in the game's settings (DLSS or XeSS)."
 msgstr "Attiva la Frame Generation nelle impostazioni del gioco (DLSS o XeSS)."
@@ -1090,15 +1268,37 @@ msgstr "In questa sessione il gioco vede una NVIDIA GeForce RTX 4090."
 msgid "This GPU is not an RTX 30 card; the game sees its real name."
 msgstr "Questa GPU non è una scheda RTX 30; il gioco vede il suo nome reale."
 
+msgid ""
+"Writes the MFG Unlocker log beside the game. Bug reports need it.\n"
+"Turn it off to stop writing the log. Applies after a game restart."
+msgstr ""
+"Scrive il log di MFG Unlocker accanto al gioco. Serve per le segnalazioni di bug.\n"
+"Disattivalo per non scrivere più il log. Riavvia il gioco per applicare la modifica."
+
+msgid "The log setting could not be saved."
+msgstr "Impossibile salvare l'impostazione del log."
+
+msgid "Restart the game to write the log again."
+msgstr "Riavvia il gioco per scrivere di nuovo il log."
+
+msgid "Restart the game to stop writing the log."
+msgstr "Riavvia il gioco per non scrivere più il log."
+
+msgid "Write log file"
+msgstr "Scrivi file di log"
+
+msgid "Diagnostics"
+msgstr "Diagnostica"
+
 msgid "XeMFG standalone"
 msgstr "XeMFG autonomo"
 
 msgid ""
 "MFG Unlocker runs XeSS multi-frame generation itself, without OptiScaler, from the inputs of the game's DLSS frame generation or of its DLSS, XeSS or FSR 3.1 upscaling. It replaces the game's own frame generation.\n"
-"Switching it on or off applies after a restart."
+"Switching it on or off applies at once: MFG Unlocker briefly resizes the game's window so the game hands its swap chain over. If the game ignores that, it applies at the game's next resolution or window-mode change, or after a restart."
 msgstr ""
 "MFG Unlocker esegue da sé la Multi Frame Generation XeSS, senza OptiScaler, usando gli input della Frame Generation DLSS del gioco o del suo upscaling DLSS, XeSS o FSR 3.1. Sostituisce la Frame Generation del gioco.\n"
-"L'attivazione o la disattivazione ha effetto dopo un riavvio."
+"L'attivazione o la disattivazione si applica subito: MFG Unlocker ridimensiona brevemente la finestra del gioco perché il gioco ceda la sua swap chain. Se il gioco lo ignora, si applica al prossimo cambio di risoluzione o di modalità finestra del gioco, o dopo un riavvio."
 
 msgid "Dynamic"
 msgstr "Dinamica"
@@ -1172,11 +1372,41 @@ msgstr "I due file si trovano in cartelle diverse."
 msgid "Found %s, not %s: check the file's name and extension."
 msgstr "Trovato %s invece di %s: controlla il nome e l'estensione del file."
 
-msgid "The XeMFG setting could not be saved."
-msgstr "Impossibile salvare l'impostazione XeMFG."
+msgid "The %s in %s is version %s, which is too old for XeMFG."
+msgstr "Il file %s in %s è la versione %s, troppo vecchia per XeMFG."
+
+msgid "The %s in %s is too old for XeMFG."
+msgstr "Il file %s in %s è troppo vecchio per XeMFG."
+
+msgid "Put libxess_fg.dll and libxell.dll from Intel's XeSS SDK %s in %s, then restart the game."
+msgstr "Metti libxess_fg.dll e libxell.dll dell'SDK XeSS %s di Intel in %s, poi riavvia il gioco."
 
 msgid "Restart the game to start XeMFG."
 msgstr "Riavvia il gioco per avviare XeMFG."
+
+msgid "This game ignores window size changes, so XeMFG starts after a restart. From then on, XeMFG switches on and off in this game without a restart."
+msgstr "Questo gioco ignora i cambi di dimensione della finestra, quindi XeMFG parte dopo un riavvio. Da quel momento XeMFG si attiva e si disattiva in questo gioco senza riavvio."
+
+msgid "The game did not resize its swap chain, so XeMFG has not started yet. It starts at the game's next resolution or window-mode change, or after a restart."
+msgstr "Il gioco non ha ridimensionato la sua swap chain, quindi XeMFG non è ancora partito. Parte al prossimo cambio di risoluzione o di modalità finestra del gioco, o dopo un riavvio."
+
+msgid "XeMFG cannot take over a swap chain in exclusive fullscreen. Switch the game to borderless or windowed, or restart the game."
+msgstr "XeMFG non può prendere il controllo di una swap chain a schermo intero esclusivo. Passa il gioco a senza bordi o in finestra, oppure riavvia il gioco."
+
+msgid "XeMFG could not take over the running game's swap chain (%s). Restart the game to start XeMFG."
+msgstr "XeMFG non è riuscito a prendere il controllo della swap chain del gioco in esecuzione (%s). Riavvia il gioco per avviare XeMFG."
+
+msgid "The XeMFG setting could not be saved."
+msgstr "Impossibile salvare l'impostazione XeMFG."
+
+msgid "XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or window-mode change, or a restart."
+msgstr "XeMFG è disattivato, ma XeFG mantiene la swap chain del gioco fino al prossimo cambio di risoluzione o di modalità finestra del gioco, o fino a un riavvio."
+
+msgid "XeMFG is off. The game's DLSS frame generation comes back after a restart: it cannot start again in this session once XeMFG has taken over its swap chain."
+msgstr "XeMFG è disattivato. La generazione di frame DLSS del gioco torna dopo un riavvio: non può ripartire in questa sessione dopo che XeMFG ha preso la sua swap chain."
+
+msgid "Moving the game's swap chain to XeMFG..."
+msgstr "Trasferimento della swap chain del gioco a XeMFG..."
 
 msgid "XeMFG could not start: %s"
 msgstr "Impossibile avviare XeMFG: %s"
@@ -1199,6 +1429,12 @@ msgstr "Dinamica, %ux"
 msgid "held as cap"
 msgstr "mantenuto come limite"
 
+msgid "Starting"
+msgstr "Avvio"
+
+msgid "Waiting for a resize"
+msgstr "In attesa di un ridimensionamento"
+
 msgid "Restart needed"
 msgstr "Riavvio necessario"
 
@@ -1218,17 +1454,47 @@ msgstr ""
 msgid "%.1f real, %.1f XeMFG"
 msgstr "%.1f reali, %.1f XeMFG"
 
-msgid "Measuring..."
-msgstr "Misurazione..."
-
 msgid "XeMFG off"
 msgstr "XeMFG disattivato"
+
+msgid "Low-latency pacing"
+msgstr "Ritmo a bassa latenza"
+
+msgid "XeMFG holds the game inside Present until the display has room for its next frames, after the game has read your input. This moves that wait to before the game reads its input, so your actions show sooner. The frame rate stays the same. Auto turns it on. Applies at once."
+msgstr "XeMFG trattiene il gioco in Present finché lo schermo non ha spazio per i fotogrammi successivi, dopo che il gioco ha letto i tuoi comandi. Questa opzione sposta l'attesa prima della lettura dei comandi, così le tue azioni appaiono prima. La frequenza dei fotogrammi resta la stessa. Auto la attiva. Si applica subito."
+
+msgid "The low-latency pacing setting could not be saved."
+msgstr "Non è stato possibile salvare l'impostazione del ritmo a bassa latenza."
+
+msgid "for XeMFG's frames"
+msgstr "dei fotogrammi di XeMFG"
+
+msgid "No sleep point"
+msgstr "Nessun punto di attesa"
+
+msgid "the game's frames reach no sleep before their input"
+msgstr "i fotogrammi del gioco non raggiungono alcuna attesa prima della lettura dei comandi"
+
+msgid "the game is not held in Present"
+msgstr "il gioco non è trattenuto in Present"
+
+msgid "%.1f ms sooner"
+msgstr "%.1f ms prima"
+
+msgid "of %.1f ms the game waited in Present"
+msgstr "su %.1f ms di attesa del gioco in Present"
 
 msgid "MFG Unlocker multi-frame port"
 msgstr "Porting multi-frame di MFG Unlocker"
 
 msgid "Intel 2x model"
 msgstr "Modello Intel 2x"
+
+msgid "No generated frames"
+msgstr "Nessun fotogramma generato"
+
+msgid "the provider is failing; see the RTXMFG log"
+msgstr "il provider non funziona; vedi il log RTXMFG"
 
 msgid "Frame generation"
 msgstr "Frame Generation"
@@ -1275,6 +1541,9 @@ msgstr "Applicato"
 msgid "Not verified"
 msgstr "Non verificato"
 
+msgid "Model"
+msgstr "Modello"
+
 msgid "Tensor cores"
 msgstr "Tensor core"
 
@@ -1302,11 +1571,137 @@ msgstr "La Frame Generation si imposta nel menu di OptiScaler. Questo menu offre
 msgid "DLSS 5"
 msgstr "DLSS 5"
 
-msgid "Waiting for status"
-msgstr "In attesa dello stato"
+msgid "Present does not run from OptiScaler's menu. Choose Auto, Before upscaling or After upscaling."
+msgstr "Presentazione non funziona dal menu di OptiScaler. Scegli Auto, Prima dell'upscaling o Dopo l'upscaling."
+
+msgid "XeFG"
+msgstr "XeFG"
+
+msgid "CUDA port"
+msgstr "Porting CUDA"
+
+msgid "int8 layers on the tensor cores"
+msgstr "layer int8 sui Tensor core"
+
+msgid "XMX port"
+msgstr "Porting XMX"
+
+msgid "on the shader cores"
+msgstr "sugli shader core"
+
+msgid "XMX port: MFG Unlocker's port of Intel's multi-frame XMX model, run as DXIL shaders on any GPU. CUDA port: the same model with its int8 layers run as CUDA kernels on RTX tensor cores."
+msgstr "Porting XMX: il porting di MFG Unlocker del modello multi-frame XMX di Intel, eseguito come shader DXIL su qualsiasi GPU. Porting CUDA: lo stesso modello con i layer int8 eseguiti come kernel CUDA sui Tensor core RTX."
 
 msgid "Waiting for current backend status. Saved settings are preserved."
 msgstr "In attesa dello stato attuale del backend. Le impostazioni salvate vengono mantenute."
+
+msgid "Status is temporarily unavailable; controls are paused."
+msgstr "Lo stato è temporaneamente non disponibile; i controlli sono in pausa."
+
+msgid "Keybinds"
+msgstr "Tasti rapidi"
+
+msgid "FPS readout on"
+msgstr "FPS mostrati"
+
+msgid "FPS readout off"
+msgstr "FPS nascosti"
+
+msgid "Raise multiplier"
+msgstr "Aumenta moltiplicatore"
+
+msgid "Lower multiplier"
+msgstr "Riduci moltiplicatore"
+
+msgid "Dynamic on/off"
+msgstr "Attiva/disattiva Dinamica"
+
+msgid "FPS readout on/off"
+msgstr "Mostra/nascondi FPS"
+
+msgid "Pin panel"
+msgstr "Fissa pannello"
+
+msgid "Next preset"
+msgstr "Preset successivo"
+
+msgid "Previous preset"
+msgstr "Preset precedente"
+
+msgid "Frame generation keys apply once frame generation is ready"
+msgstr "I tasti della Frame Generation agiranno appena sarà pronta"
+
+msgid "Applying the last change..."
+msgstr "Applicazione dell'ultima modifica..."
+
+msgid "XeMFG: %s"
+msgstr "XeMFG: %s"
+
+msgid "Frame generation: %s"
+msgstr "Frame Generation: %s"
+
+msgid "%s is unavailable right now"
+msgstr "%s non è disponibile ora"
+
+msgid "Highest mode here: %s"
+msgstr "Modalità più alta qui: %s"
+
+msgid "Lowest mode: %s"
+msgstr "Modalità più bassa: %s"
+
+msgid "The change could not be saved"
+msgstr "Impossibile salvare la modifica"
+
+msgid "DLSS preset keys apply while the game runs DLSS"
+msgstr "I tasti dei preset DLSS agiscono mentre il gioco usa DLSS"
+
+msgid "RR preset: %s"
+msgstr "Preset RR: %s"
+
+msgid "SR preset: %s"
+msgstr "Preset SR: %s"
+
+msgid "the menu key"
+msgstr "il tasto menu"
+
+msgid "%s is already used by %s"
+msgstr "%s è già usato da %s"
+
+msgid "Moved from %s"
+msgstr "Spostato da %s"
+
+msgid "The frame generation in use has no such mode."
+msgstr "La Frame Generation in uso non ha questa modalità."
+
+msgid "Steps through the modes the Mode list offers."
+msgstr "Scorre una alla volta le modalità offerte dall'elenco Modalità."
+
+msgid "Steps through the presets of the DLSS the game runs: Super Resolution's (J, K, L, M) or, while Ray Reconstruction runs, Ray Reconstruction's (D, E, F). After the last one it starts again."
+msgstr "Scorre i preset del DLSS usato dal gioco: quelli di Super Resolution (J, K, L, M) o, mentre è attivo Ray Reconstruction, quelli di Ray Reconstruction (D, E, F). Dopo l'ultimo ricomincia dal primo."
+
+msgid "Also used by %s"
+msgstr "Usato anche da %s"
+
+msgid "Keys work with the menu open or closed, and still reach the game."
+msgstr "I tasti funzionano con il menu aperto o chiuso e arrivano anche al gioco."
+
+msgid "To bind a combination, hold Ctrl, Shift or Alt and press the key. A combination avoids the game's own keys."
+msgstr "Per una combinazione, tieni premuto Ctrl, Shift o Alt e premi il tasto. Una combinazione evita i tasti del gioco."
+
+msgid "Frame generation is set in OptiScaler's menu, so its keys are not offered here."
+msgstr "La Frame Generation si imposta nel menu di OptiScaler, quindi i suoi tasti non sono offerti qui."
+
+msgid "Now applies to %s"
+msgstr "Ora vale per %s"
+
+msgid "Show a note when a key changes a setting"
+msgstr "Mostra una nota quando un tasto cambia un'impostazione"
+
+msgid "The keybinds work for this session, but could not be saved."
+msgstr "I tasti valgono per questa sessione, ma non è stato possibile salvarli."
+
+msgid "Waiting for status"
+msgstr "In attesa dello stato"
 
 msgid "Not connected"
 msgstr "Non connesso"
@@ -1319,9 +1714,6 @@ msgstr "Il core integrato non è disponibile. Controlla il log di avvio e riavvi
 
 msgid "Paused"
 msgstr "In pausa"
-
-msgid "Live"
-msgstr "Attivo"
 
 msgid "The game changed graphics adapters. Restart the game to select a new GPU."
 msgstr "Il gioco ha cambiato scheda grafica. Riavvia il gioco per usare la nuova GPU."
@@ -1359,6 +1751,9 @@ msgid ""
 msgstr ""
 "Segui il gioco: usa l'impostazione di Frame Generation del gioco stesso.\n"
 "Dinamica: regola la Frame Generation in base a un frame rate target; non è un limite FPS rigido."
+
+msgid "DLSS frame generation could not start on this GPU, so it stays off for this session. Restart the game to try again."
+msgstr "Impossibile avviare la Frame Generation DLSS su questa GPU: resta disattivata per questa sessione. Riavvia il gioco per riprovare."
 
 msgid "Frame generation stays under the game's control. This wrapper has no verified MFG override support."
 msgstr "La Frame Generation resta sotto il controllo del gioco. Questo wrapper non ha un supporto verificato per l'override MFG."
@@ -1460,11 +1855,17 @@ msgstr "%.1f reali, DLSS non disponibile"
 msgid "DLSS FG off"
 msgstr "FG DLSS disattivata"
 
-msgid "Diagnostics"
-msgstr "Diagnostica"
+msgid "Latency unavailable"
+msgstr "Latenza non disponibile"
 
-msgid "Status is temporarily unavailable; controls are paused."
-msgstr "Lo stato è temporaneamente non disponibile; i controlli sono in pausa."
+msgid "Latency %.1f ms | 1%% high %.1f"
+msgstr "Latenza %.1f ms | 1%% peggiore %.1f"
+
+msgid "Latency: needs Reflex"
+msgstr "Latenza: serve Reflex"
+
+msgid "Latency --"
+msgstr "Latenza --"
 
 msgid "FPS status unavailable"
 msgstr "Stato FPS non disponibile"
@@ -1489,163 +1890,3 @@ msgstr "Dinamica (non disponibile)"
 
 msgid "Dynamic (checking...)"
 msgstr "Dinamica (verifica...)"
-
-#~ msgid "DLSS 5 Neural Rendering"
-#~ msgstr "Rendering neurale DLSS 5"
-
-#~ msgid "Faster"
-#~ msgstr "Più veloce"
-
-#~ msgid "Full"
-#~ msgstr "Completa"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation (not available yet)."
-#~ msgstr ""
-#~ "Rendering elabora l'input DLSS alla risoluzione di rendering, prima di DLSS SR, DLAA o Ray Reconstruction.\n"
-#~ "Dopo l'upscaling elabora l'output DLSS dopo la ricostruzione.\n"
-#~ "Presentazione elabora l'immagine della swapchain prima della presentazione (non ancora disponibile)."
-
-#~ msgid ""
-#~ "Auto treats the DLSS input and output as linear BT.709.\n"
-#~ "Other choices override the encoding of the processed image."
-#~ msgstr ""
-#~ "Auto tratta input e output DLSS come BT.709 lineare.\n"
-#~ "Le altre scelte sostituiscono la codifica dell'immagine elaborata."
-
-#~ msgid "Auto and Off leave the provider's UI correction off for DLSS input and output. On enables it."
-#~ msgstr "Auto e Disattivato lasciano disattivata la correzione UI del provider per input e output DLSS. Attivato la abilita."
-
-#~ msgid "Render"
-#~ msgstr "Rendering"
-
-#~ msgid "Upscaled"
-#~ msgstr "Dopo l'upscaling"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation and frame generation."
-#~ msgstr ""
-#~ "Rendering elabora l'input DLSS alla risoluzione di rendering, prima di DLSS SR, DLAA o Ray Reconstruction.\n"
-#~ "Dopo l'upscaling elabora l'output DLSS dopo la ricostruzione.\n"
-#~ "Presentazione elabora l'immagine della swapchain prima della presentazione e della frame generation."
-
-#~ msgid "Overall Intensity"
-#~ msgstr "Intensità generale"
-
-#~ msgid "Character Intensity"
-#~ msgstr "Intensità personaggi"
-
-#~ msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Render or Upscaled still work."
-#~ msgstr "La swapchain di questo gioco non può usare il metodo di aggancio Presentazione; il log indica il motivo. Rendering e Dopo l'upscaling funzionano comunque."
-
-#~ msgid "Detects skin and faces so that Character Intensity applies to them."
-#~ msgstr "Rileva pelle e volti, così l'intensità personaggi si applica a essi."
-
-#~ msgid ""
-#~ "Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "After upscaling processes the DLSS output after reconstruction.\n"
-#~ "Present processes the final image, game UI included, before presentation and frame generation."
-#~ msgstr ""
-#~ "Prima dell'upscaling elabora l'input DLSS alla risoluzione di rendering, prima di DLSS SR, DLAA o Ray Reconstruction.\n"
-#~ "Dopo l'upscaling elabora l'output DLSS dopo la ricostruzione.\n"
-#~ "Presentazione elabora l'immagine finale, interfaccia del gioco inclusa, prima della presentazione e della frame generation."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25."
-#~ msgstr ""
-#~ "Quota della risoluzione del metodo di aggancio elaborata dalla rete.\n"
-#~ "100 è nativa, valori più bassi sono più veloci, fino a 200 in supersampling. I valori sotto 25 usano 25."
-
-#~ msgid "Active preset"
-#~ msgstr "Preset attivo"
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Edges of fast-moving objects can show the original image for one frame."
-#~ msgstr ""
-#~ "Esegue la rete un fotogramma sì e uno no e sposta il suo risultato lungo i vettori di movimento del gioco nei fotogrammi intermedi.\n"
-#~ "Circa metà del costo GPU. I bordi degli oggetti in rapido movimento possono mostrare l'immagine originale per un fotogramma."
-
-#~ msgid "XeSS multi-frame generation needs OptiScaler, with XeFG as its frame generation output. Without it the game's XeSS frame generation runs at Intel's standard 2x."
-#~ msgstr "La Multi Frame Generation XeSS richiede OptiScaler, con XeFG come output FG. Senza OptiScaler, la Frame Generation XeSS del gioco resta al 2x standard di Intel."
-
-#~ msgid "Local detail and structure enhancement."
-#~ msgstr "Miglioramento di dettagli e struttura locali."
-
-#~ msgid "Local tone and contrast enhancement."
-#~ msgstr "Miglioramento di tono e contrasto locali."
-
-#~ msgid ""
-#~ "RGB residual adds the network's change to the full-resolution image.\n"
-#~ "Processed image uses the upscaled network output directly."
-#~ msgstr ""
-#~ "Residuo RGB aggiunge la modifica della rete all'immagine a piena risoluzione.\n"
-#~ "Immagine elaborata usa direttamente l'output ingrandito della rete."
-
-#~ msgid "Boost"
-#~ msgstr "Boost"
-
-#~ msgid "Boost is not available on Vulkan or with the Present hook method yet."
-#~ msgstr "Boost non è ancora disponibile con Vulkan o con il metodo di aggancio Presentazione."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Boost is on."
-#~ msgstr ""
-#~ "Esegue la rete un fotogramma sì e uno no e sposta il suo risultato lungo i vettori di movimento del gioco nei fotogrammi intermedi.\n"
-#~ "Circa metà del costo GPU. Le superfici animate come l'acqua, e le particelle, mantengono l'immagine originale del gioco finché Boost è attivo."
-
-#~ msgid "Place a compatible nvngx_dlssnr.dll beside the game executable or MFGUnlocker."
-#~ msgstr "Metti un nvngx_dlssnr.dll compatibile accanto al file eseguibile del gioco o a MFGUnlocker."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Half rate is on."
-#~ msgstr ""
-#~ "Esegue la rete un fotogramma sì e uno no e sposta il suo risultato lungo i vettori di movimento del gioco nei fotogrammi intermedi.\n"
-#~ "Circa metà del costo GPU. Le superfici animate come l'acqua, e le particelle, mantengono l'immagine originale del gioco finché la mezza frequenza è attiva."
-
-#~ msgid ""
-#~ "How much a surface may change between frames and still keep the carried result.\n"
-#~ "Strict shows the game's image on more moving surfaces (less smear); Loose carries more detail."
-#~ msgstr ""
-#~ "Quanto una superficie può cambiare tra i fotogrammi mantenendo il risultato trasportato.\n"
-#~ "Rigida mostra l'immagine del gioco su più superfici in movimento (meno scie); Tollerante trasporta più dettaglio."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-#~ "Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, and raises it again with headroom, never above the slider."
-#~ msgstr ""
-#~ "Quota della risoluzione del metodo di aggancio elaborata dalla rete.\n"
-#~ "100 è nativa, valori più bassi sono più veloci, fino a 200 in supersampling. I valori sotto 25 usano 25.\n"
-#~ "Auto la riduce quando DLSS 5 occupa più di circa un terzo di ogni frame renderizzato e la rialza quando c'è margine, mai oltre il cursore."
-
-#~ msgid ""
-#~ "Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-#~ "Subtle halves the change, Balanced is the default and Strong is clearly visible.\n"
-#~ "Pass Count under Advanced strengthens any look further, at extra GPU cost."
-#~ msgstr ""
-#~ "Imposta insieme Intensità, Modello, Struttura, Tono e Volti e pelle.\n"
-#~ "Delicato dimezza l'effetto, Bilanciato è il valore predefinito e Intenso è ben visibile.\n"
-#~ "Numero di passaggi in Avanzate rafforza ulteriormente qualsiasi aspetto, con un costo GPU aggiuntivo."
-
-#~ msgid "follows Structure"
-#~ msgstr "segue la Struttura"
-
-#~ msgid "Follows Structure. Change it under Advanced."
-#~ msgstr "Segue la Struttura. Si cambia in Avanzate."
-
-#~ msgid "Structure enhancement on detected skin and faces."
-#~ msgstr "Miglioramento della struttura su pelle e volti rilevati."
-
-#~ msgid "Faces & skin follows Structure"
-#~ msgstr "Volti e pelle seguono la Struttura"
-
-#~ msgid "Faces & skin takes the Structure strength, the provider's own default."
-#~ msgstr "Volti e pelle usano l'intensità della struttura, l'impostazione predefinita del provider."

@@ -1,7 +1,7 @@
 // Exercises the real entry registry/MinHook installer on a provider mapped
 // without DllMain/import resolution. No NVIDIA code, Init/Create/Evaluate or GPU
 // work runs. All patched pages are private to this short-lived test process.
-// --route (V1.6.1): the RTX 30/20 translated route's own reader hook owns the
+// --route: the RTX 30/20 translated route's own reader hook owns the
 // reader, and dlssg_preset adopts it for the configuration reset.
 #include "dlssg_preset.cpp"
 #include <iostream>

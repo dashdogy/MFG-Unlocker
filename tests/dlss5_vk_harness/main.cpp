@@ -22,7 +22,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <mutex>
 #include <set>
 #include <string>
@@ -350,14 +349,7 @@ int main(int argc, char** argv)
         region.imageExtent = {outWidth, outHeight, 1};
         vkCmdCopyImageToBuffer(vk.command, output.image, VK_IMAGE_LAYOUT_GENERAL, readback.buffer, 1, &region);
         if (!Submit(vk)) { printf("readback submit failed\n"); return texels; }
-        const auto* halfs = static_cast<const uint16_t*>(readback.mapped);
-        for (size_t i = 0; i < texels.size(); ++i) texels[i] = Float(halfs[i]);
-        if (dump)
-        {
-            const std::wstring file = Directory() + L"\\output-" + std::wstring(name, name + strlen(name)) + L".rgba16f";
-            std::ofstream out(file, std::ios::binary);
-            out.write(static_cast<const char*>(readback.mapped), std::streamsize(texels.size() * 2));
-        }
+        Decode(static_cast<const uint16_t*>(readback.mapped), texels, dump, name);
         return texels;
     };
     bool ok = true;

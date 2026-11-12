@@ -49,8 +49,10 @@ int wmain(int argc, wchar_t** argv)
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     if (argc < 3) return 2;
     const std::filesystem::path path = std::filesystem::absolute(argv[2]);
-    // crashhost.1: run.py starts this harness as UnityCrashHandler64.exe.
+    // run.py starts this harness as UnityCrashHandler64.exe. pluginprov.2: or with --type=renderer, as BeamNG.drive
+    // starts its CEF helpers.
     const bool crashReporter = std::wstring(argv[1]) == L"crash-reporter";
+    const bool chromiumHelper = std::wstring(argv[1]) == L"chromium-helper";
     const auto tempBefore = RuntimeFiles(TempDirectory());
     HMODULE module = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     bool passed = Check(module != nullptr, "single file loads");
@@ -61,6 +63,9 @@ int wmain(int argc, wchar_t** argv)
     if (crashReporter)
         passed &= Check(query && query(&status) && status.version == 3
             && status.backendOwner == 0 && !status.duplicateSuppressed, "crash reporter host gets proxy forwarding only");
+    else if (chromiumHelper)
+        passed &= Check(query && query(&status) && status.version == 3
+            && status.backendOwner == 0 && !status.duplicateSuppressed, "Chromium helper host gets proxy forwarding only");
     else
         passed &= Check(query && query(&status) && status.version == 3
             && status.backendOwner == 1 && !status.duplicateSuppressed, "one integrated backend owns initialization");
@@ -140,14 +145,15 @@ int wmain(int argc, wchar_t** argv)
         passed &= Check(query(&status) && status.backendOwner, "first owner survives duplicate load");
         if (duplicate) FreeLibrary(duplicate);
     }
-    if (crashReporter)
+    if (crashReporter || chromiumHelper)
     {
         // A started backend writes its log and status file and probes the folder within this time.
         Sleep(2000);
         const auto beside = RuntimeFiles(path.parent_path());
         for (const auto& file : beside) printf("left %ls\n", file.c_str());
         passed &= Check(beside.empty() && RuntimeFiles(TempDirectory()) == tempBefore,
-            "crash reporter host writes no log, status file or write probe");
+            crashReporter ? "crash reporter host writes no log, status file or write probe"
+                          : "Chromium helper host writes no log, status file or write probe");
         // Not pinned without a backend: FreeLibrary would unmap the query export.
         return passed ? 0 : 1;
     }

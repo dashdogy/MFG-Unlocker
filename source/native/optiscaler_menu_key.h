@@ -4,7 +4,7 @@
 #include <cwchar>
 #include <string_view>
 
-// OptiScaler shared menu (dlss5.8c): while RTXMFG's menu offers the DLSS presets
+// OptiScaler shared menu: while RTXMFG's menu offers the DLSS presets
 // and DLSS 5 beside OptiScaler's menu, it opens and closes on OptiScaler's menu
 // key, so one press shows or hides both menus.
 namespace optiscaler_menu_key

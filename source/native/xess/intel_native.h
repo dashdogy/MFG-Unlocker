@@ -20,19 +20,19 @@ struct Receipt
 {
     HMODULE fg{}, ll{};
     uint32_t fgRva{}, llRva{}, maximum{}, capacity{}, active{}, pending{};
-    // arcnative.3: the XeLL the native FG binds ("libxell"/"igxell"), its
+    // The XeLL the native FG binds ("libxell"/"igxell"), its
     // libxell version, and whether that module has a count gate to raise.
     const char* llBinding{""};
     bool llGated{}, igxellLoaded{};
     uint16_t llMajor{}, llMinor{}, llPatch{};
     std::wstring llPath;
 };
-// arcnative.3: the XeLL module native SetLatencyReduction binds, by the
+// The XeLL module native SetLatencyReduction binds, by the
 // driver's own rule (igxess_fg 1.3.3.93): libxell.dll must be loaded; when
 // libxell is above 1.0.0 and igxell.dll is already loaded, the driver unwraps
 // libxell's context into igxell's and binds igxell, otherwise it binds libxell
 // with the caller's context. Loading igxell ourselves flips a built-in libxell
-// context onto igxell (arcnative.2 crash), so nothing is ever loaded here. A
+// context onto igxell (a crash), so nothing is ever loaded here. A
 // libxell binding must be the route's verified libxell. Caller FreeLibrary's
 // the successful receipt.ll reference; failure owns no reference.
 bool SelectXeLL(HMODULE nativeFg, HMODULE routeLl, Receipt&, std::string& failure) noexcept;

@@ -1,4 +1,4 @@
-// livepreset.1 (V1.6.0): live DLSS-G preset switching. The switch policy, the
+// Live DLSS-G preset switching. The switch policy, the
 // frame-generation lifetime tracker, and the production dlssg_preset.cpp latch
 // (entry_detour stubbed, so nothing is installed and no provider is loaded).
 #include "dlssg_preset.cpp"
@@ -186,7 +186,7 @@ uint32_t FixtureCreate(void* a, void* b, void* c, void* d, uintptr_t e, uintptr_
         configuration->preset = FreezeSelection();
         RecordRead(GetModuleHandleW(nullptr), true, configuration->preset, true, ReadSource::eConfiguration);
     }
-    // Exactly the livepreset.1 failure: the report sees the new request even
+    // The case the latch exists for: the report sees the new request even
     // when Create reuses the configuration constructed on the first call.
     RecordRead(GetModuleHandleW(nullptr), true, FreezeSelection(), true, ReadSource::eReport);
     return 0x12345678;
@@ -324,7 +324,7 @@ void ConfigurationCases()
     gReads = {};
 }
 
-// V1.6.1: the RTX 30/20 translated route owns the provider's preset reader
+// The RTX 30/20 translated route owns the provider's preset reader
 // with its own detour; dlssg_preset adopts that exact entry for the reset.
 void RouteOwnedCases()
 {
@@ -432,7 +432,7 @@ void RouteOwnedCases()
     Check(configuration->preset == kPresetC && destroyed == before + 1 && ReadSnapshot(module).observedPreset == kPresetC,
         "the next Create reads the new preset through the route reader");
 
-    // alpha.11 (GitHub issue 107): the status reports the translated route's
+    // GitHub issue 107: the status reports the translated route's
     // provider; the RTX 40/50 selected-provider slot is 0 on that route.
     Check(StatusProvider(0x1000, false, 0x2000) == 0x1000 && StatusProvider(0x1000, true, 0x2000) == 0x2000
         && StatusProvider(0x1000, true, 0) == 0x1000 && StatusProvider(0, true, 0) == 0

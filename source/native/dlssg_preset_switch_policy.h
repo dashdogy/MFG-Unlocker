@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-// Live DLSS-G preset switching (V1.6.0). A live frame-generation feature keeps
+// Live DLSS-G preset switching. A live frame-generation feature keeps
 // a copy of the process-wide configuration. The singleton must be reset between
 // endpoint calls before a re-create can apply a new preset,
 // so a new selection is latched only while no FG Create is in flight and no FG

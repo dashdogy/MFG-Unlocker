@@ -1,4 +1,5 @@
 #include "overlay_dx12.h"
+#include "adapter_discovery.h"
 #include "overlay_build.h"
 #include "overlay_install.h"
 #include "overlay_platform.h"
@@ -9,10 +10,8 @@
 #include "ui_input_coherence.h"
 #include "dlss5.h"
 #include "optiscaler_host.h"
-#if MFG_UNLOCK_XESS
 #include "xess/xess_mod.h"
 #include "xess/d3d12_host.h"
-#endif
 #include <backends/imgui_impl_dx12.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -397,15 +396,20 @@ struct Session : State
     // object, if any): the DLSS 5 Present stage submits there.
     ComPtr<ID3D12CommandQueue> applicationQueue;
     bool providerSession = false;
-    // xefgmenu.1: XeFG's native output chain under OptiScaler (every output
+    // XeFG's native output chain under OptiScaler (every output
     // frame, generated ones included): the menu only.
     bool outputLayer = false;
+    // menuout.1: DLSS-G's chain beneath Streamline (an output layer) and the
+    // game's chain above Streamline. The base draws the menu on every output
+    // frame; the layer above only while the base has not presented for 1 s.
+    bool streamlineBase = false, aboveBase = false;
+    std::atomic<int64_t> basePresentTicks{0};
     std::atomic<bool> providerPresented{false};
     bool resizing = false;
     bool wasStillDrawing = false;
     // Atomic so the output layer's overlap wait can WaitOnAddress on it with no lock held; written under mutex.
     std::atomic<uint32_t> presents{0};
-    // alpha.15 (B4-06): the output layer's Presents, those that overlapped another in-flight Present, those that
+    // The output layer's Presents, those that overlapped another in-flight Present, those that
     // then waited for it and got the menu, and those whose wait timed out. Written under mutex.
     std::atomic<DWORD> presentThread{0};
     uint64_t outputPresents = 0, overlaps = 0, overlapWaits = 0, overlapTimeouts = 0;
@@ -432,8 +436,11 @@ bool Principal(Session* session) noexcept
             && other->presentationWindow == session->presentationWindow
             && other->providerSession && other->providerPresented.load(std::memory_order_acquire)) return false;
         // A frame generator's output chain yields to any other layer of its window.
-        if (other && other != session && session->outputLayer && !other->outputLayer
+        if (other && other != session && session->outputLayer && !session->streamlineBase && !other->outputLayer
             && other->presentationWindow == session->presentationWindow) return false;
+        // Streamline's base and the layer above it share their window's turn.
+        if (other && other != session && (session->streamlineBase || other->streamlineBase)
+            && other->presentationWindow == session->presentationWindow) continue;
         if (other && other != session && score(other) > score(session)) return false;
     }
     return true;
@@ -471,11 +478,7 @@ void PresentNeural(Session& session) noexcept
 bool OptiScalerChain(IDXGISwapChain3* chain) noexcept
 {
     if (!chain || !optiscaler_host::Detected() || optiscaler_host::UiHidden()) return false;
-#if MFG_UNLOCK_XESS
     const HMODULE fg = xess_mod::NativeFgModule();
-#else
-    const HMODULE fg = nullptr;
-#endif
     auto** table = *reinterpret_cast<void***>(chain);
     for (const HMODULE owner : {optiscaler_host::Module(), fg})
         if (owner && slots::ImageSlot(owner, table) && slots::ImageEntry(owner, table[8]))
@@ -483,13 +486,27 @@ bool OptiScalerChain(IDXGISwapChain3* chain) noexcept
     return false;
 }
 
-// xefgmenu.1: the same rule for XeFG's native output chain of an OptiScaler context.
+// nvpresent.1: NVIDIA's driver present layer (NvPresent64.dll, Smooth Motion)
+// answers no unwrapping IID. Like any base it only proves identity; only the
+// driver store's own copy qualifies.
+bool NvPresentChain(IDXGISwapChain3* chain) noexcept
+{
+    if (!chain) return false;
+    auto** table = *reinterpret_cast<void***>(chain);
+    HMODULE owner = nullptr;
+    std::array<wchar_t, adapter_discovery::kPathCapacity> path{};
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(table), &owner)) return false;
+    const DWORD length = GetModuleFileNameW(owner, path.data(), static_cast<DWORD>(path.size()));
+    return length && length < path.size() && adapter_discovery::DriverFilePath(path.data(), L"NvPresent64.dll", false)
+        && slots::ImageSlot(owner, table) && slots::ImageSlot(owner, table + 39) && native::PinInterface(chain, 39);
+}
+
+// The same rule for XeFG's native output chain of an OptiScaler context.
 bool OutputSwapchainWanted() noexcept
 {
-#if MFG_UNLOCK_XESS
-    // xemfgsa.1: XeMFG standalone's chains too (XeFG's proxy chain, the game's, is libxess_fg's own object).
+    // XeMFG standalone's chains too (XeFG's proxy chain, the game's, is libxess_fg's own object).
     if (xess_d3d12::InsideTakeover()) return single_module::OverlayAllowed();
-#endif
     return optiscaler_host::Detected() && !optiscaler_host::UiHidden() && single_module::OverlayAllowed();
 }
 
@@ -507,11 +524,15 @@ void RefuseSession(const wchar_t* step, IDXGISwapChain3* nativeChain) noexcept
     RecordFailure(message);
 }
 
-Session* CreateSession(IDXGISwapChain* chain, IUnknown* presentedQueue, HMODULE provider, bool output) noexcept
+Session* CreateSession(IDXGISwapChain* chain, IUnknown* presentedQueue, HMODULE provider, bool output,
+    bool streamlineBase) noexcept
 {
     if (!chain || !presentedQueue || native::InsideLoader()) return nullptr;
     InternalScope internal;
     try {
+        // Streamline's chain over our proxy of its base: that proxy is the
+        // base's identity (beneath it, unwrapping may reach a system chain).
+        const bool aboveBase = !provider && !output && AboveStreamlineBase(chain);
         ComPtr<IDXGISwapChain3> nativeChain, renderingChain;
         ComPtr<ID3D12CommandQueue> queue;
         ComPtr<ID3D12Device> device, swapDevice, nativeDevice;
@@ -523,7 +544,8 @@ Session* CreateSession(IDXGISwapChain* chain, IUnknown* presentedQueue, HMODULE 
                 ? (slots::ImageSlot(provider, *reinterpret_cast<void***>(renderingChain.Get()))
                     && slots::ImageEntry(provider, (*reinterpret_cast<void***>(renderingChain.Get()))[8]))
                 : (native::Unwrap(chain, nativeChain)
-                    && (native::SystemDxgiObject(nativeChain.Get(), 39) || OptiScalerChain(nativeChain.Get())))))
+                    && (aboveBase || native::SystemDxgiObject(nativeChain.Get(), 39) || OptiScalerChain(nativeChain.Get())
+                        || NvPresentChain(nativeChain.Get())))))
             step = L"swapchain owner";
         else if (!native::Unwrap(presentedQueue, queue) || !native::PinInterface(queue.Get(), 18)
             || queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT)
@@ -544,8 +566,10 @@ Session* CreateSession(IDXGISwapChain* chain, IUnknown* presentedQueue, HMODULE 
         if (a.HighPart != b.HighPart || a.LowPart != b.LowPart) return nullptr;
         auto session = std::make_unique<Session>();
         session->providerSession = provider != nullptr;
-        session->outputLayer = output;
-        session->platform.afterFrameGeneration = output;
+        session->outputLayer = output || streamlineBase;
+        session->streamlineBase = streamlineBase;
+        session->aboveBase = aboveBase;
+        session->platform.afterFrameGeneration = output || streamlineBase;
         DXGI_SWAP_CHAIN_DESC1 desc{};
         if (FAILED(renderingChain->GetHwnd(&session->presentationWindow)) || !session->presentationWindow
             || FAILED(renderingChain->GetDesc1(&desc))) return nullptr;
@@ -568,10 +592,14 @@ Session* CreateSession(IDXGISwapChain* chain, IUnknown* presentedQueue, HMODULE 
             *slot = session.get();
         }
         single_module::Log(provider ? L"MFG_PROXY_UI renderer registered layer=creation-return buffers=layer-local index=layer-local queue=creation-argument device=matched"
+            : streamlineBase ? L"MFG_PROXY_UI renderer registered layer=streamline-base buffers=layer-local index=layer-local queue=creation-argument device=matched"
+            : aboveBase ? L"MFG_PROXY_UI renderer registered layer=creation-return base=RTXMFG streamline-base buffers=layer-local index=layer-local queue=creation-argument device=matched"
             : output ? L"MFG_PROXY_UI renderer registered layer=xefg-output base=OptiScaler XeFG buffers=layer-local index=layer-local queue=creation-argument device=matched"
-            : !native::SystemDxgiObject(nativeChain.Get(), 39)
-            ? L"MFG_PROXY_UI renderer registered layer=creation-return base=OptiScaler swapchain buffers=layer-local index=layer-local queue=creation-argument device=matched"
-            : L"MFG_PROXY_UI renderer registered layer=creation-return buffers=layer-local index=layer-local queue=creation-argument device=matched");
+            : native::SystemDxgiObject(nativeChain.Get(), 39)
+            ? L"MFG_PROXY_UI renderer registered layer=creation-return buffers=layer-local index=layer-local queue=creation-argument device=matched"
+            : NvPresentChain(nativeChain.Get())
+            ? L"MFG_PROXY_UI renderer registered layer=creation-return base=NVIDIA NvPresent buffers=layer-local index=layer-local queue=creation-argument device=matched"
+            : L"MFG_PROXY_UI renderer registered layer=creation-return base=OptiScaler swapchain buffers=layer-local index=layer-local queue=creation-argument device=matched");
         return session.release();
     } catch (...) {
         RecordFailure(L"MFG_PROXY_UI renderer allocation failed; original presentation retained");
@@ -580,7 +608,7 @@ Session* CreateSession(IDXGISwapChain* chain, IUnknown* presentedQueue, HMODULE 
 }
 
 namespace {
-// alpha.15 (B4-06): the output layer's overlap totals, once per session.
+// The output layer's overlap totals, once per session.
 void LogOverlapTotals(Session& session) noexcept
 {
     if (!session.outputLayer || session.totalsLogged) return;
@@ -637,6 +665,14 @@ bool IsPrincipal(Session* session) noexcept
     return session && Principal(session);
 }
 
+bool AnySession() noexcept
+{
+    std::lock_guard lock(gSessionsMutex);
+    for (auto* session : gSessions)
+        if (session) return true;
+    return false;
+}
+
 bool WindowSession(HWND window) noexcept
 {
     if (!window) return false;
@@ -670,11 +706,26 @@ int64_t TickFrequency() noexcept
     return frequency;
 }
 
-// alpha.15 (B4-06): XeFG presents its outputs from two threads (the game's for the real frame, its presenter for the
-// generated ones). A Present that arrived while the other was still in flight forwarded without the menu, so single
-// output frames lost the whole overlay. The output layer now waits for it with no lock held (DXGI holds this call
-// behind that Present anyway), at most two output intervals and never more than 20 ms; on timeout it forwards
-// without the menu as before. Only while the menu draws: a closed menu loses nothing and never waits.
+// The layer above Streamline leaves the menu to the base beneath it while
+// that base presented within the last second (menuout.1).
+bool BaseDraws(const Session& session) noexcept
+{
+    if (!session.aboveBase) return false;
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    std::lock_guard lock(gSessionsMutex);
+    for (auto* other : gSessions)
+    {
+        if (!other || !other->streamlineBase || other->presentationWindow != session.presentationWindow) continue;
+        const int64_t last = other->basePresentTicks.load(std::memory_order_acquire);
+        if (last && now.QuadPart - last < TickFrequency()) return true;
+    }
+    return false;
+}
+
+// XeFG presents its outputs from two threads, so a Present can arrive while the other is in flight and would forward
+// without the menu. While the menu draws, the output layer waits for it with no lock held (DXGI holds this call behind
+// that Present anyway), at most two output intervals and never more than 20 ms; on timeout it forwards without the menu.
 void WaitForOtherPresent(Session& session, UINT flags) noexcept
 {
     if (flags & DXGI_PRESENT_TEST) return;
@@ -725,7 +776,7 @@ void WaitForOtherPresent(Session& session, UINT flags) noexcept
 
 bool BeginPresent(Session* session, UINT flags, bool partialUpdate) noexcept
 {
-    // interopmenu.2: XeFG's real frame reaches its output chain on the game's thread, inside our Vulkan overlay's
+    // XeFG's real frame reaches its output chain on the game's thread, inside our Vulkan overlay's
     // forwarding of the game's present; only that scope may be open for the output layer to draw on it.
     if (!session || (gInsideOverlay && !(session->outputLayer && gForwardingVulkanPresent))) return false;
     if (session->outputLayer) WaitForOtherPresent(*session, flags);
@@ -737,8 +788,15 @@ bool BeginPresent(Session* session, UINT flags, bool partialUpdate) noexcept
     if ((flags & DXGI_PRESENT_TEST) || ((flags & DXGI_PRESENT_DO_NOT_WAIT) && session->wasStillDrawing)) return true;
     session->menuDrawn = false;
     if (session->providerSession) session->providerPresented.store(true, std::memory_order_release);
+    if (session->streamlineBase)
+    {
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        session->basePresentTicks.store(now.QuadPart, std::memory_order_release);
+    }
     if (!Principal(session)) return true;
-    gDxgiFrames.fetch_add(1, std::memory_order_relaxed);
+    // Streamline's base presents the layer above's frames too.
+    if (!session->streamlineBase) gDxgiFrames.fetch_add(1, std::memory_order_relaxed);
 #if !MFG_UNLOCK_OVERLAY_SKIP_GPU_WORK
     // Dirty/scroll presentation reuses pixels outside its rectangles, which
     // whole-image processing would change. A frame generator's output chain
@@ -746,7 +804,8 @@ bool BeginPresent(Session* session, UINT flags, bool partialUpdate) noexcept
     if (!partialUpdate && !session->retired && !session->outputLayer) PresentNeural(*session);
 #endif
 #if MFG_UNLOCK_OVERLAY_MENU_DRAW && !MFG_UNLOCK_OVERLAY_SKIP_GPU_WORK
-    if (install::InputReady() && single_module::OverlayAllowed()) // A concurrent creator never waits on input publication.
+    if (install::InputReady() && single_module::OverlayAllowed() // A concurrent creator never waits on input publication.
+        && !BaseDraws(*session))
     {
         try { session->menuDrawn = session->Render(partialUpdate) == RenderOutcome::eSubmitted; }
         catch (...) { session->Disable(); RecordFailure(L"MFG_PROXY_UI render exception; UI disabled for this generation"); }
@@ -758,7 +817,8 @@ void EndPresent(Session* session, HRESULT result, UINT flags) noexcept
 {
     if (!session) return;
     std::lock_guard lock(session->mutex);
-    if (result==S_OK && !(flags & DXGI_PRESENT_TEST) && Principal(session)) {
+    // Streamline's base counts the same presents the layer above reads through Streamline.
+    if (result==S_OK && !(flags & DXGI_PRESENT_TEST) && !session->streamlineBase && Principal(session)) {
         InternalScope internal;
         UINT count=0;
         const bool available=SUCCEEDED(session->swapchain->GetLastPresentCount(&count));

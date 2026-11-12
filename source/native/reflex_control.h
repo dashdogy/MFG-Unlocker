@@ -57,7 +57,7 @@ struct Snapshot
     uint32_t moduleVersionPatch = 0;
     uint32_t moduleVersionBuild = 0;
     uint64_t moduleGeneration = 0;
-    // The last refused Reflex plug-in (reflexgate.1); refusedVersionRead is
+    // The last refused Reflex plug-in; refusedVersionRead is
     // false when it had no readable version resource.
     bool refusedModule = false;
     bool refusedVersionRead = false;

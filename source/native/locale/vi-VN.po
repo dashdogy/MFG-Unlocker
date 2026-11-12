@@ -67,6 +67,84 @@ msgstr ""
 "Hiển thị FPS thực và FPS DLSS ở góc trên bên trái\n"
 "khi đóng menu. Tự động lưu cho các lần chơi sau."
 
+msgid ""
+"Shows the PC latency in the top-left corner\n"
+"while the menu is closed. Saved for the next launch."
+msgstr ""
+"Hiển thị độ trễ PC ở góc trên bên trái\n"
+"khi menu đóng. Được lưu cho lần chạy sau."
+
+msgid "Latency"
+msgstr "Độ trễ"
+
+msgid "%.1f ms, 1%% high %.1f ms"
+msgstr "%.1f ms, 1%% cao nhất %.1f ms"
+
+msgid ""
+"PC latency: from the game starting a frame (its Reflex simulation start)\n"
+"to the first frame showing it reaching the screen."
+msgstr ""
+"Độ trễ PC: từ lúc game bắt đầu một khung hình (lúc bắt đầu mô phỏng Reflex)\n"
+"đến khi khung hình đầu tiên hiển thị nó xuất hiện trên màn hình."
+
+msgid "Game %.1f ms, frame generation %.1f ms, display %.1f ms."
+msgstr "Game %.1f ms, Frame Generation %.1f ms, hiển thị %.1f ms."
+
+msgid "The real frame reaches the screen after %.1f ms."
+msgstr "Khung hình thật xuất hiện trên màn hình sau %.1f ms."
+
+msgid "Mouse and monitor delay are not included."
+msgstr "Không bao gồm độ trễ của chuột và màn hình."
+
+msgid "Unavailable"
+msgstr "Không khả dụng"
+
+msgid "the game sends no Reflex markers"
+msgstr "game không gửi điểm đánh dấu Reflex"
+
+msgid "no frames to time on this route"
+msgstr "không có khung hình để đo trên tuyến này"
+
+msgid "Windows reports no flip times here"
+msgstr "Windows không báo thời điểm hiển thị ở đây"
+
+msgid "Measuring..."
+msgstr "Đang đo..."
+
+msgid "Game / driver default"
+msgstr "Mặc định game / driver"
+
+msgid "Preset C (performance)"
+msgstr "Preset C (hiệu năng)"
+
+msgid ""
+"The DLSS frame generation model preset.\n"
+"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
+"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
+"A change made while frame generation runs restarts it once, with a short pause;\n"
+"some older DLSS-G versions apply it after a game restart."
+msgstr ""
+"Preset model của DLSS Frame Generation.\n"
+"Preset C là chế độ Frame Gen tối ưu nhẹ hơn của NVIDIA. Yêu cầu DLSS-G 310.9.16 trở lên,\n"
+"lấy từ tính năng DLSS override của NVIDIA app; các provider khác sẽ giữ preset mặc định của game / driver.\n"
+"Nếu đổi preset khi Frame Gen đang chạy, Frame Gen sẽ khởi động lại một lần và khựng trong giây lát;\n"
+"với một số phiên bản DLSS-G cũ, bạn cần khởi động lại game để có hiệu lực."
+
+msgid "Preset %s is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Đã lưu Preset %s. Preset sẽ có hiệu lực vào lần tới Frame Gen khởi động, hoặc sau khi khởi động lại game."
+
+msgid "The game / driver preset is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Đã lưu preset của game / driver. Preset sẽ có hiệu lực vào lần tới Frame Gen khởi động, hoặc sau khi khởi động lại game."
+
+msgid "Restarting frame generation with the new preset..."
+msgstr "Đang khởi động lại Frame Gen với preset mới..."
+
+msgid "The game / driver preset is saved. Restart the game to use it."
+msgstr "Đã lưu preset của game / driver. Hãy khởi động lại game để áp dụng."
+
+msgid "Preset %s is saved. Restart the game to use it."
+msgstr "Đã lưu Preset %s. Hãy khởi động lại game để áp dụng."
+
 msgid "DLSS-G preset"
 msgstr "Preset DLSS-G"
 
@@ -103,42 +181,14 @@ msgstr "Provider DLSS-G này chỉ hỗ trợ preset mặc định của nó. Pr
 msgid "This DLSS-G provider supports its original preset only."
 msgstr "Provider DLSS-G này chỉ hỗ trợ duy nhất preset mặc định."
 
-msgid "Restarting frame generation with the new preset..."
-msgstr "Đang khởi động lại Frame Gen với preset mới..."
-
-msgid "The game / driver preset is saved. Restart the game to use it."
-msgstr "Đã lưu preset của game / driver. Hãy khởi động lại game để áp dụng."
-
-msgid "Preset %s is saved. Restart the game to use it."
-msgstr "Đã lưu Preset %s. Hãy khởi động lại game để áp dụng."
-
 msgid "Preset C needs DLSS-G 310.9.16 or newer (NVIDIA app). This game's frame generation keeps the game / driver preset."
 msgstr "Preset C yêu cầu DLSS-G 310.9.16 trở lên (từ NVIDIA app). Frame Generation của game này sẽ giữ nguyên preset theo game / driver."
 
 msgid "The preset selection could not be saved."
 msgstr "Không lưu được preset đã chọn."
 
-msgid "Game / driver default"
-msgstr "Mặc định game / driver"
-
-msgid "Preset C (performance)"
-msgstr "Preset C (hiệu năng)"
-
 msgid "Original preset"
 msgstr "Preset gốc"
-
-msgid ""
-"The DLSS frame generation model preset.\n"
-"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
-"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
-"A change made while frame generation runs restarts it once, with a short pause;\n"
-"some older DLSS-G versions apply it after a game restart."
-msgstr ""
-"Preset model của DLSS Frame Generation.\n"
-"Preset C là chế độ Frame Gen tối ưu nhẹ hơn của NVIDIA. Yêu cầu DLSS-G 310.9.16 trở lên,\n"
-"lấy từ tính năng DLSS override của NVIDIA app; các provider khác sẽ giữ preset mặc định của game / driver.\n"
-"Nếu đổi preset khi Frame Gen đang chạy, Frame Gen sẽ khởi động lại một lần và khựng trong giây lát;\n"
-"với một số phiên bản DLSS-G cũ, bạn cần khởi động lại game để có hiệu lực."
 
 msgid "Performance"
 msgstr "Hiệu năng"
@@ -293,6 +343,176 @@ msgstr "Phương thức hook không khả dụng"
 msgid "Waiting for DLSS"
 msgstr "Đang chờ DLSS"
 
+msgid "This game evaluates DLSS on a deferred DirectX 11 context. DLSS 5 needs the immediate context, so it leaves the frame as is."
+msgstr "Game này chạy DLSS trên context DirectX 11 trì hoãn (deferred). DLSS 5 cần context tức thời (immediate), nên giữ nguyên khung hình."
+
+msgid "DLSS 5 on DirectX 11 needs shared fences (Windows 10 version 1703 or later and a current driver). It leaves the frame as is."
+msgstr "DLSS 5 trên DirectX 11 cần shared fence (Windows 10 phiên bản 1703 trở lên và driver mới). Khung hình được giữ nguyên."
+
+msgid "DLSS 5 could not create its DirectX 12 device for this DirectX 11 game; the log names the reason."
+msgstr "DLSS 5 không tạo được thiết bị DirectX 12 riêng cho game DirectX 11 này; log ghi rõ lý do."
+
+msgid "DLSS 5 could not share textures between this DirectX 11 game and its DirectX 12 device; the log names the reason."
+msgstr "DLSS 5 không chia sẻ được texture giữa game DirectX 11 này và thiết bị DirectX 12 của nó; log ghi rõ lý do."
+
+msgid "DLSS 5 cannot attach to this game's DirectX 11 DLSS: MFG Unlocker did not see it being created (it came before the hook, or another hook covers NVIDIA's entries). The log names the reason."
+msgstr "DLSS 5 không gắn được vào DLSS DirectX 11 của game này: MFG Unlocker không thấy lúc nó được tạo (nó có trước khi hook, hoặc một hook khác che các điểm vào của NVIDIA). Log ghi rõ lý do."
+
+msgid ""
+"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
+"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
+"After upscaling processes the DLSS output after reconstruction.\n"
+"Present processes the final image, game UI included, before presentation and frame generation."
+msgstr ""
+"Tự động xử lý đầu ra DLSS sau khi tái tạo; Tỷ lệ độ phân giải Tự động giữ chi phí trong tầm kiểm soát.\n"
+"Trước khi upscale xử lý đầu vào DLSS ở độ phân giải kết xuất, trước DLSS SR, DLAA hoặc Ray Reconstruction.\n"
+"Sau khi upscale xử lý đầu ra DLSS sau khi tái tạo.\n"
+"Xuất khung hình xử lý ảnh cuối cùng, gồm cả UI của game, trước khi hiển thị và trước Frame Generation."
+
+msgid ""
+"Subtle, Balanced and Strong set Intensity, Style, Structure, Tone and Faces & skin together.\n"
+"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
+"Pass Count under Advanced strengthens any look further, at extra GPU cost.\n"
+"Your saved presets are listed below them. Each loads its look, Hook Method and every other setting; Compare and Debug view stay as they are.\n"
+"Loading a saved preset turns DLSS 5 on. Delete removes the saved preset shown."
+msgstr ""
+"Nhẹ, Cân bằng và Mạnh đặt đồng thời Cường độ, Phong cách, Cấu trúc, Tông màu và Khuôn mặt & da.\n"
+"Cân bằng là mặc định riêng của nhà cung cấp, Nhẹ giảm một nửa hiệu ứng và Mạnh đi xa hơn.\n"
+"Số lượt trong Nâng cao làm mọi diện mạo mạnh hơn nữa, nhưng tốn thêm GPU.\n"
+"Các preset đã lưu của bạn nằm bên dưới. Mỗi preset tải diện mạo, phương thức hook và mọi cài đặt khác của nó; So sánh và chế độ xem gỡ lỗi giữ nguyên.\n"
+"Tải một preset đã lưu sẽ bật DLSS 5. Xóa sẽ gỡ preset đã lưu đang hiển thị."
+
+msgid ""
+"How the network draws its look. All three cost the same.\n"
+"Neutral changes the game's image the least.\n"
+"Rich keeps skin warm and colourful, and deepens bright areas such as sky.\n"
+"Soft gives a flatter, softer image."
+msgstr ""
+"Kiểu diện mạo mà mạng tạo ra. Cả ba có chi phí như nhau.\n"
+"Trung tính thay đổi hình ảnh của game ít nhất.\n"
+"Đậm giữ làn da ấm và tươi màu, đồng thời làm sâu các vùng sáng như bầu trời.\n"
+"Dịu cho hình ảnh phẳng và mềm hơn."
+
+msgid ""
+"Which of the provider's two networks runs.\n"
+"Default lets the provider choose: DLSS 5 310.9.16 runs Fast.\n"
+"Quality is the larger network: stronger changes and a little more fine detail, at about 1.7x the GPU time.\n"
+"Fast is the smaller network."
+msgstr ""
+"Mạng nào trong hai mạng của bộ cung cấp sẽ chạy.\n"
+"Mặc định để bộ cung cấp tự chọn: DLSS 5 310.9.16 chạy Nhanh.\n"
+"Chất lượng là mạng lớn hơn: thay đổi mạnh hơn và thêm chút chi tiết nhỏ, với khoảng 1,7 lần thời gian GPU.\n"
+"Nhanh là mạng nhỏ hơn."
+
+msgid "Off while Character Mask is off."
+msgstr "Tắt khi Mặt nạ nhân vật đang tắt."
+
+msgid ""
+"Structure enhancement on detected skin and faces.\n"
+"Same as Structure takes the Structure strength, the provider's own default."
+msgstr ""
+"Tăng cường cấu trúc trên da và khuôn mặt được phát hiện.\n"
+"Như Cấu trúc dùng cường độ cấu trúc, là mặc định riêng của nhà cung cấp."
+
+msgid ""
+"Share of the hook method's resolution that the network processes.\n"
+"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
+"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
+msgstr ""
+"Tỷ lệ độ phân giải của phương thức hook mà mạng xử lý.\n"
+"100 là gốc, thấp hơn thì nhanh hơn, tối đa 200 là siêu lấy mẫu. Giá trị dưới 25 được dùng như 25.\n"
+"Tự động giảm nó khi DLSS 5 chiếm hơn khoảng một phần ba mỗi khung hình được kết xuất, không thấp hơn 75, và tăng lại khi còn dư, không bao giờ vượt quá thanh trượt."
+
+msgid "Half rate is not available on Vulkan or with the Present hook method yet."
+msgstr "Nửa tần suất hiện chưa khả dụng trên Vulkan hoặc với phương thức hook Xuất khung hình."
+
+msgid ""
+"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
+"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
+msgstr ""
+"Chạy mạng nơ-ron cách một khung hình. Các khung hình ở giữa áp dụng diện mạo gần nhất của nó lên hình ảnh của chính chúng, nên các bề mặt chuyển động và có hoạt ảnh vẫn giữ được diện mạo đó mà không để lại vệt.\n"
+"Khoảng một nửa chi phí GPU. Chi tiết nhỏ đi theo vectơ chuyển động của trò chơi ở những nơi bề mặt chỉ di chuyển."
+
+msgid "%s (changed)"
+msgstr "%s (đã thay đổi)"
+
+msgid "Preset %u"
+msgstr "Preset %u"
+
+msgid "Imported preset"
+msgstr "Preset đã nhập"
+
+msgid "Saved \"%s\"."
+msgstr "Đã lưu \"%s\"."
+
+msgid "Deleted \"%s\"."
+msgstr "Đã xóa \"%s\"."
+
+msgid "Imported \"%s\"."
+msgstr "Đã nhập \"%s\"."
+
+msgid "Copied the preset code to the clipboard."
+msgstr "Đã sao chép mã preset vào bộ nhớ tạm."
+
+msgid "The clipboard is unavailable. The code is in the field to copy by hand."
+msgstr "Bộ nhớ tạm không khả dụng. Mã nằm trong ô để bạn tự sao chép."
+
+msgid "No preset code found. Codes start with DLSS5-."
+msgstr "Không tìm thấy mã preset. Mã bắt đầu bằng DLSS5-."
+
+msgid "This preset code is damaged or incomplete. Copy it again in full."
+msgstr "Mã preset này bị hỏng hoặc không đầy đủ. Hãy sao chép lại toàn bộ."
+
+msgid "This preset code needs a newer MFG Unlocker."
+msgstr "Mã preset này cần MFG Unlocker mới hơn."
+
+msgid "%u presets is the most. Delete one to save another."
+msgstr "Tối đa %u preset. Hãy xóa một preset để lưu preset khác."
+
+msgid "The presets file could not be read or written."
+msgstr "Không thể đọc hoặc ghi tệp preset."
+
+msgid "Some settings in this code need a newer MFG Unlocker and were left out."
+msgstr "Một số cài đặt trong mã này cần MFG Unlocker mới hơn nên đã bị bỏ qua."
+
+msgid ""
+"Saves the current DLSS 5 settings as a preset under this name; a preset with the same name is replaced.\n"
+"Presets are kept beside the game."
+msgstr ""
+"Lưu cài đặt DLSS 5 hiện tại thành preset với tên này; preset cùng tên sẽ bị thay thế.\n"
+"Các preset được lưu cạnh trò chơi."
+
+msgid ""
+"Export copies the current settings to the clipboard as a code starting with DLSS5-, to share with other players.\n"
+"Import applies a pasted code and saves it as a preset. With the field empty, Import reads the clipboard."
+msgstr ""
+"Xuất sẽ sao chép cài đặt hiện tại vào bộ nhớ tạm dưới dạng mã bắt đầu bằng DLSS5- để chia sẻ với người chơi khác.\n"
+"Nhập sẽ áp dụng mã đã dán và lưu thành preset. Khi ô trống, Nhập sẽ đọc bộ nhớ tạm."
+
+msgid "Delete"
+msgstr "Xóa"
+
+msgid "Save as"
+msgstr "Lưu thành"
+
+msgid "Save"
+msgstr "Lưu"
+
+msgid "Name"
+msgstr "Tên"
+
+msgid "Share"
+msgstr "Chia sẻ"
+
+msgid "Import"
+msgstr "Nhập"
+
+msgid "Export"
+msgstr "Xuất"
+
+msgid "Paste a code"
+msgstr "Dán mã"
+
 msgid "Neural Rendering"
 msgstr "Kết xuất nơ-ron"
 
@@ -311,17 +531,6 @@ msgstr "Tự động: %s"
 msgid "Hook Method"
 msgstr "Phương thức hook"
 
-msgid ""
-"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
-"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-"After upscaling processes the DLSS output after reconstruction.\n"
-"Present processes the final image, game UI included, before presentation and frame generation."
-msgstr ""
-"Tự động xử lý đầu ra DLSS sau khi tái tạo; Tỷ lệ độ phân giải Tự động giữ chi phí trong tầm kiểm soát.\n"
-"Trước khi upscale xử lý đầu vào DLSS ở độ phân giải kết xuất, trước DLSS SR, DLAA hoặc Ray Reconstruction.\n"
-"Sau khi upscale xử lý đầu ra DLSS sau khi tái tạo.\n"
-"Xuất khung hình xử lý ảnh cuối cùng, gồm cả UI của game, trước khi hiển thị và trước Frame Generation."
-
 msgid "Subtle"
 msgstr "Nhẹ"
 
@@ -334,45 +543,26 @@ msgstr "Tùy chỉnh"
 msgid "Look"
 msgstr "Diện mạo"
 
-msgid ""
-"Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
-"Pass Count under Advanced strengthens any look further, at extra GPU cost."
-msgstr ""
-"Đặt đồng thời Cường độ, Model, Cấu trúc, Tông màu và Khuôn mặt & da.\n"
-"Cân bằng là mặc định riêng của nhà cung cấp, Nhẹ giảm một nửa hiệu ứng và Mạnh đi xa hơn.\n"
-"Số lượt trong Nâng cao làm mọi diện mạo mạnh hơn nữa, nhưng tốn thêm GPU."
-
 msgid "Intensity"
 msgstr "Cường độ"
 
 msgid "Strength of the whole neural rendering effect."
 msgstr "Độ mạnh của toàn bộ hiệu ứng kết xuất nơ-ron."
 
-msgid "Model A"
-msgstr "Mô hình A"
+msgid "Neutral"
+msgstr "Trung tính"
 
-msgid "Model B"
-msgstr "Mô hình B"
+msgid "Rich"
+msgstr "Đậm"
 
-msgid "Model C"
-msgstr "Mô hình C"
+msgid "Soft"
+msgstr "Dịu"
 
-msgid "Model"
-msgstr "Model"
+msgid "Style"
+msgstr "Phong cách"
 
 msgid "Faces & skin"
 msgstr "Khuôn mặt & da"
-
-msgid "Off while Character Mask is off. Turn it on under Advanced."
-msgstr "Tắt khi Mặt nạ nhân vật đang tắt. Hãy bật nó trong Nâng cao."
-
-msgid ""
-"Structure enhancement on detected skin and faces.\n"
-"Same as Structure takes the Structure strength, the provider's own default."
-msgstr ""
-"Tăng cường cấu trúc trên da và khuôn mặt được phát hiện.\n"
-"Như Cấu trúc dùng cường độ cấu trúc, là mặc định riêng của nhà cung cấp."
 
 msgid "Resolution Scale"
 msgstr "Tỷ lệ độ phân giải"
@@ -383,27 +573,8 @@ msgstr "Tự động"
 msgid "up to %.0f%%"
 msgstr "tối đa %.0f%%"
 
-msgid ""
-"Share of the hook method's resolution that the network processes.\n"
-"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
-msgstr ""
-"Tỷ lệ độ phân giải của phương thức hook mà mạng xử lý.\n"
-"100 là gốc, thấp hơn thì nhanh hơn, tối đa 200 là siêu lấy mẫu. Giá trị dưới 25 được dùng như 25.\n"
-"Tự động giảm nó khi DLSS 5 chiếm hơn khoảng một phần ba mỗi khung hình được kết xuất, không thấp hơn 75, và tăng lại khi còn dư, không bao giờ vượt quá thanh trượt."
-
 msgid "Half rate"
 msgstr "Nửa tần suất"
-
-msgid "Half rate is not available on Vulkan or with the Present hook method yet."
-msgstr "Nửa tần suất hiện chưa khả dụng trên Vulkan hoặc với phương thức hook Xuất khung hình."
-
-msgid ""
-"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
-"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
-msgstr ""
-"Chạy mạng nơ-ron cách một khung hình. Các khung hình ở giữa áp dụng diện mạo gần nhất của nó lên hình ảnh của chính chúng, nên các bề mặt chuyển động và có hoạt ảnh vẫn giữ được diện mạo đó mà không để lại vệt.\n"
-"Khoảng một nửa chi phí GPU. Chi tiết nhỏ đi theo vectơ chuyển động của trò chơi ở những nơi bề mặt chỉ di chuyển."
 
 msgid "DLSS 5 settings could not be saved."
 msgstr "Không thể lưu cài đặt DLSS 5."
@@ -411,11 +582,11 @@ msgstr "Không thể lưu cài đặt DLSS 5."
 msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
 msgstr "Trước khi upscale và Xuất khung hình hiện chưa chạy trên Vulkan. Hãy chọn Tự động hoặc Sau khi upscale."
 
+msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
+msgstr "Xuất khung hình hiện chưa chạy trên DirectX 11. Hãy chọn Tự động, Trước khi upscale hoặc Sau khi upscale."
+
 msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
 msgstr "Swapchain của game này không dùng được phương thức hook Xuất khung hình; log ghi rõ lý do. Trước và sau khi upscale vẫn hoạt động."
-
-msgid "Debug view is on (Advanced, Inspect)."
-msgstr "Chế độ xem gỡ lỗi đang bật (Nâng cao, Kiểm tra)."
 
 msgid "Compare"
 msgstr "So sánh"
@@ -442,6 +613,9 @@ msgid ""
 msgstr ""
 "Khi giữ phím này, game hiển thị hình ảnh gốc để so sánh DLSS 5 khi chuyển động.\n"
 "DLSS 5 vẫn chạy nên chi phí GPU không đổi, và phím vẫn được gửi tới game."
+
+msgid "Presets"
+msgstr "Preset"
 
 msgid "Status"
 msgstr "Trạng thái"
@@ -481,6 +655,9 @@ msgstr "Bộ cung cấp trực tiếp"
 
 msgid "Native NGX"
 msgstr "NGX gốc"
+
+msgid "DirectX 11 to DirectX 12"
+msgstr "DirectX 11 sang DirectX 12"
 
 msgid "Waiting for DLSS 5 GPU work to complete before applying settings."
 msgstr "Đang chờ GPU hoàn tất công việc DLSS 5 trước khi áp dụng cài đặt."
@@ -526,8 +703,8 @@ msgstr "Mặt nạ nhân vật"
 msgid "Detects skin and faces so that Faces & skin applies to them."
 msgstr "Phát hiện da và khuôn mặt để Khuôn mặt & da áp dụng cho chúng."
 
-msgid "Passes"
-msgstr "Các lượt"
+msgid "Look & passes"
+msgstr "Diện mạo & các lượt"
 
 msgid "Pass Count"
 msgstr "Số lượt"
@@ -542,10 +719,10 @@ msgid "Later passes"
 msgstr "Các lượt sau"
 
 msgid ""
-"Passes 2 and later refine the previous pass's output. Custom gives them their own Model and strengths.\n"
+"Passes 2 and later refine the previous pass's output. Custom gives them their own Style and strengths.\n"
 "Tone adds up from pass to pass, so later passes usually want less of it."
 msgstr ""
-"Lượt 2 trở đi tinh chỉnh đầu ra của lượt trước. Tùy chỉnh cho chúng model và cường độ riêng.\n"
+"Lượt 2 trở đi tinh chỉnh đầu ra của lượt trước. Tùy chỉnh cho chúng phong cách và cường độ riêng.\n"
 "Tông màu cộng dồn qua từng lượt, nên các lượt sau thường cần ít hơn."
 
 msgid "Later-pass settings apply when Pass Count is 2 or more."
@@ -644,23 +821,18 @@ msgstr "Phần dư RGB"
 msgid "Processed image"
 msgstr "Ảnh đã xử lý"
 
-msgid "Ratio"
-msgstr "Tỷ số"
-
 msgid "Scale Reconstruction"
 msgstr "Tái tạo tỷ lệ"
 
 msgid ""
 "RGB residual adds the network's change to the full-resolution image.\n"
-"Processed image uses the upscaled network output directly.\n"
-"Ratio multiplies the full-resolution image by the network's change, so black stays black."
+"Processed image uses the upscaled network output directly."
 msgstr ""
 "Phần dư RGB cộng thay đổi của mạng vào ảnh độ phân giải đầy đủ.\n"
-"Ảnh đã xử lý dùng trực tiếp đầu ra đã upscale của mạng.\n"
-"Tỷ số nhân ảnh độ phân giải đầy đủ với thay đổi của mạng, nên màu đen vẫn đen."
+"Ảnh đã xử lý dùng trực tiếp đầu ra đã upscale của mạng."
 
-msgid "HDR and signal"
-msgstr "HDR và tín hiệu"
+msgid "HDR"
+msgstr "HDR"
 
 msgid "Linear BT.709"
 msgstr "BT.709 tuyến tính"
@@ -742,17 +914,11 @@ msgstr "Bộ cung cấp"
 msgid "Default"
 msgstr "Mặc định"
 
-msgid "Preset A"
-msgstr "Preset A"
+msgid "Fast"
+msgstr "Nhanh"
 
-msgid "Preset B"
-msgstr "Preset B"
-
-msgid "Preset"
-msgstr "Preset"
-
-msgid "The provider's render preset hint."
-msgstr "Gợi ý preset kết xuất của bộ cung cấp."
+msgid "Network"
+msgstr "Mạng"
 
 msgid "UI Correction"
 msgstr "Hiệu chỉnh UI"
@@ -808,8 +974,8 @@ msgstr "Chặn ảnh không HUD"
 msgid "Present only: keeps the game's HUD-less image from DLSS frame generation, so generated frames match processed ones."
 msgstr "Chỉ cho Xuất khung hình: không để ảnh không HUD của game đến DLSS Frame Generation, để khung hình tạo ra khớp với khung đã xử lý."
 
-msgid "Inspect"
-msgstr "Kiểm tra"
+msgid "Mask"
+msgstr "Mặt nạ"
 
 msgid "Network input"
 msgstr "Đầu vào mạng"
@@ -971,6 +1137,42 @@ msgstr "Trạng thái Reflex tạm thời không khả dụng."
 msgid "Path traced hair"
 msgstr "Tóc Path Tracing"
 
+msgid "Preparing"
+msgstr "Đang chuẩn bị"
+
+msgid "Active"
+msgstr "Đang chạy"
+
+msgid "universal: game RTX hair converted"
+msgstr "phổ quát: đã chuyển đổi tóc RTX của trò chơi"
+
+msgid "no hair built in the last 2 s"
+msgstr "không có tóc nào được dựng trong 2 giây qua"
+
+msgid "Ready"
+msgstr "Sẵn sàng"
+
+msgid "waiting for game hair"
+msgstr "đang chờ dữ liệu tóc từ game"
+
+msgid "Universal hair runs the game's own RTX 50 hair on this GPU. It is on by default; set Universal=0 under [RtxHair] in RTXMFG.RtxHair.ini beside the game to turn it off."
+msgstr "Tóc phổ quát chạy tóc RTX 50 của chính trò chơi trên GPU này. Tính năng được bật mặc định; đặt Universal=0 trong mục [RtxHair] của RTXMFG.RtxHair.ini cạnh trò chơi để tắt."
+
+msgid "%s updates"
+msgstr "%s lần cập nhật"
+
+msgid "Builds"
+msgstr "Phiên bản"
+
+msgid "%s not converted"
+msgstr "%s chưa chuyển đổi"
+
+msgid "Hair shaders"
+msgstr "Shader tóc"
+
+msgid "Hair diagnostics"
+msgstr "Chẩn đoán tóc"
+
 msgid "Unknown"
 msgstr "Không xác định"
 
@@ -979,9 +1181,6 @@ msgstr "Đã tắt"
 
 msgid "Waiting for early device"
 msgstr "Đang chờ khởi tạo device"
-
-msgid "Preparing"
-msgstr "Đang chuẩn bị"
 
 msgid "Unsupported game build"
 msgstr "Bản build game không được hỗ trợ"
@@ -992,17 +1191,11 @@ msgstr "GPU không được hỗ trợ"
 msgid "Native LSS"
 msgstr "LSS gốc"
 
-msgid "Unavailable"
-msgstr "Không khả dụng"
-
 msgid "Unsupported driver"
 msgstr "Driver không được hỗ trợ"
 
 msgid "game Path Traced Hair setting"
 msgstr "cài đặt Path Traced Hair trong game"
-
-msgid "Active"
-msgstr "Đang chạy"
 
 msgid "tracing converted hair"
 msgstr "đang render tóc Path Tracing"
@@ -1010,26 +1203,11 @@ msgstr "đang render tóc Path Tracing"
 msgid "no hair traced in the last 2 s"
 msgstr "không có sợi tóc nào được xử lý trong 2 giây qua"
 
-msgid "Ready"
-msgstr "Sẵn sàng"
-
-msgid "waiting for game hair"
-msgstr "đang chờ dữ liệu tóc từ game"
-
 msgid "Turn it on or off with HairWorks and Path Traced Hair in the game's graphics settings."
 msgstr "Bật hoặc tắt qua mục HairWorks và Path Traced Hair trong cài đặt đồ họa của game."
 
 msgid "Traced hair"
 msgstr "Tóc đang render"
-
-msgid "%s updates"
-msgstr "%s lần cập nhật"
-
-msgid "Builds"
-msgstr "Phiên bản"
-
-msgid "Hair diagnostics"
-msgstr "Chẩn đoán tóc"
 
 msgid "Turn on frame generation in the game's settings (DLSS or XeSS)."
 msgstr "Hãy bật Frame Generation trong cài đặt game (DLSS hoặc XeSS)."
@@ -1090,15 +1268,37 @@ msgstr "Trong phiên này, game đang nhận diện GPU là NVIDIA GeForce RTX 4
 msgid "This GPU is not an RTX 30 card; the game sees its real name."
 msgstr "GPU này không phải dòng RTX 30; game sẽ hiển thị đúng tên thật."
 
+msgid ""
+"Writes the MFG Unlocker log beside the game. Bug reports need it.\n"
+"Turn it off to stop writing the log. Applies after a game restart."
+msgstr ""
+"Ghi log của MFG Unlocker vào thư mục game. Báo cáo lỗi cần file này.\n"
+"Tắt để ngừng ghi log. Có hiệu lực sau khi restart game."
+
+msgid "The log setting could not be saved."
+msgstr "Không lưu được cài đặt log."
+
+msgid "Restart the game to write the log again."
+msgstr "Khởi động lại game để ghi log trở lại."
+
+msgid "Restart the game to stop writing the log."
+msgstr "Khởi động lại game để ngừng ghi log."
+
+msgid "Write log file"
+msgstr "Ghi file log"
+
+msgid "Diagnostics"
+msgstr "Chẩn đoán"
+
 msgid "XeMFG standalone"
 msgstr "XeMFG độc lập"
 
 msgid ""
 "MFG Unlocker runs XeSS multi-frame generation itself, without OptiScaler, from the inputs of the game's DLSS frame generation or of its DLSS, XeSS or FSR 3.1 upscaling. It replaces the game's own frame generation.\n"
-"Switching it on or off applies after a restart."
+"Switching it on or off applies at once: MFG Unlocker briefly resizes the game's window so the game hands its swap chain over. If the game ignores that, it applies at the game's next resolution or window-mode change, or after a restart."
 msgstr ""
 "MFG Unlocker tự chạy XeSS Multi-Frame Generation, không cần OptiScaler, dùng dữ liệu đầu vào từ DLSS Frame Generation của game hoặc từ bộ upscale DLSS, XeSS hay FSR 3.1 của game. Nó thay thế Frame Generation của chính game.\n"
-"Bật hoặc tắt sẽ có hiệu lực sau khi khởi động lại."
+"Bật hoặc tắt có hiệu lực ngay: MFG Unlocker thay đổi kích thước cửa sổ game trong giây lát để game bàn giao swap chain của nó. Nếu game bỏ qua việc đó, thay đổi sẽ áp dụng ở lần đổi độ phân giải hoặc chế độ cửa sổ tiếp theo của game, hoặc sau khi khởi động lại."
 
 msgid "Dynamic"
 msgstr "Dynamic"
@@ -1172,11 +1372,41 @@ msgstr "Hai tệp nằm ở hai thư mục khác nhau."
 msgid "Found %s, not %s: check the file's name and extension."
 msgstr "Tìm thấy %s, không phải %s: hãy kiểm tra tên và phần mở rộng của tệp."
 
-msgid "The XeMFG setting could not be saved."
-msgstr "Không thể lưu cài đặt XeMFG."
+msgid "The %s in %s is version %s, which is too old for XeMFG."
+msgstr "Tệp %s trong %s là phiên bản %s, quá cũ đối với XeMFG."
+
+msgid "The %s in %s is too old for XeMFG."
+msgstr "Tệp %s trong %s quá cũ đối với XeMFG."
+
+msgid "Put libxess_fg.dll and libxell.dll from Intel's XeSS SDK %s in %s, then restart the game."
+msgstr "Hãy đặt libxess_fg.dll và libxell.dll từ Intel XeSS SDK %s vào %s, rồi khởi động lại game."
 
 msgid "Restart the game to start XeMFG."
 msgstr "Hãy khởi động lại game để bật XeMFG."
+
+msgid "This game ignores window size changes, so XeMFG starts after a restart. From then on, XeMFG switches on and off in this game without a restart."
+msgstr "Game này bỏ qua thay đổi kích thước cửa sổ, nên XeMFG sẽ khởi động sau khi khởi động lại. Từ đó trở đi, XeMFG bật và tắt trong game này mà không cần khởi động lại."
+
+msgid "The game did not resize its swap chain, so XeMFG has not started yet. It starts at the game's next resolution or window-mode change, or after a restart."
+msgstr "Game chưa thay đổi kích thước swap chain của nó, nên XeMFG chưa khởi động. XeMFG sẽ khởi động ở lần đổi độ phân giải hoặc chế độ cửa sổ tiếp theo của game, hoặc sau khi khởi động lại."
+
+msgid "XeMFG cannot take over a swap chain in exclusive fullscreen. Switch the game to borderless or windowed, or restart the game."
+msgstr "XeMFG không thể tiếp quản swap chain ở chế độ toàn màn hình độc quyền. Hãy chuyển game sang chế độ không viền hoặc cửa sổ, hoặc khởi động lại game."
+
+msgid "XeMFG could not take over the running game's swap chain (%s). Restart the game to start XeMFG."
+msgstr "XeMFG không thể tiếp quản swap chain của game đang chạy (%s). Hãy khởi động lại game để bật XeMFG."
+
+msgid "The XeMFG setting could not be saved."
+msgstr "Không thể lưu cài đặt XeMFG."
+
+msgid "XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or window-mode change, or a restart."
+msgstr "XeMFG đang tắt, nhưng XeFG vẫn giữ swap chain của game cho đến lần đổi độ phân giải hoặc chế độ cửa sổ tiếp theo của game, hoặc đến khi khởi động lại."
+
+msgid "XeMFG is off. The game's DLSS frame generation comes back after a restart: it cannot start again in this session once XeMFG has taken over its swap chain."
+msgstr "XeMFG đang tắt. Tạo khung hình DLSS của game sẽ trở lại sau khi khởi động lại: nó không thể chạy lại trong phiên này khi XeMFG đã tiếp quản swap chain của nó."
+
+msgid "Moving the game's swap chain to XeMFG..."
+msgstr "Đang chuyển swap chain của game sang XeMFG..."
 
 msgid "XeMFG could not start: %s"
 msgstr "Không thể khởi động XeMFG: %s"
@@ -1199,6 +1429,12 @@ msgstr "Dynamic, %ux"
 msgid "held as cap"
 msgstr "giữ làm giới hạn"
 
+msgid "Starting"
+msgstr "Đang khởi động"
+
+msgid "Waiting for a resize"
+msgstr "Đang chờ thay đổi kích thước"
+
 msgid "Restart needed"
 msgstr "Cần khởi động lại"
 
@@ -1218,17 +1454,47 @@ msgstr ""
 msgid "%.1f real, %.1f XeMFG"
 msgstr "%.1f thực, %.1f XeMFG"
 
-msgid "Measuring..."
-msgstr "Đang đo..."
-
 msgid "XeMFG off"
 msgstr "XeMFG tắt"
+
+msgid "Low-latency pacing"
+msgstr "Nhịp độ độ trễ thấp"
+
+msgid "XeMFG holds the game inside Present until the display has room for its next frames, after the game has read your input. This moves that wait to before the game reads its input, so your actions show sooner. The frame rate stays the same. Auto turns it on. Applies at once."
+msgstr "XeMFG giữ trò chơi trong Present cho đến khi màn hình còn chỗ cho các khung hình tiếp theo, sau khi trò chơi đã đọc thao tác của bạn. Tùy chọn này dời khoảng chờ đó lên trước khi trò chơi đọc thao tác, nên hành động của bạn hiện ra sớm hơn. Tốc độ khung hình không đổi. Tự động sẽ bật nó. Áp dụng ngay."
+
+msgid "The low-latency pacing setting could not be saved."
+msgstr "Không thể lưu cài đặt nhịp độ độ trễ thấp."
+
+msgid "for XeMFG's frames"
+msgstr "khung hình của XeMFG"
+
+msgid "No sleep point"
+msgstr "Không có điểm chờ"
+
+msgid "the game's frames reach no sleep before their input"
+msgstr "khung hình của trò chơi không có khoảng chờ nào trước khi đọc thao tác"
+
+msgid "the game is not held in Present"
+msgstr "trò chơi không bị giữ trong Present"
+
+msgid "%.1f ms sooner"
+msgstr "sớm hơn %.1f ms"
+
+msgid "of %.1f ms the game waited in Present"
+msgstr "trong %.1f ms trò chơi chờ trong Present"
 
 msgid "MFG Unlocker multi-frame port"
 msgstr "Bản port Multi-Frame của MFG Unlocker"
 
 msgid "Intel 2x model"
 msgstr "Model Intel 2x"
+
+msgid "No generated frames"
+msgstr "Không có khung hình được tạo"
+
+msgid "the provider is failing; see the RTXMFG log"
+msgstr "trình cung cấp bị lỗi; xem nhật ký RTXMFG"
 
 msgid "Frame generation"
 msgstr "Frame Generation"
@@ -1275,6 +1541,9 @@ msgstr "Đã áp dụng"
 msgid "Not verified"
 msgstr "Chưa xác thực"
 
+msgid "Model"
+msgstr "Model"
+
 msgid "Tensor cores"
 msgstr "Tensor cores"
 
@@ -1302,11 +1571,137 @@ msgstr "Frame Generation được chỉnh trong menu của OptiScaler. Menu này
 msgid "DLSS 5"
 msgstr "DLSS 5"
 
-msgid "Waiting for status"
-msgstr "Đang chờ trạng thái"
+msgid "Present does not run from OptiScaler's menu. Choose Auto, Before upscaling or After upscaling."
+msgstr "Xuất khung hình không chạy từ menu của OptiScaler. Hãy chọn Tự động, Trước khi upscale hoặc Sau khi upscale."
+
+msgid "XeFG"
+msgstr "XeFG"
+
+msgid "CUDA port"
+msgstr "Bản port CUDA"
+
+msgid "int8 layers on the tensor cores"
+msgstr "các layer int8 chạy trên Tensor cores"
+
+msgid "XMX port"
+msgstr "Bản port XMX"
+
+msgid "on the shader cores"
+msgstr "trên shader cores"
+
+msgid "XMX port: MFG Unlocker's port of Intel's multi-frame XMX model, run as DXIL shaders on any GPU. CUDA port: the same model with its int8 layers run as CUDA kernels on RTX tensor cores."
+msgstr "Bản port XMX: bản port của MFG Unlocker cho model Multi-Frame XMX của Intel, chạy dưới dạng shader DXIL trên mọi GPU. Bản port CUDA: cùng model đó, với các layer int8 chạy dưới dạng CUDA kernel trên Tensor cores của RTX."
 
 msgid "Waiting for current backend status. Saved settings are preserved."
 msgstr "Đang chờ trạng thái backend. Các thiết lập đã lưu vẫn được giữ nguyên."
+
+msgid "Status is temporarily unavailable; controls are paused."
+msgstr "Trạng thái tạm thời không khả dụng; các tùy chỉnh đang tạm dừng."
+
+msgid "Keybinds"
+msgstr "Phím tắt"
+
+msgid "FPS readout on"
+msgstr "Đã bật hiển thị FPS"
+
+msgid "FPS readout off"
+msgstr "Đã tắt hiển thị FPS"
+
+msgid "Raise multiplier"
+msgstr "Tăng hệ số nhân"
+
+msgid "Lower multiplier"
+msgstr "Giảm hệ số nhân"
+
+msgid "Dynamic on/off"
+msgstr "Bật/tắt Dynamic"
+
+msgid "FPS readout on/off"
+msgstr "Bật/tắt hiển thị FPS"
+
+msgid "Pin panel"
+msgstr "Ghim bảng"
+
+msgid "Next preset"
+msgstr "Preset tiếp theo"
+
+msgid "Previous preset"
+msgstr "Preset trước"
+
+msgid "Frame generation keys apply once frame generation is ready"
+msgstr "Phím Frame Generation sẽ hoạt động khi Frame Generation sẵn sàng"
+
+msgid "Applying the last change..."
+msgstr "Đang áp dụng thay đổi trước..."
+
+msgid "XeMFG: %s"
+msgstr "XeMFG: %s"
+
+msgid "Frame generation: %s"
+msgstr "Frame Generation: %s"
+
+msgid "%s is unavailable right now"
+msgstr "%s hiện không khả dụng"
+
+msgid "Highest mode here: %s"
+msgstr "Chế độ cao nhất ở đây: %s"
+
+msgid "Lowest mode: %s"
+msgstr "Chế độ thấp nhất: %s"
+
+msgid "The change could not be saved"
+msgstr "Không thể lưu thay đổi"
+
+msgid "DLSS preset keys apply while the game runs DLSS"
+msgstr "Phím preset DLSS hoạt động khi game đang dùng DLSS"
+
+msgid "RR preset: %s"
+msgstr "Preset RR: %s"
+
+msgid "SR preset: %s"
+msgstr "Preset SR: %s"
+
+msgid "the menu key"
+msgstr "phím menu"
+
+msgid "%s is already used by %s"
+msgstr "%s đã được dùng cho %s"
+
+msgid "Moved from %s"
+msgstr "Đã chuyển từ %s"
+
+msgid "The frame generation in use has no such mode."
+msgstr "Frame Generation đang dùng không có chế độ này."
+
+msgid "Steps through the modes the Mode list offers."
+msgstr "Lần lượt chuyển qua từng chế độ mà danh sách Chế độ cung cấp."
+
+msgid "Steps through the presets of the DLSS the game runs: Super Resolution's (J, K, L, M) or, while Ray Reconstruction runs, Ray Reconstruction's (D, E, F). After the last one it starts again."
+msgstr "Lần lượt chuyển qua các preset của DLSS mà game đang dùng: của Super Resolution (J, K, L, M) hoặc, khi Ray Reconstruction đang chạy, của Ray Reconstruction (D, E, F). Sau preset cuối sẽ quay lại từ đầu."
+
+msgid "Also used by %s"
+msgstr "Cũng được dùng cho %s"
+
+msgid "Keys work with the menu open or closed, and still reach the game."
+msgstr "Phím hoạt động khi menu mở hoặc đóng, và game vẫn nhận được phím."
+
+msgid "To bind a combination, hold Ctrl, Shift or Alt and press the key. A combination avoids the game's own keys."
+msgstr "Để gán tổ hợp, giữ Ctrl, Shift hoặc Alt rồi bấm phím. Tổ hợp phím giúp tránh trùng với phím của game."
+
+msgid "Frame generation is set in OptiScaler's menu, so its keys are not offered here."
+msgstr "Frame Generation được chỉnh trong menu của OptiScaler, nên các phím của nó không có ở đây."
+
+msgid "Now applies to %s"
+msgstr "Hiện áp dụng cho %s"
+
+msgid "Show a note when a key changes a setting"
+msgstr "Hiện ghi chú khi phím thay đổi một thiết lập"
+
+msgid "The keybinds work for this session, but could not be saved."
+msgstr "Phím tắt hoạt động trong phiên này nhưng không lưu được."
+
+msgid "Waiting for status"
+msgstr "Đang chờ trạng thái"
 
 msgid "Not connected"
 msgstr "Chưa kết nối"
@@ -1319,9 +1714,6 @@ msgstr "Core tích hợp không khả dụng. Hãy kiểm tra log khởi động
 
 msgid "Paused"
 msgstr "Tạm dừng"
-
-msgid "Live"
-msgstr "Hoạt động"
 
 msgid "The game changed graphics adapters. Restart the game to select a new GPU."
 msgstr "Game đã đổi GPU xuất hình. Hãy khởi động lại game để nhận diện GPU mới."
@@ -1359,6 +1751,9 @@ msgid ""
 msgstr ""
 "\"Theo game\" sẽ dùng thiết lập Frame Gen mặc định của game.\n"
 "\"Dynamic\" tự điều chỉnh số frame nội suy để đạt mức FPS mục tiêu; không phải là giới hạn FPS cứng."
+
+msgid "DLSS frame generation could not start on this GPU, so it stays off for this session. Restart the game to try again."
+msgstr "Không thể khởi động DLSS Frame Generation trên card đồ họa này, nên tính năng sẽ tắt trong phiên này. Hãy khởi động lại game để thử lại."
 
 msgid "Frame generation stays under the game's control. This wrapper has no verified MFG override support."
 msgstr "Frame Generation vẫn do game kiểm soát. Wrapper này chưa hỗ trợ override MFG chính thức."
@@ -1460,11 +1855,17 @@ msgstr "%.1f thực, DLSS không khả dụng"
 msgid "DLSS FG off"
 msgstr "DLSS FG tắt"
 
-msgid "Diagnostics"
-msgstr "Chẩn đoán"
+msgid "Latency unavailable"
+msgstr "Độ trễ không khả dụng"
 
-msgid "Status is temporarily unavailable; controls are paused."
-msgstr "Trạng thái tạm thời không khả dụng; các tùy chỉnh đang tạm dừng."
+msgid "Latency %.1f ms | 1%% high %.1f"
+msgstr "Độ trễ %.1f ms | 1%% cao nhất %.1f"
+
+msgid "Latency: needs Reflex"
+msgstr "Độ trễ: cần Reflex"
+
+msgid "Latency --"
+msgstr "Độ trễ --"
 
 msgid "FPS status unavailable"
 msgstr "Chưa có dữ liệu FPS"
@@ -1489,163 +1890,3 @@ msgstr "Dynamic (không khả dụng)"
 
 msgid "Dynamic (checking...)"
 msgstr "Dynamic (đang kiểm tra...)"
-
-#~ msgid "DLSS 5 Neural Rendering"
-#~ msgstr "Kết xuất nơ-ron DLSS 5"
-
-#~ msgid "Faster"
-#~ msgstr "Nhanh hơn"
-
-#~ msgid "Full"
-#~ msgstr "Đầy đủ"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation (not available yet)."
-#~ msgstr ""
-#~ "Kết xuất xử lý đầu vào DLSS ở độ phân giải kết xuất, trước DLSS SR, DLAA hoặc Ray Reconstruction.\n"
-#~ "Sau khi upscale xử lý đầu ra DLSS sau khi tái tạo.\n"
-#~ "Xuất khung hình xử lý ảnh swapchain trước khi hiển thị (chưa khả dụng)."
-
-#~ msgid ""
-#~ "Auto treats the DLSS input and output as linear BT.709.\n"
-#~ "Other choices override the encoding of the processed image."
-#~ msgstr ""
-#~ "Tự động coi đầu vào và đầu ra DLSS là BT.709 tuyến tính.\n"
-#~ "Các lựa chọn khác ghi đè mã hóa của ảnh được xử lý."
-
-#~ msgid "Auto and Off leave the provider's UI correction off for DLSS input and output. On enables it."
-#~ msgstr "Tự động và Tắt giữ hiệu chỉnh UI của bộ cung cấp ở trạng thái tắt cho đầu vào và đầu ra DLSS. Bật sẽ kích hoạt nó."
-
-#~ msgid "Render"
-#~ msgstr "Kết xuất"
-
-#~ msgid "Upscaled"
-#~ msgstr "Sau khi upscale"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation and frame generation."
-#~ msgstr ""
-#~ "Kết xuất xử lý đầu vào DLSS ở độ phân giải kết xuất, trước DLSS SR, DLAA hoặc Ray Reconstruction.\n"
-#~ "Sau khi upscale xử lý đầu ra DLSS sau khi tái tạo.\n"
-#~ "Xuất khung hình xử lý ảnh swapchain trước khi hiển thị và trước Frame Generation."
-
-#~ msgid "Overall Intensity"
-#~ msgstr "Cường độ tổng"
-
-#~ msgid "Character Intensity"
-#~ msgstr "Cường độ nhân vật"
-
-#~ msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Render or Upscaled still work."
-#~ msgstr "Swapchain của game này không dùng được phương thức hook Xuất khung hình; log ghi rõ lý do. Kết xuất và Sau khi upscale vẫn hoạt động."
-
-#~ msgid "Detects skin and faces so that Character Intensity applies to them."
-#~ msgstr "Phát hiện da và khuôn mặt để áp dụng cường độ nhân vật cho chúng."
-
-#~ msgid ""
-#~ "Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "After upscaling processes the DLSS output after reconstruction.\n"
-#~ "Present processes the final image, game UI included, before presentation and frame generation."
-#~ msgstr ""
-#~ "Trước khi upscale xử lý đầu vào DLSS ở độ phân giải kết xuất, trước DLSS SR, DLAA hoặc Ray Reconstruction.\n"
-#~ "Sau khi upscale xử lý đầu ra DLSS sau khi tái tạo.\n"
-#~ "Xuất khung hình xử lý ảnh cuối cùng, gồm cả UI của game, trước khi hiển thị và trước Frame Generation."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25."
-#~ msgstr ""
-#~ "Tỷ lệ độ phân giải của phương thức hook mà mạng xử lý.\n"
-#~ "100 là gốc, thấp hơn thì nhanh hơn, tối đa 200 là siêu lấy mẫu. Giá trị dưới 25 được dùng như 25."
-
-#~ msgid "Active preset"
-#~ msgstr "Preset đang dùng"
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Edges of fast-moving objects can show the original image for one frame."
-#~ msgstr ""
-#~ "Chạy mạng nơ-ron cách một khung hình và đưa kết quả của nó theo vectơ chuyển động của trò chơi sang các khung hình ở giữa.\n"
-#~ "Khoảng một nửa chi phí GPU. Viền của vật thể chuyển động nhanh có thể hiện hình ảnh gốc trong một khung hình."
-
-#~ msgid "XeSS multi-frame generation needs OptiScaler, with XeFG as its frame generation output. Without it the game's XeSS frame generation runs at Intel's standard 2x."
-#~ msgstr "XeSS Multi-Frame Generation yêu cầu OptiScaler và chọn XeFG làm đầu ra tạo khung hình. Nếu không có, XeSS Frame Gen của game sẽ chỉ chạy ở mức 2x tiêu chuẩn của Intel."
-
-#~ msgid "Local detail and structure enhancement."
-#~ msgstr "Tăng cường chi tiết và cấu trúc cục bộ."
-
-#~ msgid "Local tone and contrast enhancement."
-#~ msgstr "Tăng cường tông màu và độ tương phản cục bộ."
-
-#~ msgid ""
-#~ "RGB residual adds the network's change to the full-resolution image.\n"
-#~ "Processed image uses the upscaled network output directly."
-#~ msgstr ""
-#~ "Phần dư RGB cộng thay đổi của mạng vào ảnh độ phân giải đầy đủ.\n"
-#~ "Ảnh đã xử lý dùng trực tiếp đầu ra mạng đã phóng to."
-
-#~ msgid "Boost"
-#~ msgstr "Tăng tốc"
-
-#~ msgid "Boost is not available on Vulkan or with the Present hook method yet."
-#~ msgstr "Tăng tốc hiện chưa khả dụng trên Vulkan hoặc với phương thức hook Xuất khung hình."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Boost is on."
-#~ msgstr ""
-#~ "Chạy mạng nơ-ron cách một khung hình và đưa kết quả của nó theo vectơ chuyển động của trò chơi sang các khung hình ở giữa.\n"
-#~ "Khoảng một nửa chi phí GPU. Các bề mặt chuyển động như mặt nước, và các hạt, giữ nguyên hình ảnh gốc của trò chơi khi bật Tăng tốc."
-
-#~ msgid "Place a compatible nvngx_dlssnr.dll beside the game executable or MFGUnlocker."
-#~ msgstr "Đặt nvngx_dlssnr.dll tương thích cạnh tệp thực thi của trò chơi hoặc MFGUnlocker."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Half rate is on."
-#~ msgstr ""
-#~ "Chạy mạng nơ-ron cách một khung hình và đưa kết quả của nó theo vectơ chuyển động của trò chơi sang các khung hình ở giữa.\n"
-#~ "Khoảng một nửa chi phí GPU. Các bề mặt chuyển động như mặt nước, và các hạt, giữ nguyên hình ảnh gốc của trò chơi khi bật Nửa tần suất."
-
-#~ msgid ""
-#~ "How much a surface may change between frames and still keep the carried result.\n"
-#~ "Strict shows the game's image on more moving surfaces (less smear); Loose carries more detail."
-#~ msgstr ""
-#~ "Mức một bề mặt được thay đổi giữa các khung hình mà vẫn giữ kết quả được chuyển tiếp.\n"
-#~ "Chặt hiển thị hình ảnh của trò chơi trên nhiều bề mặt chuyển động hơn (ít nhòe hơn); Lỏng chuyển tiếp nhiều chi tiết hơn."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-#~ "Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, and raises it again with headroom, never above the slider."
-#~ msgstr ""
-#~ "Tỷ lệ độ phân giải của phương thức hook mà mạng xử lý.\n"
-#~ "100 là gốc, thấp hơn thì nhanh hơn, tối đa 200 là siêu lấy mẫu. Giá trị dưới 25 được dùng như 25.\n"
-#~ "Tự động giảm nó khi DLSS 5 chiếm hơn khoảng một phần ba mỗi khung hình được kết xuất, và tăng lại khi còn dư, không bao giờ vượt quá thanh trượt."
-
-#~ msgid ""
-#~ "Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-#~ "Subtle halves the change, Balanced is the default and Strong is clearly visible.\n"
-#~ "Pass Count under Advanced strengthens any look further, at extra GPU cost."
-#~ msgstr ""
-#~ "Đặt đồng thời Cường độ, Model, Cấu trúc, Tông màu và Khuôn mặt & da.\n"
-#~ "Nhẹ giảm một nửa hiệu ứng, Cân bằng là mặc định và Mạnh thấy rõ.\n"
-#~ "Số lượt trong Nâng cao làm mọi diện mạo mạnh hơn nữa, nhưng tốn thêm GPU."
-
-#~ msgid "follows Structure"
-#~ msgstr "theo Cấu trúc"
-
-#~ msgid "Follows Structure. Change it under Advanced."
-#~ msgstr "Theo Cấu trúc. Thay đổi trong mục Nâng cao."
-
-#~ msgid "Structure enhancement on detected skin and faces."
-#~ msgstr "Tăng cường cấu trúc trên da và khuôn mặt được phát hiện."
-
-#~ msgid "Faces & skin follows Structure"
-#~ msgstr "Khuôn mặt & da theo Cấu trúc"
-
-#~ msgid "Faces & skin takes the Structure strength, the provider's own default."
-#~ msgstr "Khuôn mặt & da dùng cường độ cấu trúc, là mặc định riêng của nhà cung cấp."

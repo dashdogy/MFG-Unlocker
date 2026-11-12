@@ -7,12 +7,11 @@
 //               InitializeASI under the loader lock.
 //   late        RTXMFG first, OptiScaler mapped afterwards.
 //   optin       proxy layout with "optiScalerUi":"rtxmfg" in the saved control.
-//   hidden      proxy layout with "optiScalerUi":"optiscaler": no RTXMFG menu (V1.6.2's
-//               default, alpha.16-alpha.18's too).
+//   hidden      proxy layout with "optiScalerUi":"optiscaler": no RTXMFG menu.
 //   shared      proxy layout with "optiScalerUi":"shared": RTXMFG's menu offers the
-//               DLSS presets and DLSS 5. The default without the key again since
-//               V1.7.0 alpha.19 (optimenu.1), so proxy, plugin, late and the
-//               Streamline modes run shared.
+//               DLSS presets and DLSS 5. The default without the key while
+//               OptiScaler hands no plugin API, so proxy, plugin, late and the
+//               Streamline modes run shared (their stand-in has no API).
 //   forza       proxy layout without the key, run as forza_steamworks_release_final.exe
 //               (run.py): a ForzaTech executable defaults to hidden.
 //   forza-shared  the same with "optiScalerUi":"shared": the opt-in still applies.
@@ -30,9 +29,18 @@
 //               Only an armed RTX 30 reaches the RTX 30 startup decision there.
 //   streamline-warp  the same with a WARP device: nothing is selected or patched.
 //   xefg-output, xefg-output-optin, xefg-output-hidden, xefg-output-factory
-//               (xefgmenu.1, with the XeSS pair): the menu on OptiScaler's XeFG
+//               (with the XeSS pair): the menu on OptiScaler's XeFG
 //               output when no factory route saw the game's swapchain
 //               (RunXefgOutput).
+//   menutab, menutab-plugin, menutab-shared, menutab-default, menutab-fork2: the stand-in also hands OptiScaler's
+//               plugin API to the plugin it loads (OptiScalerMenuTabFixture.dll), as OptiScaler's loader does right
+//               after InitializeASI. menutab-plugin (hidden): RTXMFG accepts it, registers its tab, the saved DLSS
+//               presets and DLSS 5 apply, still no factory proxy, and the tab draws through the stand-in's widget
+//               functions. menutab-shared (plugin layout): accepted, no tab, RTXMFG's own menu. menutab (proxy
+//               layout): OptiScaler never calls OptiPluginInit, so hidden behaves as without the API. menutab-default
+//               (plugin layout, no key): the API makes hidden the default. menutab-fork2 runs as menutab-plugin with
+//               our fork's earlier version 2 table instead of upstream's merged one, which RTXMFG adapts.
+//               Every case: OptiPluginInit is exported; impostor: it refuses an API table from outside OptiScaler.
 // The Streamline modes check that RTXMFG routes and detours only the game's
 // interposer (and only slSetD3DDevice of OptiScaler's private one) and that
 // calls never cross instances.
@@ -40,6 +48,7 @@
 // overrides and checks the effective values RTXMFG reports and that the saved
 // file stays byte-identical.
 #include "single_module_status.h"
+#include "optiscaler_plugin.h"
 #include "ui_status_json.h"
 #include <Windows.h>
 #include <d3d12.h>
@@ -52,6 +61,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 namespace
 {
@@ -288,7 +299,7 @@ void CheckPrivateStartupOrder(const std::filesystem::path& here, const std::file
     const std::string log = WaitLog("OptiScaler private Streamline slSetD3DDevice: call=1 ");
     const bool verifiedAda = log.find("adapter verification: luid=") != std::string::npos
         && log.find("verified=1") != std::string::npos;
-    // optirtx30.1: only an armed RTX 30 reaches the private RTX 30 startup decision.
+    // Only an armed RTX 30 reaches the private RTX 30 startup decision.
     if (log.find("OptiScaler private Streamline slSetD3DDevice: call=1 ada=0 ampere=1") != std::string::npos)
         Check(log.find("OptiScaler private Streamline RTX 30 startup: call=1 decision=") != std::string::npos,
             "RTX 30: the private hook decides the RTX 30 startup");
@@ -323,10 +334,10 @@ void CheckPrivateStartupOrder(const std::filesystem::path& here, const std::file
     Check(count() == 1, "no other route reached the private instance");
 }
 
-// xefgrace.1 (Trails in the Sky 2nd Chapter, DX11, OptiScaler XeFG output): OptiScaler loads its XeSS pair
-// and resolves xefgSwapChainD3D12CreateContext in its DllMain, before plug-ins, and created its context
-// about 390 ms after start. V1.6.0 detoured that entry about 380 ms after its own load, after the rest of
-// the worker's startup, so the context stayed stock 2x. Both layouts: RTXMFG under a proxy name after
+// The Trails in the Sky 2nd Chapter shape (DX11, OptiScaler XeFG output): OptiScaler loads its XeSS pair
+// and resolves xefgSwapChainD3D12CreateContext in its DllMain, before plug-ins, and creates its context
+// about 390 ms after start. Detouring that entry after the rest of the worker's startup (about 380 ms
+// after RTXMFG's own load) leaves the context stock 2x. Both layouts: RTXMFG under a proxy name after
 // OptiScaler's initialization, and as the plug-in OptiScaler loads right after the pair.
 constexpr double kXefgRouteBoundMs = 150.0;
 
@@ -435,8 +446,8 @@ void Pump()
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
 }
 
-// xefgmenu.1 (Honkai Star Rail, Unity 2019.4, OptiScaler as dbghelp.dll with XeFG output): the game created its
-// swapchain through imports RTXMFG had not armed yet, so the factory route never saw it and the menu never attached.
+// The Honkai Star Rail shape (Unity 2019.4, OptiScaler as dbghelp.dll with XeFG output): the game creates its
+// swapchain through imports RTXMFG has not armed yet, so the factory route never sees it.
 // Here OptiScaler's plug-in route builds its XeFG output before this executable makes any factory call: RTXMFG's menu
 // attaches on XeFG's native output chain during OptiScaler's InitFromSwapChainDesc and draws on XeFG's output frames.
 //   xefg-output          "shared" (the default): registered there; nothing drawn while no DLSS feature runs
@@ -548,6 +559,8 @@ int RunXefgOutput(const std::filesystem::path& here, const std::filesystem::path
 
     WaitLog("\"stage\":\"host_ui_attachment\"");
     std::string log = WaitLog("\"stage\":\"host_pacing_owner\"");
+    // The factory route registers its renderer after that line is queued; the 100 ms log drain can land between them.
+    if (factoryRoute) log = WaitLog("MFG_PROXY_UI renderer registered");
     const std::string attachment = StageLine(log, "host_ui_attachment");
     std::printf("INFO %s\n", attachment.c_str());
     Check(log.find("\"stage\":\"host_context_create\"") != std::string::npos
@@ -653,9 +666,16 @@ int wmain(int argc, wchar_t** argv)
         || mode == L"streamline" || mode == L"second-streamline" || mode == L"streamline-device"
         || mode == L"streamline-warp" || mode == L"xefg-proxy" || mode == L"xefg-plugin"
         || mode == L"xefg-output" || mode == L"xefg-output-optin" || mode == L"xefg-output-hidden"
-        || mode == L"xefg-output-factory" || mode == L"forza" || mode == L"forza-shared";
+        || mode == L"xefg-output-factory" || mode == L"forza" || mode == L"forza-shared"
+        || mode == L"menutab" || mode == L"menutab-plugin" || mode == L"menutab-shared" || mode == L"menutab-default"
+        || mode == L"menutab-fork2";
     const bool forza = mode == L"forza" || mode == L"forza-shared";
     const bool privateStartup = mode == L"streamline-device" || mode == L"streamline-warp";
+    const bool menuTab = mode.starts_with(L"menutab");
+    const bool pluginRoute = mode == L"plugin" || mode == L"menutab-plugin" || mode == L"menutab-shared"
+        || mode == L"menutab-default" || mode == L"menutab-fork2";
+    // pluginabi.1: the stand-in offers our fork's version 2 table instead of upstream's.
+    const bool fork2Api = mode == L"menutab-fork2";
     if (!known || std::filesystem::exists(config)) return 2;
     if (forza)
     {
@@ -669,13 +689,19 @@ int wmain(int argc, wchar_t** argv)
         R"("vsyncMode":1,"reflexFrameLimitFps":90,"xessMultiplier":4,"xessForceEnable":true,)"
         R"("xessLowLatencyMode":2,"xessFrameLimitFps":120,"generatedOnlyDebug":true,"dlssSrPreset":11,"dlss5":true)";
     saved += mode == L"optin" || mode == L"xefg-output-optin" ? R"(,"optiScalerUi":"rtxmfg"})"
-        : mode == L"hidden" || mode == L"xefg-output-hidden" ? R"(,"optiScalerUi":"optiscaler"})"
+        // menutab and menutab-plugin set "optiscaler": hidden is not the default outside a ForzaTech executable, and the
+        // tab is offered only in the hidden mode. menutab-default has no key: OptiScaler's plugin API makes hidden the default.
+        : mode == L"hidden" || mode == L"xefg-output-hidden" || mode == L"menutab" || mode == L"menutab-plugin"
+            || mode == L"menutab-fork2"
+        ? R"(,"optiScalerUi":"optiscaler"})"
         : mode == L"shared" || mode == L"forza-shared" || mode == L"xefg-output" || mode == L"xefg-output-factory"
+            || mode == L"menutab-shared"
         ? R"(,"optiScalerUi":"shared"})" : "}";
     std::ofstream(config, std::ios::binary) << saved;
 
     const auto host = here / L"OptiScaler.dll";
-    if (!CopyFileW((here / L"OptiScalerHostFixture.dll").c_str(), host.c_str(), FALSE)) return 3;
+    if (!CopyFileW((here / (menuTab ? L"OptiScalerMenuTabFixture.dll" : L"OptiScalerHostFixture.dll")).c_str(),
+            host.c_str(), FALSE)) return 3;
     const auto pluginDirectory = here / L"plugins";
     const auto plugin = pluginDirectory / L"MFGUnlocker.asi";
     std::filesystem::create_directories(pluginDirectory);
@@ -699,16 +725,18 @@ int wmain(int argc, wchar_t** argv)
         rtxmfg = LoadLibraryW(candidate.c_str());
     }
     else if (mode == L"proxy" || mode == L"optin" || mode == L"hidden" || mode == L"shared" || mode == L"streamline"
-        || privateStartup || forza)
+        || privateStartup || forza || mode == L"menutab")
     {
         optiscaler = LoadLibraryW(host.c_str());
         rtxmfg = LoadLibraryW(candidate.c_str());
     }
-    else if (mode == L"plugin")
+    else if (pluginRoute)
     {
         SetEnvironmentVariableW(L"RTXMFG_TEST_OPTISCALER_PLUGIN", plugin.c_str());
+        if (fork2Api) SetEnvironmentVariableW(L"RTXMFG_TEST_OPTISCALER_API", L"fork2");
         optiscaler = LoadLibraryW(host.c_str());
         SetEnvironmentVariableW(L"RTXMFG_TEST_OPTISCALER_PLUGIN", nullptr);
+        SetEnvironmentVariableW(L"RTXMFG_TEST_OPTISCALER_API", nullptr);
         rtxmfg = GetModuleHandleW(plugin.c_str());
         int loaded = 0, initialized = 0, error = 0;
         using ReportFn = void(__cdecl*)(int*, int*, int*);
@@ -731,6 +759,13 @@ int wmain(int argc, wchar_t** argv)
             initialize();
         else
             Check(false, "candidate exports InitializeASI");
+        // menutab.2: a plugin API table from outside OptiScaler is refused.
+        static OptiPluginApi fakeApi{};
+        fakeApi.size = sizeof(fakeApi);
+        fakeApi.version = OPTI_PLUGIN_API_VERSION;
+        fakeApi.RegisterTab = [](OptiPlugin*, const char*, const char*, OptiDrawTabFn, void*) { return true; };
+        if (auto init = rtxmfg ? reinterpret_cast<PFN_OptiPluginInit>(GetProcAddress(rtxmfg, OPTI_PLUGIN_INIT_NAME)) : nullptr)
+            Check(!init(&fakeApi, reinterpret_cast<OptiPlugin*>(&fakeApi)), "OptiPluginInit refuses an API table from outside OptiScaler");
     }
     else if (mode == L"fakenvapi")
     {
@@ -742,19 +777,26 @@ int wmain(int argc, wchar_t** argv)
     Check(rtxmfg != nullptr, "candidate loaded");
     if (!rtxmfg) return 1;
     Check(GetProcAddress(rtxmfg, "InitializeASI") != nullptr, "candidate exports InitializeASI");
+    Check(GetProcAddress(rtxmfg, OPTI_PLUGIN_INIT_NAME) != nullptr, "candidate exports OptiPluginInit");
     Check(Query(rtxmfg).backendOwner == 1, "candidate owns the backend");
 
     const bool expectHost = mode == L"proxy" || mode == L"plugin" || mode == L"late" || mode == L"optin"
-        || mode == L"hidden" || mode == L"shared" || mode == L"streamline" || privateStartup || forza;
+        || mode == L"hidden" || mode == L"shared" || mode == L"streamline" || privateStartup || forza || menuTab;
     // Frame generation is OptiScaler's unless "rtxmfg"; the menu is gone when "optiscaler" and, without the key, for a
-    // ForzaTech executable (alpha.19 optimenu.1; shared everywhere else, as in beta.4).
+    // ForzaTech executable or once OptiScaler handed its plugin API (shared everywhere else).
     const bool delegated = expectHost && mode != L"optin";
-    const bool hidden = mode == L"hidden" || mode == L"forza";
-    const char* route = mode == L"plugin" ? "\"plugin\"" : mode == L"late" ? "\"late\""
+    const bool hidden = mode == L"hidden" || mode == L"forza" || mode == L"menutab" || mode == L"menutab-plugin"
+        || mode == L"menutab-default" || mode == L"menutab-fork2";
+    // menutab.2: OptiScaler hands its plugin API only to a plugin it loads; while hidden, RTXMFG's tab offers the
+    // DLSS presets and DLSS 5.
+    const bool apiExpected = menuTab && pluginRoute;
+    const bool tabExpected = apiExpected && hidden;
+    const char* route = pluginRoute ? "\"plugin\"" : mode == L"late" ? "\"late\""
         : expectHost ? "\"proxy\"" : "\"none\"";
     const std::string json = WaitStatus(status, [&](const std::string& text) {
         return Has(text, "optiScalerRoute", route)
-            && (mode != L"fakenvapi" || Has(text, "fakeNvapiObserved", "true"));
+            && (mode != L"fakenvapi" || Has(text, "fakeNvapiObserved", "true"))
+            && (mode != L"menutab-default" || Has(text, "optiScalerUiOwner", "\"optiscaler\""));
     });
     Check(ui_status_json::CompleteObject(json), "status published");
     Check(Has(json, "integrationMode", expectHost ? "\"optiscaler\"" : "\"standalone\""), "integration mode");
@@ -765,7 +807,7 @@ int wmain(int argc, wchar_t** argv)
     Check(Has(json, "optiScalerMenuSuppressed", hidden ? "true" : "false"), "menu suppression");
     if (expectHost)
         Check(Has(json, "optiScalerProductVersion", "\"10.0.0-fixture\""), "OptiScaler version read from the mapped image");
-    Check(Has(json, "optiScalerPluginCallerAccepted", mode == L"plugin" ? "true" : "false"), "plugin caller acceptance");
+    Check(Has(json, "optiScalerPluginCallerAccepted", pluginRoute ? "true" : "false"), "plugin caller acceptance");
     Check(Has(json, "optiScalerPluginCallerRejected", mode == L"impostor" ? "true" : "false"),
         "a non-OptiScaler InitializeASI caller is rejected");
     if (mode == L"fakenvapi")
@@ -775,23 +817,72 @@ int wmain(int argc, wchar_t** argv)
     // the controls; the saved choices everywhere else.
     Check(Has(json, "followGame", delegated ? "true" : "false"), "effective Follow");
     Check(Has(json, "mode", delegated ? "\"follow\"" : "\"fixed\""), "effective mode");
-    Check(Has(json, "dlssgPresetRequested", delegated ? "0" : "1"), "saved DLSS-G preset not applied in OptiScaler mode");
     Check(Has(json, "vsyncMode", delegated ? "0" : "1"), "V-Sync override");
     Check(Has(json, "reflexFrameLimitFps", delegated ? "0" : "90"), "Reflex frame limit override");
-    // beta.8: XeSS MFG runs under OptiScaler only; the saved file's older XeSS keys still load and are ignored.
+    // XeSS MFG runs under OptiScaler only; the saved file's older XeSS keys still load and are ignored.
     Check(json.find("\"xessMultiplier\"") == std::string::npos && json.find("\"xessForceEnable\"") == std::string::npos
         && json.find("\"xessFrameLimitFps\"") == std::string::npos && json.find("\"xessLowLatencyMode\"") == std::string::npos,
         "no XeSS multiplier, force or XeLL keys in the status");
     Check(Has(json, "generatedOnlyDebug", delegated ? "false" : "true"), "debug presentation override");
-    // Shared UI mode: the DLSS SR/RR presets and DLSS 5 stay RTXMFG's; hidden delegates them too.
-    Check(Has(json, "dlssSrPresetRequested", hidden ? "0" : "11"), "saved DLSS SR preset applies unless the menu is hidden");
-    Check(Has(json, "dlss5", hidden ? "false" : "true"), "saved DLSS 5 applies unless the menu is hidden");
+    // Shared UI mode: the DLSS SR/RR presets, the DLSS-G preset and DLSS 5 stay RTXMFG's; hidden delegates them too,
+    // unless RTXMFG's tab in OptiScaler's menu offers them.
+    const bool dlssApplies = !hidden || apiExpected;
+    Check(Has(json, "dlssgPresetRequested", dlssApplies ? "1" : "0"),
+        "saved DLSS-G preset applies unless the menu is hidden without OptiScaler's plugin API");
+    // dlssgtab.2: a new DLSS-G preset restarts OptiScaler's DLSSG output on its own calls, as it does the game's, so
+    // OptiScaler is never the reason it waits for a restart (reason 1, the last code is 8).
+    Check(!Has(json, "dlssgPresetLiveSwitch", "1"), "OptiScaler does not make the DLSS-G preset restart-only");
+    Check(Has(json, "dlssSrPresetRequested", dlssApplies ? "11" : "0"),
+        "saved DLSS SR preset applies unless the menu is hidden without OptiScaler's plugin API");
+    Check(Has(json, "dlss5", dlssApplies ? "true" : "false"),
+        "saved DLSS 5 applies unless the menu is hidden without OptiScaler's plugin API");
 
     // Menu factories: wrapped for RTXMFG's own UI, untouched for OptiScaler's.
     const uint64_t wrappers = FactoryWrappersAfterCreate(rtxmfg);
     Check(hidden ? wrappers == 0 : wrappers > 0, hidden
         ? "no RTXMFG factory proxy while the RTXMFG menu is hidden"
         : "RTXMFG factory proxy created for its menu");
+
+    if (menuTab)
+    {
+        // OptiPluginInit registers the tab inside OptiScaler's DllMain; the worker only for a later switch to hidden.
+        using TabFn = int(__cdecl*)(char*, size_t, int, char*, size_t, int*, int*, int*);
+        const auto tab = optiscaler ? reinterpret_cast<TabFn>(GetProcAddress(optiscaler, "OptiFixtureMenuTab")) : nullptr;
+        Check(tab != nullptr, "stand-in exports its menu tab probe");
+        char label[64]{};
+        int registered = 0, initResult = -2;
+        for (unsigned waited = 0; tab && waited <= 3000; waited += 50)
+        {
+            registered = tab(label, sizeof(label), 0, nullptr, 0, nullptr, nullptr, &initResult);
+            if (registered == (tabExpected ? 1 : 0) && (tabExpected || waited >= 1000)) break;
+            Sleep(50);
+        }
+        Check(initResult == (apiExpected ? 1 : -1), apiExpected
+            ? "OptiScaler's plugin loader hands RTXMFG its API and RTXMFG accepts it"
+            : "no OptiPluginInit call for a sibling proxy");
+        Check(registered == (tabExpected ? 1 : 0), tabExpected
+            ? "RTXMFG registers its tab in OptiScaler's menu while its own menu is hidden"
+            : "no tab in OptiScaler's menu while RTXMFG's own menu is shared or OptiScaler gave no API");
+        if (tabExpected)
+        {
+            Check(std::strcmp(label, "MFG Unlocker") == 0, "tab label");
+            std::vector<char> drawn(16384);
+            int calls = 0, bad = 0;
+            tab(nullptr, 0, 1, drawn.data(), drawn.size(), &calls, &bad, nullptr);
+            const std::string text = drawn.data();
+            Check(calls > 0 && bad == 0, "tab draws through OptiScaler's widget functions, inside the draw, Disabled closed");
+            Check(text.find("Frame generation is set in OptiScaler's menu.") != std::string::npos,
+                "tab names OptiScaler's menu as the frame-generation owner");
+            // No DLSS feature runs in the harness.
+            Check(text.find("Waiting for DLSS") != std::string::npos, "tab reads the backend status (waiting for DLSS)");
+            // GitHub issue 122: the log toggle on its own Diagnostics card, last in the tab, also while waiting for DLSS.
+            const size_t diagnostics = text.rfind("Diagnostics\nWrite log file##runtimelog\nWrites the MFG Unlocker log");
+            Check(diagnostics != std::string::npos && diagnostics > text.find("Waiting for DLSS"),
+                "tab offers Write log file under Diagnostics, after the features");
+            if (bad || text.find("Waiting for DLSS") == std::string::npos || diagnostics == std::string::npos)
+                std::printf("tab drew %d calls, %d bad:\n%s", calls, bad, text.c_str());
+        }
+    }
 
     Sleep(400);
     const std::string log = ReadText(RuntimeLog());
@@ -808,6 +899,22 @@ int wmain(int argc, wchar_t** argv)
     if (expectHost)
         Check((log.find("ForzaTech executable") != std::string::npos) == forza,
             forza ? "runtime log records the ForzaTech default" : "no ForzaTech default outside a Forza executable");
+    if (mode == L"impostor")
+        Check(log.find("OptiPluginInit refused") != std::string::npos, "runtime log records the refused plugin API");
+    if (menuTab)
+    {
+        Check(log.find(apiExpected ? "menuTabApi=1" : "menuTabApi=0") != std::string::npos,
+            "runtime log records whether OptiScaler handed its plugin API");
+        Check((log.find("OptiScaler plugin API accepted (OptiPluginInit).") != std::string::npos) == apiExpected,
+            "runtime log records the accepted plugin API");
+        Check((log.find("OptiScaler menu tab registered") != std::string::npos) == tabExpected,
+            "runtime log records the menu tab registration");
+        const char* layout = fork2Api ? "OptiScaler plugin API layout: MFG Unlocker fork version 2"
+            : "OptiScaler plugin API layout: upstream.";
+        Check((log.find(layout) != std::string::npos) == apiExpected, fork2Api
+            ? "runtime log records the fork's version 2 API table, adapted"
+            : apiExpected ? "runtime log records upstream's API table" : "no API table layout without the API");
+    }
 
     if (mode == L"streamline" || mode == L"second-streamline")
         Check(Has(WaitStatus(status, [](const std::string& text) {

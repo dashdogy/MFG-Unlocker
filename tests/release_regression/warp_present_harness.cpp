@@ -1,10 +1,14 @@
 // Real D3D12 WARP swapchain/presentation harness for the bounded overlay:
 // presentation, menu rendering, input, resize and teardown. run.py lists the
-// modes the release regression runs.
+// modes the release regression runs. d3d12-with-d3d11-menu adds a D3D11 device and
+// window to a D3D12 game (dx11menu.1; DirectX 11 games run in D3D11PresentHarness).
 #include "common.h"
+#include <d3d11_1.h>
 #include "existing_overlay.h"
 #include "unaligned_import_fixture.h"
 #include <fstream>
+#include <initializer_list>
+#include <iterator>
 #include <atomic>
 #include <dwmapi.h>
 #include <cmath>
@@ -19,12 +23,18 @@ extern "C" __declspec(dllimport) HRESULT WINAPI EngineCreateFactory(unsigned,REF
 namespace
 {
 using namespace harness;
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 constexpr uint32_t kStateActive = 2;
 unsigned receivedKeys=0;
 unsigned receivedMouseButtons=0;
+unsigned receivedKeyUps[256]{}; // keyrelease.1
+unsigned receivedRightUps=0;
 LRESULT CALLBACK GameWindowProc(HWND window,UINT message,WPARAM key,LPARAM data) {
     if(message==WM_KEYDOWN&&key=='A')++receivedKeys;
+    if(message==WM_KEYUP)++receivedKeyUps[key&0xFF];
+    if(message==WM_RBUTTONUP)++receivedRightUps;
     if(message>=WM_LBUTTONDOWN&&message<=WM_XBUTTONDBLCLK&&message!=WM_MOUSEWHEEL)++receivedMouseButtons;
     return DefWindowProcW(window,message,key,data);
 }
@@ -807,6 +817,40 @@ int RunPresentation(const wchar_t* dll, bool menuMode, uint32_t expectedTargets,
         SendMessageW(window.window,WM_KEYDOWN,'A',0x001E0001);
         Check(receivedKeys==keysBefore+1,"closed menu returns keyboard message to game WndProc");
 
+        // keyrelease.1: a key and a mouse button held in the game as the menu opens are released in the game when
+        // let go with the menu open. A key pressed and released inside the menu, or released with no press the game
+        // saw, stays with the menu. Sent synchronously, so no focus change can come between press and release.
+        {
+            const DWORD heldForegroundThread=GetWindowThreadProcessId(GetForegroundWindow(),nullptr);
+            const bool heldAttached=heldForegroundThread!=ourThread&&AttachThreadInput(ourThread,heldForegroundThread,TRUE);
+            SetForegroundWindow(window.window);SetFocus(window.window);
+            if(heldAttached)AttachThreadInput(ourThread,heldForegroundThread,FALSE);
+            Check(GetForegroundWindow()==window.window,"held-input check owns foreground window");
+            SendMessageW(window.window,WM_KEYDOWN,'C',0x002E0001);
+            SendMessageW(window.window,WM_RBUTTONDOWN,MK_RBUTTON,MAKELPARAM(20,20));
+            SendMessageW(window.window,WM_KEYDOWN,key,0x000E0001);
+            SendMessageW(window.window,WM_KEYUP,key,0xC00E0001);
+            Check(Status(module).overlayVisible==1,"hotkey opened the menu over a held key and mouse button");
+            const unsigned upsC=receivedKeyUps['C'],upsD=receivedKeyUps['D'],rightUps=receivedRightUps;
+            SendMessageW(window.window,WM_KEYUP,'D',0xC0200001);
+            Check(receivedKeyUps['D']==upsD,"open menu keeps the release of a key the game never saw pressed");
+            SendMessageW(window.window,WM_KEYUP,'C',0xC02E0001);
+            Check(receivedKeyUps['C']==upsC+1,"open menu passes the release of a key held as it opened");
+            SendMessageW(window.window,WM_KEYDOWN,'C',0x002E0001);
+            SendMessageW(window.window,WM_KEYUP,'C',0xC02E0001);
+            Check(receivedKeyUps['C']==upsC+1,"open menu keeps a key pressed and released inside it");
+            SendMessageW(window.window,WM_RBUTTONUP,0,MAKELPARAM(20,20));
+            Check(receivedRightUps==rightUps+1,"open menu passes the release of a mouse button held as it opened");
+            SendMessageW(window.window,WM_KEYDOWN,key,0x000E0001);
+            SendMessageW(window.window,WM_KEYUP,key,0xC00E0001);
+            Check(Status(module).overlayVisible==0,"hotkey closed the menu after the held-input check");
+            for (int i = 0; i < 4; ++i)
+            {
+                RenderAndPresent(fixture, chain, base);
+                window.Pump(3);
+            }
+        }
+
         // Resize while the renderer is initialized, then keep presenting.
         Check(chain.Resize(fixture, 400, 300), "resize after menu use");
         for (int i = 0; i < 4; ++i) RenderAndPresent(fixture, chain, base);
@@ -1172,6 +1216,165 @@ int RunPinnedFps(const wchar_t* dll)
     return 0;
 }
 
+// keybinds.1: injected keyboard input, so the overlay's poll (below other mods'
+// hooks) sees the key down. Page Up and the arrow block are extended keys.
+bool InjectKey(WORD key, bool down)
+{
+    INPUT event{};
+    event.type = INPUT_KEYBOARD;
+    event.ki.wVk = key;
+    event.ki.wScan = static_cast<WORD>(MapVirtualKeyW(key, MAPVK_VK_TO_VSC));
+    event.ki.dwFlags = (down ? 0 : KEYEVENTF_KEYUP)
+        | (key == VK_PRIOR || key == VK_NEXT || key == VK_INSERT || key == VK_DELETE ? KEYEVENTF_EXTENDEDKEY : 0);
+    return SendInput(1, &event, sizeof(event)) == 1;
+}
+
+std::string ReadText(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+// keybinds.1: the Keybinds tab's keys with the menu closed. [Keybinds] binds Ctrl+Page Up to Raise multiplier, F9 to
+// FPS readout and Backspace (the menu key) to 6x. The control file switches XeMFG standalone on with 2x, which applies
+// only after a restart, so the status echoes saved values. Ctrl+Page Up raises the saved frames to 3x and draws its note
+// at the top centre, F9 pins the FPS readout, and Backspace opens the menu instead of selecting 6x.
+int RunKeybindsMenu(const wchar_t* dll)
+{
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const auto folder = std::filesystem::path(exe).parent_path();
+    const auto ini = folder / L"RTX40MFG-UI.ini";
+    const auto control = folder / L"RTXMFG-Universal.json";
+    const auto status = folder / L"RTXMFG-Universal.status.json";
+    wchar_t saved[64]{};
+    GetPrivateProfileStringW(L"Keybinds", L"RaiseMultiplier", L"", saved, 64, ini.c_str());
+    if (!Check(std::wstring(saved) == L"Ctrl+0x21", "keybinds saved before startup")) return 1;
+    WarpFixture fixture;
+    if (!Check(fixture.Initialize(true), "WARP device, queue and factory created")) return 1;
+    RestoreForeground previousForeground;
+    TestWindow window(L"Keybinds", 640, 480, GameWindowProc);
+    if (!Check(window.window != nullptr, "test window created")) return 1;
+    window.Show();
+    HMODULE module = LoadCandidate(dll);
+    if (!Check(module != nullptr, "candidate loads")) return 1;
+    ComPtr<IDXGIFactory1> applicationFactory;
+    if (!Check(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&applicationFactory)))
+            && SUCCEEDED(applicationFactory.As(&fixture.factory)),
+            "application factory created through the menu's gateway"))
+        return 1;
+    Chain chain;
+    if (!Check(chain.Create(fixture, window.window, 640, 480, 2, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL)
+            && Status(module).swapchainWrappersCreated == 1,
+            "application swapchain wrapped by the menu"))
+        return 1;
+
+    float teal[4] = {0.10f, 0.60f, 0.60f, 1.0f};
+    const auto frames = [&](int count) {
+        for (int frame = 0; frame < count; ++frame)
+        {
+            RenderAndPresent(fixture, chain, teal);
+            window.Pump(1);
+            Sleep(15);
+        }
+    };
+    // Presents until done() or the time runs out.
+    const auto until = [&](ULONGLONG milliseconds, auto&& done) {
+        const ULONGLONG start = GetTickCount64();
+        while (GetTickCount64() - start < milliseconds)
+        {
+            if (done()) return true;
+            frames(2);
+        }
+        return done();
+    };
+    const auto topCentre = [&](bool clear) {
+        float pixel[4]{};
+        frames(2);
+        return ReadCenter(fixture, chain, pixel, 320, 16) && PixelMatches(pixel, teal) == clear;
+    };
+    const auto foreground = [&] {
+        const DWORD ourThread = GetCurrentThreadId();
+        const DWORD foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+        const bool attached = foregroundThread != ourThread && AttachThreadInput(ourThread, foregroundThread, TRUE);
+        BringWindowToTop(window.window); SetForegroundWindow(window.window); SetFocus(window.window);
+        if (attached) AttachThreadInput(ourThread, foregroundThread, FALSE);
+        window.Pump(2);
+        return GetForegroundWindow() == window.window;
+    };
+    const auto press = [&](std::initializer_list<WORD> keys) {
+        bool sent = true;
+        for (const WORD key : keys) sent &= InjectKey(key, true);
+        frames(8);
+        for (auto key = std::rbegin(keys); key != std::rend(keys); ++key) sent &= InjectKey(*key, false);
+        frames(4);
+        return sent;
+    };
+
+    // The startup hint is gone after 7 seconds; then the top centre is the clear colour.
+    until(8500, [] { return false; });
+    Check(topCentre(true), "top centre shows the clear colour before any key");
+    Check(Status(module).overlayVisible == 0, "menu closed before the keys");
+
+    std::ofstream(control, std::ios::binary | std::ios::trunc)
+        << "{\"followGame\":true,\"mode\":\"follow\",\"multiplier\":2,\"dynamicTargetFrameRate\":0,\"dlssgPreset\":2,"
+           "\"vsyncMode\":0,\"reflexFrameLimitFps\":0,\"generatedOnlyDebug\":false,\"intervalLogging\":true,"
+           "\"version\":13,\"xemfgStandalone\":1,\"xemfgFrames\":2}\n";
+    Check(until(6000, [&] {
+            const auto text = ReadText(status);
+            return text.find("\"xemfgStandalone\":true") != std::string::npos
+                && text.find("\"xemfgSavedFrames\":2") != std::string::npos;
+        }), "status shows XeMFG standalone switched on with 2x saved");
+
+    if (!Check(foreground(), "keybinds test owns the foreground window")) return 2;
+    Check(press({VK_CONTROL, VK_PRIOR}), "Ctrl+Page Up injected");
+    Check(until(3000, [&] { return ReadText(control).find("\"xemfgFrames\":3") != std::string::npos; }),
+        "Ctrl+Page Up raised XeMFG's saved frames from 2x to 3x with the menu closed");
+    Check(topCentre(false), "the key's note composited at the top centre");
+    Check(Status(module).overlayVisible == 0, "the key left the menu closed");
+    until(2000, [] { return false; });
+    Check(topCentre(true), "the note is gone after 1.5 seconds");
+
+    if (!Check(foreground(), "keybinds test owns the foreground window for F9")) return 2;
+    Check(press({VK_F9}), "F9 injected");
+    Check(until(2000, [&] { return GetPrivateProfileIntW(L"Overlay", L"PinnedFps", 0, ini.c_str()) == 1; }),
+        "F9 turned the FPS readout on and saved it");
+    float readout[4]{};
+    frames(3);
+    Check(ReadCenter(fixture, chain, readout, 20, 18) && !PixelMatches(readout, teal),
+        "FPS readout composited in the top-left corner with the menu closed");
+
+    // keybinds.3: the next DLSS preset key fails closed while the game runs no DLSS (XeMFG's panel here, which shows
+    // the SR/RR preset row only while DLSS upscaling runs): its note shows and nothing is written.
+    until(2000, [] { return false; });
+    Check(topCentre(true), "the FPS readout key's note is gone");
+    const std::string beforePreset = ReadText(control);
+    if (!Check(foreground(), "keybinds test owns the foreground window for F7")) return 2;
+    Check(press({VK_F7}), "F7 injected");
+    Check(topCentre(false), "the DLSS preset key's note composited at the top centre");
+    Check(ReadText(control) == beforePreset, "the DLSS preset key wrote nothing while the game runs no DLSS");
+
+    if (!Check(foreground(), "keybinds test owns the foreground window for Backspace")) return 2;
+    Check(press({VK_BACK}), "Backspace injected");
+    Check(until(2000, [&] { return Status(module).overlayVisible == 1; }), "Backspace opened the menu");
+    Check(ReadText(control).find("\"xemfgFrames\":3") != std::string::npos,
+        "Backspace stayed the menu key: the 6x binding on it did not run");
+    if (foreground()) press({VK_BACK});
+    Check(until(2000, [&] { return Status(module).overlayVisible == 0; }), "Backspace closed the menu");
+    Check(SUCCEEDED(fixture.device->GetDeviceRemovedReason()), "device healthy after presents");
+
+    // As vsync-override: drain the queue before the swapchain proxy's release (the debug layer fails fast on a
+    // release with frames in flight), then again after it.
+    Chain::Drain(fixture, chain.swapchain.Get());
+    chain.buffers.clear();
+    chain.rtvs.Reset();
+    chain.swapchain.Reset();
+    Chain::Drain(fixture);
+    Check(Status(module).liveSwapchainWrappers == 0, "all swapchain proxies retired after teardown");
+    std::printf("COMPLETE mode=keybinds-menu\n");
+    return gFailures == 0 ? 0 : 10;
+}
+
 // This case acquires a real exclusive DirectInput mouse, then drags the menu
 // panel by its title bar with injected input: the cursor and the panel must
 // follow, and DirectInput must still read the mouse once the menu closes. The
@@ -1215,6 +1418,7 @@ int RunDirectInputMenu(const wchar_t* dll)
     frames(8);
 
     const DWORD ourThread = GetCurrentThreadId();
+    harness::focus::PrepareClaim();
     const DWORD foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
     const bool attached = foregroundThread != ourThread && AttachThreadInput(ourThread, foregroundThread, TRUE);
     BringWindowToTop(window.window); SetForegroundWindow(window.window); SetFocus(window.window);
@@ -1432,6 +1636,7 @@ int RunSlowPumpMenu(const wchar_t* dll)
     frames(8, true);
 
     const DWORD ourThread = GetCurrentThreadId();
+    harness::focus::PrepareClaim();
     const DWORD foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
     const bool attached = foregroundThread != ourThread && AttachThreadInput(ourThread, foregroundThread, TRUE);
     BringWindowToTop(window.window); SetForegroundWindow(window.window); SetFocus(window.window);
@@ -1520,6 +1725,292 @@ int RunSlowPumpMenu(const wchar_t* dll)
     Chain::Drain(fixture);
     Check(Status(module).liveSwapchainWrappers == 0, "all swapchain proxies retired after teardown");
     std::printf("COMPLETE mode=slowpump-menu\n");
+    return gFailures == 0 ? 0 : 10;
+}
+
+// A game's own raw mouse thread: a hidden window on its own thread takes the mouse as raw input with RIDEV_NOLEGACY |
+// RIDEV_CAPTUREMOUSE, as dinput8 does, so the game window gets no mouse messages. It counts the button transitions.
+struct RawMouseThread
+{
+    std::atomic<unsigned> buttons{0};
+    std::atomic<bool> registered{false};
+    std::atomic<DWORD> id{0};
+    HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::thread thread;
+
+    static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+    {
+        if (message == WM_INPUT)
+        {
+            RAWINPUT input{};
+            UINT bytes = sizeof(input);
+            const UINT copied = GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT,
+                &input, &bytes, sizeof(RAWINPUTHEADER));
+            auto* self = reinterpret_cast<RawMouseThread*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+            if (self && copied != UINT(-1) && copied >= sizeof(RAWINPUTHEADER) && input.header.dwType == RIM_TYPEMOUSE)
+                for (unsigned bit = 0; bit < 10; ++bit)
+                    if (input.data.mouse.usButtonFlags & (1u << bit)) self->buttons.fetch_add(1);
+        }
+        return DefWindowProcW(window, message, wparam, lparam);
+    }
+    bool Start()
+    {
+        thread = std::thread([this] {
+            id.store(GetCurrentThreadId());
+            WNDCLASSW description{};
+            description.lpfnWndProc = &Proc;
+            description.hInstance = GetModuleHandleW(nullptr);
+            description.lpszClassName = L"GameRawMouse";
+            const ATOM atom = RegisterClassW(&description);
+            const HWND sink = atom ? CreateWindowExW(0, L"GameRawMouse", L"", WS_POPUP, 0, 0, 1, 1,
+                nullptr, nullptr, description.hInstance, nullptr) : nullptr;
+            if (sink)
+            {
+                SetWindowLongPtrW(sink, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+                const RAWINPUTDEVICE device{0x01, 0x02, RIDEV_NOLEGACY | RIDEV_CAPTUREMOUSE, sink};
+                registered.store(RegisterRawInputDevices(&device, 1, sizeof(device)) != FALSE);
+            }
+            SetEvent(ready);
+            MSG message;
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+            if (registered.load())
+            {
+                const RAWINPUTDEVICE device{0x01, 0x02, RIDEV_REMOVE, nullptr};
+                RegisterRawInputDevices(&device, 1, sizeof(device));
+            }
+            if (sink) DestroyWindow(sink);
+            if (atom) UnregisterClassW(L"GameRawMouse", description.hInstance);
+        });
+        return WaitForSingleObject(ready, 5000) == WAIT_OBJECT_0 && registered.load();
+    }
+    ~RawMouseThread()
+    {
+        if (thread.joinable())
+        {
+            PostThreadMessageW(id.load(), WM_QUIT, 0, 0);
+            thread.join();
+        }
+        CloseHandle(ready);
+    }
+};
+
+// AION 2 (issues 78 and 121): the menu opens on its key, but the game takes every click. The menu window's procedure
+// gets no mouse messages: with rawSink the game reads the mouse on a raw input thread of its own, otherwise its pump
+// handles every mouse message itself. After the mouse moves to the panel the menu must take it through its low-level
+// hook: a title-bar drag moves the panel and no click reaches the game while the menu is open. Closed, the game gets
+// the clicks again; reopened, the menu takes the mouse at once.
+int RunUnroutedMenu(const wchar_t* dll, bool rawSink)
+{
+    // Physical pixels throughout: window, menu layout, monitors and injected input.
+    if (!Check(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2),
+            "process is per-monitor DPI aware")) return 1;
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const auto layout = std::filesystem::path(exe).parent_path() / L"RTX40MFG-UI-layout.ini";
+    WarpFixture fixture;
+    if (!Check(fixture.Initialize(true), "WARP device, queue and factory created")) return 1;
+    RestoreForeground previousForeground;
+    TestWindow window(rawSink ? L"RawSinkMenu" : L"OwnPumpMenu", 640, 480, GameWindowProc);
+    if (!Check(window.window != nullptr, "test window created")) return 1;
+    window.Show();
+    HMODULE module = LoadCandidate(dll);
+    if (!Check(module != nullptr, "candidate loads")) return 1;
+    ComPtr<IDXGIFactory1> applicationFactory;
+    if (!Check(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&applicationFactory)))
+            && SUCCEEDED(applicationFactory.As(&fixture.factory)),
+            "application factory created through the menu's gateway"))
+        return 1;
+    Chain chain;
+    if (!Check(chain.Create(fixture, window.window, 640, 480, 2, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL)
+            && Status(module).swapchainWrappersCreated == 1,
+            "application swapchain wrapped by the menu"))
+        return 1;
+    // The game's own pump: the window's mouse messages are handled here and never dispatched to a window procedure.
+    unsigned pumpButtons = 0;
+    const auto pump = [&](unsigned iterations) {
+        if (rawSink) { window.Pump(iterations); return; }
+        MSG message;
+        for (unsigned i = 0; i < iterations; ++i)
+        {
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            {
+                if (message.hwnd == window.window
+                    && message.message >= WM_MOUSEFIRST && message.message <= WM_MOUSELAST)
+                {
+                    if (message.message >= WM_LBUTTONDOWN && message.message <= WM_XBUTTONDBLCLK
+                        && message.message != WM_MOUSEWHEEL) ++pumpButtons;
+                    continue;
+                }
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            Sleep(10);
+        }
+    };
+    float base[4] = {0.30f, 0.30f, 0.35f, 1.0f};
+    const auto frames = [&](int count) {
+        for (int frame = 0; frame < count; ++frame)
+        {
+            RenderAndPresent(fixture, chain, base);
+            pump(2);
+        }
+    };
+    frames(8);
+
+    const DWORD ourThread = GetCurrentThreadId();
+    harness::focus::PrepareClaim();
+    const DWORD foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+    const bool attached = foregroundThread != ourThread && AttachThreadInput(ourThread, foregroundThread, TRUE);
+    BringWindowToTop(window.window); SetForegroundWindow(window.window); SetFocus(window.window);
+    if (attached) AttachThreadInput(ourThread, foregroundThread, FALSE);
+    pump(2);
+    if (!Check(GetForegroundWindow() == window.window, "unrouted menu test owns the foreground window")) return 2;
+    RECT client{};
+    GetClientRect(window.window, &client);
+    POINT center{client.right / 2, client.bottom / 2};
+    ClientToScreen(window.window, &center);
+    SetCursorPos(center.x, center.y);
+    RawMouseThread sink;
+    if (rawSink)
+    {
+        if (!Check(sink.Start(), "game raw mouse thread registered (NOLEGACY | CAPTUREMOUSE, a class of its own)")) return 2;
+        Check(!DirectInputWindowPresent(), "no DirectInput window in the process");
+    }
+    pump(4);
+    // The game's view of the clicks: its pump, or its raw mouse thread.
+    const auto gameButtons = [&]() -> unsigned { return rawSink ? sink.buttons.load() : pumpButtons; };
+    const auto gameButtonsSince = [&](unsigned from) {
+        for (const ULONGLONG start = GetTickCount64(); GetTickCount64() - start < 600 && gameButtons() - from < 2;)
+            pump(2);
+        return gameButtons() - from;
+    };
+
+    // Menu closed: the AION 2 condition.
+    unsigned game = gameButtons();
+    unsigned procedureButtons = receivedMouseButtons;
+    Check(InjectMouse(center, MOUSEEVENTF_LEFTDOWN) && InjectMouse(center, MOUSEEVENTF_LEFTUP),
+        "closed menu: click injected");
+    Sleep(100);
+    unsigned seen = gameButtonsSince(game);
+    std::printf("NOTE closed menu: game buttons=%u\n", seen);
+    Check(seen == 2 && receivedMouseButtons == procedureButtons,
+        "closed menu: the game reads the click and the window procedure sees none (AION 2 condition)");
+
+    WPARAM key = 0;
+    {
+        const MfgSingleModuleStatus current = Status(module);
+        key = current.shortcutBindingActive ? current.shortcutVirtualKey : VK_BACK;
+    }
+    const auto toggle = [&] {
+        PostMessageW(window.window, WM_KEYDOWN, key, 0x000E0001);
+        PostMessageW(window.window, WM_KEYUP, key, 0xC0E0001);
+    };
+    toggle();
+    frames(12);
+    if (!Check(Status(module).overlayVisible == 1, "menu hotkey made the overlay visible")) return 2;
+    std::optional<PanelLayout> before;
+    for (int attempt = 0; attempt < 40 && !(before = ReadPanel(layout)); ++attempt) frames(1);
+    if (!Check(before.has_value(), "menu layout saved with the panel position")) return 2;
+
+    // A title-bar drag by shift: true when injected and the cursor reached the grab.
+    const auto drag = [&](POINT grab, POINT shift) {
+        bool injected = InjectMouse(grab, 0);
+        Sleep(30); frames(3);
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        std::printf("NOTE grab=%ld,%ld cursor=%ld,%ld\n", grab.x, grab.y, cursor.x, cursor.y);
+        const bool reached = std::abs(cursor.x - grab.x) <= 2 && std::abs(cursor.y - grab.y) <= 2;
+        injected &= InjectMouse(grab, MOUSEEVENTF_LEFTDOWN);
+        Sleep(30); frames(3);
+        for (LONG step = 1; step <= 6; ++step)
+        {
+            injected &= InjectMouse(POINT{grab.x + shift.x * step / 6, grab.y + shift.y * step / 6}, 0);
+            Sleep(20); frames(2);
+        }
+        injected &= InjectMouse(POINT{grab.x + shift.x, grab.y + shift.y}, MOUSEEVENTF_LEFTUP);
+        Sleep(30); frames(3);
+        return injected && reached;
+    };
+    // The panel as saved once it moved by shift (Dear ImGui saves after io.IniSavingRate, 5 s).
+    const auto movedBy = [&](const PanelLayout& from, POINT shift) -> std::optional<PanelLayout> {
+        std::optional<PanelLayout> after;
+        for (const ULONGLONG start = GetTickCount64(); GetTickCount64() - start < 9000;)
+        {
+            frames(2);
+            Sleep(40);
+            after = ReadPanel(layout);
+            if (after && (after->x != from.x || after->y != from.y)) break;
+        }
+        std::printf("NOTE panel before=%d,%d after=%d,%d\n", from.x, from.y, after ? after->x : -1, after ? after->y : -1);
+        if (after && std::abs(after->x - (from.x + shift.x)) <= 3 && std::abs(after->y - (from.y + shift.y)) <= 3)
+            return after;
+        return std::nullopt;
+    };
+
+    // The player moves the mouse to the panel; no mouse message reaches the menu window, so the menu uses its hook.
+    POINT grab{before->x + before->width / 2, before->y + 6};
+    ClientToScreen(window.window, &grab);
+    // 16 steps of at least 60 ms: the menu decides after 500 ms.
+    bool approached = true;
+    for (LONG step = 1; step <= 16; ++step)
+    {
+        approached &= InjectMouse(POINT{center.x + (grab.x - center.x) * step / 16,
+            center.y + (grab.y - center.y) * step / 16}, 0);
+        Sleep(40); frames(1);
+    }
+    Check(approached, "open menu: mouse moved to the panel");
+    const POINT shift{60, 40};
+    game = gameButtons();
+    procedureButtons = receivedMouseButtons;
+    Check(drag(grab, shift), "open menu: title-bar drag injected, the cursor follows the mouse");
+    if (rawSink)
+        std::printf("NOTE open menu: raw mouse thread buttons=%u (raw input still reaches the game, as with DirectInput)\n",
+            gameButtons() - game);
+    else
+        Check(gameButtons() == game, "open menu: the game's pump gets no click");
+    Check(receivedMouseButtons == procedureButtons, "open menu: the window procedure gets no click");
+    const auto dragged = movedBy(*before, shift);
+    Check(dragged.has_value(), "open menu: the panel follows a title-bar drag on a window that gets no mouse messages");
+
+    toggle();
+    frames(8);
+    Check(Status(module).overlayVisible == 0, "second hotkey press closed the menu");
+    Sleep(100);
+    pump(4);
+    const POINT drop{grab.x + shift.x, grab.y + shift.y};
+    game = gameButtons();
+    procedureButtons = receivedMouseButtons;
+    Check(InjectMouse(drop, MOUSEEVENTF_LEFTDOWN) && InjectMouse(drop, MOUSEEVENTF_LEFTUP),
+        "closed menu: second click injected");
+    Sleep(100);
+    seen = gameButtonsSince(game);
+    Check(seen == 2 && receivedMouseButtons == procedureButtons, "closed menu: the mouse returns to the game");
+
+    // Reopened: this window keeps the hook, so a drag made at once still moves the panel.
+    toggle();
+    frames(12);
+    if (!Check(Status(module).overlayVisible == 1, "third hotkey press reopened the menu")) return 2;
+    if (dragged)
+    {
+        POINT regrab{dragged->x + dragged->width / 2, dragged->y + 6};
+        ClientToScreen(window.window, &regrab);
+        const POINT back{-shift.x, -shift.y};
+        Check(drag(regrab, back), "reopened menu: title-bar drag injected at once");
+        Check(movedBy(*dragged, back).has_value(), "reopened menu: the menu takes the mouse at once");
+    }
+    toggle();
+    frames(8);
+    Check(Status(module).overlayVisible == 0, "fourth hotkey press closed the menu");
+
+    frames(4);
+    Check(SUCCEEDED(fixture.device->GetDeviceRemovedReason()), "device healthy after unrouted menu use");
+    Chain::Drain(fixture, chain.swapchain.Get());
+    chain.buffers.clear();
+    chain.rtvs.Reset();
+    chain.swapchain.Reset();
+    Chain::Drain(fixture);
+    Check(Status(module).liveSwapchainWrappers == 0, "all swapchain proxies retired after teardown");
+    std::printf("COMPLETE mode=%s\n", rawSink ? "rawsink-menu" : "ownpump-menu");
     return gFailures == 0 ? 0 : 10;
 }
 
@@ -2033,11 +2524,139 @@ bool ExerciseMenu(WarpFixture& fixture, Chain& chain, TestWindow& window, HMODUL
     }
     return true;
 }
+
+// dx11menu.1: d3d12-with-d3d11-menu. A D3D12 game (this executable links D3D12CreateDevice and no D3D11 creation)
+// that also creates a D3D11 device and a D3D11 window, as a launcher, video or middleware would. Its D3D12 menu is
+// unchanged; the D3D11 side gets no DirectX 11 menu (no session, no Presents counted) and arms no adapter-parent
+// route: the menu's D3D11 gateways are never bound in a D3D12-linked executable.
+int RunD3D12WithD3D11(const wchar_t* dll)
+{
+    RestoreForeground previousForeground;
+    TestWindow window(L"BoundedWarp", 640, 480, GameWindowProc);
+    if (!Check(window.window != nullptr, "test window created")) return 1;
+    window.Show();
+    HMODULE module = LoadCandidate(dll);
+    if (!Check(module != nullptr, "candidate loads")) return 1;
+    WarpFixture fixture;
+    if (!Check(fixture.Initialize(true) && Status(module).factoryWrappersCreated >= 1,
+            "WARP D3D12 device, queue and the application's factory proxy created")) return 1;
+
+    // The D3D11 side: a device through d3d11.dll's entry, its adapter's factory, and a swapchain on a second window
+    // from the application's factory.
+    const auto create11 = reinterpret_cast<PFN_D3D11_CREATE_DEVICE>(
+        GetProcAddress(SystemModule(L"d3d11.dll"), "D3D11CreateDevice"));
+    const D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_11_0;
+    ComPtr<ID3D11Device> device11;
+    ComPtr<ID3D11DeviceContext> context11;
+    if (!Check(create11 && SUCCEEDED(create11(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, &level, 1, D3D11_SDK_VERSION,
+            &device11, nullptr, &context11)), "D3D11 WARP device created beside the D3D12 game")) return 1;
+    {
+        ComPtr<IDXGIDevice> dxgi;
+        ComPtr<IDXGIAdapter> adapter;
+        ComPtr<IDXGIFactory2> parent;
+        const auto factories = Status(module).factoryWrappersCreated;
+        Check(SUCCEEDED(device11.As(&dxgi)) && SUCCEEDED(dxgi->GetAdapter(&adapter))
+            && SUCCEEDED(adapter->GetParent(IID_PPV_ARGS(&parent))) && Status(module).factoryWrappersCreated == factories,
+            "the D3D11 device's adapter gives the native factory: no adapter-parent arming from it");
+    }
+    TestWindow side(L"BoundedWarp11Side", 320, 240);
+    if (!Check(side.window != nullptr, "D3D11 side window created")) return 1;
+    side.Show();
+    DXGI_SWAP_CHAIN_DESC1 desc11{};
+    desc11.Width = 320;
+    desc11.Height = 240;
+    desc11.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc11.SampleDesc.Count = 1;
+    desc11.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    desc11.BufferCount = 2;
+    desc11.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    const auto wrappers = Status(module).swapchainWrappersCreated;
+    ComPtr<IDXGISwapChain1> chain11;
+    if (!Check(SUCCEEDED(fixture.factory->CreateSwapChainForHwnd(device11.Get(), side.window, &desc11, nullptr, nullptr,
+            &chain11)) && Status(module).swapchainWrappersCreated == wrappers,
+            "the D3D11 swapchain of a D3D12 game gets no DirectX 11 menu")) return 1;
+    {
+        ComPtr<ID3D11Texture2D> buffer;
+        ComPtr<ID3D11RenderTargetView> target;
+        if (!Check(SUCCEEDED(chain11->GetBuffer(0, IID_PPV_ARGS(&buffer)))
+                && SUCCEEDED(device11->CreateRenderTargetView(buffer.Get(), nullptr, &target)), "D3D11 back buffer view"))
+            return 1;
+        const float red[4]{0.75f, 0.15f, 0.15f, 1.0f};
+        const auto frames = Status(module).dxgiFrames;
+        const auto rendered = Status(module).renderedFrames;
+        for (int frame = 0; frame < 5; ++frame)
+        {
+            context11->ClearRenderTargetView(target.Get(), red);
+            chain11->Present(0, 0);
+            side.Pump(1);
+        }
+        Check(Status(module).dxgiFrames == frames && Status(module).renderedFrames == rendered,
+            "the D3D11 chain's Presents are neither counted nor drawn on");
+        context11->ClearState();
+        context11->Flush();
+    }
+    chain11.Reset();
+    side.Pump(2);
+
+    // The D3D12 game's own chain and menu, exactly as in the menu suite.
+    Chain chain;
+    if (!Check(chain.Create(fixture, window.window, 640, 480, 2, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL)
+            && Status(module).swapchainWrappersCreated == wrappers + 1, "D3D12 swapchain wrapped by the menu")) return 1;
+    if (!ExerciseMenu(fixture, chain, window, module)) return 1;
+    std::printf("COMPLETE mode=d3d12-with-d3d11-menu\n");
+    return gFailures == 0 ? 0 : 10;
+}
+
+// GitHub issues 150/157 (Modern Warfare 4): the game's import directory could not be read once it ran, so input
+// preparation failed and the menu kept the original swapchain. Here the harness drops the terminator from its own import
+// directory after the candidate loaded. The swapchain must still be wrapped, with no input slot published, and the menu
+// must open, draw and close through window messages.
+int RunUnreadableImportsMenu(const wchar_t* dll)
+{
+    RestoreForeground previousForeground;
+    TestWindow window(L"BoundedWarp", 640, 480, GameWindowProc);
+    if (!Check(window.window != nullptr, "test window created")) return 1;
+    window.Show();
+    HMODULE module = LoadCandidate(dll);
+    if (!Check(module != nullptr, "candidate loads")) return 1;
+    WarpFixture fixture;
+    if (!Check(fixture.Initialize(true) && Status(module).factoryWrappersCreated >= 1,
+            "WARP D3D12 device, queue and the application's factory proxy created")) return 1;
+
+    auto* base = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
+    auto& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    const auto* descriptors = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + directory.VirtualAddress);
+    DWORD real = 0;
+    while (descriptors[real].Name) ++real;
+    const DWORD originalSize = directory.Size;
+    DWORD protection = 0;
+    if (!Check(directory.VirtualAddress && real && VirtualProtect(&directory, sizeof(directory), PAGE_READWRITE, &protection),
+            "harness import directory made writable")) return 1;
+    directory.Size = real * sizeof(IMAGE_IMPORT_DESCRIPTOR);
+    DWORD ignored = 0;
+    VirtualProtect(&directory, sizeof(directory), protection, &ignored);
+
+    Chain chain;
+    const auto wrappers = Status(module).swapchainWrappersCreated;
+    const bool created = chain.Create(fixture, window.window, 640, 480, 2, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL);
+    Check(created && Status(module).swapchainWrappersCreated == wrappers + 1,
+        "swapchain wrapped by the menu although the import directory cannot be read");
+    Check(Status(module).overlayActivatedTargets == 0, "no input slot published from an unreadable import directory");
+    VirtualProtect(&directory, sizeof(directory), PAGE_READWRITE, &protection);
+    directory.Size = originalSize;
+    VirtualProtect(&directory, sizeof(directory), protection, &ignored);
+    if (!created || gFailures) return 1;
+    if (!ExerciseMenu(fixture, chain, window, module)) return 1;
+    std::printf("COMPLETE mode=unreadable-imports-menu\n");
+    return gFailures == 0 ? 0 : 10;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
 {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    harness::focus::Install();
     if (argc != 3) return 2;
     const std::wstring mode = argv[1];
     const wchar_t* dll = argv[2];
@@ -2069,8 +2688,13 @@ int wmain(int argc, wchar_t** argv)
     if (mode == L"interposer-host-dynamic") return RunInterposerHost(dll, false);
     if (mode == L"vsync-override-menu") return RunVsyncOverride(dll);
     if (mode == L"pinned-fps-menu") return RunPinnedFps(dll);
+    if (mode == L"keybinds-menu") return RunKeybindsMenu(dll);
     if (mode == L"directinput-menu") return RunDirectInputMenu(dll);
     if (mode == L"slowpump-menu") return RunSlowPumpMenu(dll);
+    if (mode == L"ownpump-menu") return RunUnroutedMenu(dll, false);
+    if (mode == L"rawsink-menu") return RunUnroutedMenu(dll, true);
+    if (mode == L"d3d12-with-d3d11-menu") return RunD3D12WithD3D11(dll);
+    if (mode == L"unreadable-imports-menu") return RunUnreadableImportsMenu(dll);
     std::printf("unknown mode\n");
     return 2;
 }

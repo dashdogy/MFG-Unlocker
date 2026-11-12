@@ -60,11 +60,11 @@ bool Discover(HMODULE, Layout&) noexcept;
 bool BeforeSwapchain(const Layout&) noexcept;
 // Capacity.maximumGeneratedFrames is the ring the wrapper actually allocated:
 // 1 on a legacy 2x layout; on an MFG layout the maximum N (1..5) its startup
-// cached, with exactly N+1 distinct buffers (ringcap.1; was exactly 5).
+// cached, with exactly N+1 distinct buffers.
 bool Read(const Layout&, Capacity&) noexcept;
 bool Matches(const Layout&, const Capacity&) noexcept;
 Observation InspectFailure(const Layout&) noexcept;
-// Failure reporting only (diag171.1): the first check Read() would fail now,
+// Failure reporting only: the first check Read() would fail now,
 // in Read()'s order, or "readable". It never admits an allocation.
 const char* ReadFailure(const Layout&) noexcept;
 bool CreationOnStack(const Layout&) noexcept;

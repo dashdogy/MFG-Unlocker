@@ -6,7 +6,7 @@
 
 #include <cstdint>
 
-// One DLSS feature in the menu snapshot (V1.6.0): Super Resolution from the
+// One DLSS feature in the menu snapshot: Super Resolution from the
 // dlssSr* status keys, Ray Reconstruction from dlssRr*. Presets: 0 game/driver,
 // SR 10..13 J..M, RR 4..6 D..F. Active/driver/hint values describe the game's
 // most recently evaluated feature; the live feature counts decide whether the
@@ -173,7 +173,7 @@ struct MfgUnlockReShadeSnapshot
     BOOL releaseEntryCurrent = FALSE;
     BOOL frameGenerationOffAccepted = FALSE;
     BOOL releaseObserved = FALSE;
-    uint32_t dlssgPresetRequested = 2;
+    uint32_t dlssgPresetRequested = 0; // latency.1: game / driver by default (was B)
     BOOL dlssgPresetOverrideInstalled = FALSE;
     uint32_t dlssgPresetOverrideFailure = 0;
     uint64_t dlssgPresetReadCount = 0;
@@ -195,6 +195,9 @@ struct MfgUnlockReShadeSnapshot
     uint64_t ampereEvaluateAttempts = 0;
     uint32_t amperePreparationStage = 0;
     uint32_t ampereStartupFailureMask = 0;
+    // admitoff.1: admission failed, so the game's DLSS-G request is held at Off.
+    BOOL ampereAdmissionUnavailable = FALSE;
+    uint64_t ampereAdmissionHeldRequests = 0;
     uint32_t ampereCandidateVersionMajor = 0;
     uint32_t ampereCandidateVersionMinor = 0;
     uint32_t ampereCandidateVersionBuild = 0;
@@ -245,13 +248,13 @@ struct MfgUnlockReShadeSnapshot
     // The provider implements Frame Generation Preset C (DLSS-G 310.9.16 and newer).
     BOOL dlssgPresetCAvailable = FALSE;
 
-    // Live preset switching (V1.6.0): dlssg_preset_switch::Unavailable, 0 when a
+    // Live preset switching: dlssg_preset_switch::Unavailable, 0 when a
     // saved preset replaces the running one. A backend without the field keeps
     // restart-to-apply (2, provider).
     uint32_t dlssgPresetLiveSwitch = 2;
     BOOL dlssgPresetSwitching = FALSE;
 
-    // DLSS Super Resolution and Ray Reconstruction (V1.6.0).
+    // DLSS Super Resolution and Ray Reconstruction.
     MfgUnlockDlssFeature dlssSr{};
     MfgUnlockDlssFeature dlssRr{};
 
@@ -270,7 +273,7 @@ struct MfgUnlockReShadeSnapshot
     // Source of dlssFpsMilli: 0 unavailable, 1 present callback, 2 DXGI
     // present count, 4 DLSS-G's own presented-frame count.
     uint32_t fpsOutputSource = 0;
-    // V1.7.0 DLSSNR: saved settings and independently observed execution.
+    // DLSSNR: saved settings and independently observed execution.
     dlss5::Settings dlss5{};
     BOOL dlss5Detected=FALSE, dlss5Pending=FALSE;
     uint32_t dlss5State=0, dlss5Result=0, dlss5Route=0, dlss5Stage=0, dlss5Passes=0;
@@ -289,7 +292,19 @@ struct MfgUnlockReShadeSnapshot
     // evaluation (status "dlss5BoostNetworkMs", -1 without Boost).
     float dlss5BoostNetworkMs=-1.0f;
     // Resolution Scale Auto holds its quality floor while DLSS 5 stays over
-    // budget (status "dlss5ScaleFloorHeld", autoscale.1).
+    // budget (status "dlss5ScaleFloorHeld").
     BOOL dlss5ScaleFloorHeld=FALSE;
+    // dx11nr.1: the game's DLSS runs on DirectX 11 and DLSS 5 through the DirectX 11 bridge (status "dlss5D3D11");
+    // why the bridge leaves its frames as they are (status "dlss5D3D11Refusal", dlss5_policy.h d3d11::Refusal).
+    BOOL dlss5D3D11=FALSE;
+    uint32_t dlss5D3D11Refusal=0;
+    // latmon.2: live PC latency (latency_probe.h; status "latency*"). latencyAvailable: [Overlay] LatencyMonitor is
+    // not 0. latencyState (latency_monitor.h State): 0 off, 1 measuring, 2 live, 3 no Reflex markers, 4 no output
+    // timing on this route, 5 no flip times. Means over the last second of frames, in microseconds: input to the first
+    // output's flip (mean, 99th percentile), to the real frame's flip, and the game / frame generation / display parts.
+    BOOL latencyAvailable=FALSE;
+    uint32_t latencyState=0, latencyFrames=0, latencyExactPermille=0;
+    uint32_t latencyMeanUs=0, latencyP99Us=0, latencyRealUs=0, latencyGameUs=0, latencyFgUs=0, latencyDisplayUs=0;
+    uint64_t latencyAgeMs=UINT32_MAX;
 };
 

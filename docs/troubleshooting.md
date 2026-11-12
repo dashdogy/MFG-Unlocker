@@ -13,8 +13,9 @@ that works in your game. Fully close the game before changing any files.
   in `%TEMP%`), the game did not load that name; see
   [Choosing a filename](compatibility.md#choosing-a-filename).
 - Remove any leftover older mod files; see [Upgrade](install.md#upgrade).
-- With OptiScaler, MFG Unlocker's menu only shows in some cases; see
-  [OptiScaler](optiscaler.md#menus).
+- With OptiScaler, MFG Unlocker's settings are in the **MFG Unlocker** tab of
+  OptiScaler's menu, or its menu shows beside OptiScaler's only in some cases;
+  see [OptiScaler](optiscaler.md#menus).
 
 ## Frozen picture
 
@@ -54,7 +55,14 @@ The log and status file are in the game folder, beside the game's executable
 and the mod settings. If that folder cannot be written, the log goes to
 `%TEMP%` instead. Each launch keeps the previous runtime log as
 `RTXMFG-<game>-<path-hash>.previous.log` and creates a new log. The status file
-is replaced on each launch.
+is replaced on each launch, then rewritten when the mod's state changes and
+every 30 seconds.
+
+The log is on by default. To stop writing it, untick **Write log file** under
+**Diagnostics** in the menu; with OptiScaler, it is at the bottom of MFG
+Unlocker's tab in OptiScaler's menu. It is saved as `[Diagnostics] Logging=0`
+in `RTX40MFG-UI.ini` beside the game. The change applies at the next game
+start. Tick it again before you report a bug.
 
 For a game that does not work at all, use the
 [game compatibility report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=game-compatibility.yml)

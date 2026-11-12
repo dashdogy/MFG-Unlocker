@@ -1,4 +1,4 @@
-"""Generate the fixed proxy ABI, Vulkan color shaders and pinned ImGui DX12 adaptation."""
+"""Generate the fixed proxy ABI, Vulkan color shaders and pinned ImGui DX12 and DX11 adaptations."""
 from pathlib import Path
 import argparse, hashlib, json, shutil, struct, subprocess
 
@@ -15,6 +15,8 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest().upper()
 if digest(imgui / 'backends/imgui_impl_dx12.cpp') != '4932F938C6D48EDF91B45078CF0BDD0BF9AD46CC5D4B9A48873528046DA7C580':
     raise RuntimeError('Expected the pinned ImGui DX12 backend')
+if digest(imgui / 'backends/imgui_impl_dx11.cpp') != '0167B94EA9732A4185C203C9BED5ECB4020BB30EE12C34025866A9ADFCC6A906':
+    raise RuntimeError('Expected the pinned ImGui DX11 backend')
 if digest(glslang) != '8F0838D3FD981D4086D81675C4CFA4381691AEAFC3651D12D62F61EF0CEBB33E':
     raise RuntimeError('Expected glslangValidator from Vulkan SDK 1.2.176.1')
 families = []
@@ -34,7 +36,7 @@ named_base = 1024
 public_base = 4096
 assert named_base + len(names) < public_base
 public = ["MfgUnlockCoreLoaded", "MfgUnlockSampleFrameTelemetry", "MfgUnlockSingleModuleQuery", "InitializeASI",
-          "XeFGModelName"]
+          "XeFGModelName", "OptiPluginInit"]
 defs = ["LIBRARY RTXMFG", "EXPORTS"]
 asm = ["; Generated Windows x64 ABI-preserving named/ordinal tail dispatch.",
        "option casemap:none", "extern MfgProxyResolveRenamed:proc", ".code"]
@@ -151,6 +153,53 @@ text = text[:start] + '        static const char* pixelShader = R"MFG(' + shader
 (output / 'imgui_impl_dx12.cpp').write_text(text, encoding='utf-8', newline='\n')
 shutil.copyfile(imgui / 'backends/imgui_impl_dx12.h', output / 'imgui_impl_dx12.h')
 
+# dx11menu.1 (V1.7.1): the DX11 backend with the same output encoding, for the menu in DirectX 11 games. Mode 3 is
+# an sRGB render target (a legacy DirectX 11 swap chain format), which encodes the linear colour itself, as the Vulkan
+# menu's shader 3 does. The pixel shader reads the vertex constant buffer, so it is bound and kept for both stages.
+source = imgui / 'backends/imgui_impl_dx11.cpp'
+text = source.read_text(encoding='utf-8')
+text = replace(text, '    float   mvp[4][4];', '    float   mvp[4][4];\n    float   outputColorSpace;\n'
+               '    float   paperWhiteNits;\n    float   padding[2]; // RTX40MFG: a constant buffer is a multiple of 16 bytes')
+text = replace(text, '    int                         IndexBufferSize;',
+               '    int                         IndexBufferSize;\n'
+               '    int                         OutputColorSpace; // RTX40MFG: 0 SDR, 1 scRGB, 2 HDR10, 3 sRGB target')
+marker = '// Functions'
+text = replace(text, marker, '''// RTX40MFG: per-context output encoding; changes constants, not device objects.
+void ImGui_ImplDX11_SetOutputColorSpace(int mode)
+{
+    if (auto* data = ImGui_ImplDX11_GetBackendData()) data->OutputColorSpace = mode;
+}
+bool ImGui_ImplDX11_IsReady()
+{
+    const auto* data = ImGui_ImplDX11_GetBackendData();
+    return data && data->pVertexShader && data->pPixelShader && data->pInputLayout && data->pVertexConstantBuffer
+        && data->pBlendState && data->pRasterizerState && data->pDepthStencilState && data->pTexSamplerLinear;
+}
+
+''' + marker)
+text = replace(text, '        memcpy(&constant_buffer->mvp, mvp, sizeof(mvp));',
+               '        memcpy(&constant_buffer->mvp, mvp, sizeof(mvp));\n'
+               '        constant_buffer->outputColorSpace = float(bd->OutputColorSpace);\n'
+               '        constant_buffer->paperWhiteNits = 203.0f;')
+text = replace(text, '    device_ctx->VSSetConstantBuffers(0, 1, &bd->pVertexConstantBuffer);',
+               '    device_ctx->VSSetConstantBuffers(0, 1, &bd->pVertexConstantBuffer);\n'
+               '    device_ctx->PSSetConstantBuffers(0, 1, &bd->pVertexConstantBuffer);')
+text = replace(text, '*VertexBuffer, *VSConstantBuffer;', '*VertexBuffer, *VSConstantBuffer, *PSConstantBuffer;')
+text = replace(text, '    device->VSGetConstantBuffers(0, 1, &old.VSConstantBuffer);',
+               '    device->VSGetConstantBuffers(0, 1, &old.VSConstantBuffer);\n'
+               '    device->PSGetConstantBuffers(0, 1, &old.PSConstantBuffer);')
+restore = '    device->VSSetConstantBuffers(0, 1, &old.VSConstantBuffer); if (old.VSConstantBuffer) old.VSConstantBuffer->Release();'
+text = replace(text, restore, restore + '\n    device->PSSetConstantBuffers(0, 1, &old.PSConstantBuffer);'
+               ' if (old.PSConstantBuffer) old.PSConstantBuffer->Release();')
+shader11 = replace(shader, '        if (OutputColorSpace < 1.5) color.rgb',
+                   '        if (OutputColorSpace > 2.5) color.rgb = linearColor;\n'
+                   '        else if (OutputColorSpace < 1.5) color.rgb')
+start = text.index('        static const char* pixelShader =')
+end = text.index('        ID3DBlob* pixelShaderBlob;', start)
+text = text[:start] + '        static const char* pixelShader = R"MFG(' + shader11 + ')MFG";\n\n' + text[end:]
+(output / 'imgui_impl_dx11.cpp').write_text(text, encoding='utf-8', newline='\n')
+shutil.copyfile(imgui / 'backends/imgui_impl_dx11.h', output / 'imgui_impl_dx11.h')
+
 header = ['#pragma once', '#include <cstdint>', 'namespace single_overlay::color {']
 shader_rows = []
 for mode in (1,2,3):
@@ -171,4 +220,4 @@ for name, expected in json.loads((source_dir / 'generated_sha256.json').read_tex
     actual = hashlib.sha256((output / name).read_text(encoding='utf-8').encode()).hexdigest().upper()
     if actual != expected:
         raise RuntimeError(f'Generated output mismatch: {name} ({actual})')
-print('Verified all six generated outputs against the v1.3.2 candidate')
+print('Verified all seven generated outputs against their pins')

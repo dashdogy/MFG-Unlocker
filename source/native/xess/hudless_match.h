@@ -10,11 +10,11 @@
 
 namespace xess_hudless_match
 {
-// dev.47: XeFG's UI composition (Witcher: ui_mode 4, interpolate the HUD-less colour and extract the UI
+// XeFG's UI composition (Witcher: ui_mode 4, interpolate the HUD-less colour and extract the UI
 // from the back buffer) compares the HUD-less input with the back buffer. Witcher's HUD-less input is
 // RGBA16F before its final tone/colour transform while the back buffer is HDR10 (R10G10B10A2, PQ), so
-// every pixel differs, XeFG takes the whole screen as UI and presents the real frame (copies, dev.38-46).
-// On an exactly aligned pair (dev.46 capture) the back buffer is a tight per-channel function of the
+// every pixel differs, XeFG takes the whole screen as UI and presents the real frame (copies).
+// On an exactly aligned pair the back buffer is a tight per-channel function of the
 // HUD-less value (1D LUT residual p90 0.002-0.010 in code units).
 //
 // The matcher rebuilds that function every frame from the frame's own pair and gives XeFG a HUD-less
@@ -35,13 +35,6 @@ const char* ModeName(Mode mode) noexcept;
 
 constexpr uint32_t kBins = 256, kCodes = 1024;
 constexpr float kLogMin = -16.0f, kBinsPerOctave = 12.0f; // 2^-16 .. 2^5.33
-
-// CPU reference of the binning, LUT and application (tests).
-uint32_t Bin(float value) noexcept;
-uint32_t Code(float unorm) noexcept;
-// histogram[(channel*kBins + bin)*kCodes + code] -> lut[channel*kBins + bin] (unorm), empty bins interpolated.
-std::vector<float> BuildLut(const std::vector<uint32_t>& histogram, uint32_t minimumCount = 8);
-float Apply(const float* lut, float value) noexcept; // lut of one channel
 
 class Matcher
 {

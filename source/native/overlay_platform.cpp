@@ -49,6 +49,10 @@ std::mutex gInputMutex;
 std::unordered_map<HWND, WindowInput> gWindows;
 std::atomic<HWND> gActiveWindow{nullptr};
 MenuHotkey gMenuKey;
+// keybinds.1: standalone_ui::KeybindCapturing() for the window procedure, set each frame under gUiMutex.
+std::atomic<bool> gKeybindCapture{false};
+// dlss5presets.1: standalone_ui::TextInputActive() for the window procedure, set each frame with gKeybindCapture.
+std::atomic<bool> gTextInput{false};
 bool gShortcutSaveFailed = false; // Render-thread state, protected by gUiMutex.
 bool gFirstLaunchChecked = false; // Shared across swapchain/context recreation.
 bool gFirstLaunchPending = false;
@@ -60,7 +64,7 @@ bool gHavePreviousClip = false;
 std::mutex gClipMutex;
 void DetachWindow(HWND window, bool releaseClient = true);
 
-// Beside OptiScaler's menu (dlss5.8c); defined with the input code below.
+// Beside OptiScaler's menu; defined with the input code below.
 namespace shared_menu
 {
 bool Active() noexcept;
@@ -90,7 +94,7 @@ const char* PanelTitle()
     static const std::string shared = text + "###RTXMFG-OptiScaler";
     return (shared_menu::Active() ? shared : own).c_str();
 }
-// Builds up to 1.5.0-beta.5 saved the panel as "DLSS MFG".
+// Older builds saved the panel as "DLSS MFG".
 constexpr const char* kLegacyPanelName = "DLSS MFG";
 
 // Menu language: one process-wide choice in RTX40MFG-UI.ini [Overlay] Language
@@ -318,6 +322,13 @@ void QueueWindowMessage(HWND window, const InputMessage& message)
     const auto found = gWindows.find(window);
     if (found == gWindows.end() || !found->second.clients) return;
     auto& messages = found->second.messages;
+    // menunotes.1: consecutive moves keep only the latest position, so a fast mouse cannot overflow the queue.
+    if (message.message == WM_MOUSEMOVE && !messages.empty() && messages.back().message == WM_MOUSEMOVE
+        && messages.back().fromHook == message.fromHook && messages.back().mouseSource == message.mouseSource)
+    {
+        messages.back() = message;
+        return;
+    }
     if (messages.size() >= 512)
     {
         messages.clear();
@@ -408,11 +419,21 @@ void PollCursor(HWND window, ImGuiIO& io) noexcept
 // them, so the game still receives the mouse while the menu is open. The hook
 // exists only while the menu is open; other processes keep the window-message
 // path unchanged.
+//
+// The same hook serves a menu window whose procedure gets no mouse messages at
+// all (raw input aimed at another window, a pump that handles the mouse itself,
+// a procedure set over ours that does not call it). Watch notices this while
+// the menu is open; the window keeps the hook for the rest of the process.
+LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 namespace mouse_route
 {
 constexpr UINT kApply = WM_APP + 0x51;
 std::atomic<HWND> gWindow{nullptr};     // menu window the hook serves; null = no hook wanted
 std::atomic<HWND> gDeclined{nullptr};   // menu window checked without a DirectInput window
+std::atomic<HWND> gStarved{nullptr};    // menu window found to get no mouse messages
+std::atomic<bool> gNoMessages{false};   // the current request is for gStarved (else DirectInput)
+std::atomic<uint32_t> gMessages{0};     // mouse messages the menu window's procedure received
+std::atomic<uint32_t> gClicks{0};       // of those, button and wheel messages (legacy or raw)
 std::atomic<uint32_t> gGeneration{0};   // each request reinstalls, so ours runs first
 std::atomic<bool> gForeground{false};
 std::atomic<uint64_t> gCursor{0};       // physical client x, y, width, height (16 bits each)
@@ -422,6 +443,23 @@ std::atomic<uint32_t> gMoves{0};
 std::atomic<uint32_t> gButtons{0};
 std::atomic<uint32_t> gWheel{0};
 std::atomic<uint32_t> gLogLines{0};
+// Watch's state for the open menu, render threads only. Two renderers on one
+// window must not share it at once.
+std::mutex gWatchMutex;
+uint32_t gWatchMessages = 0;
+uint32_t gWatchClicks = 0;
+uint64_t gWatchSince = 0;               // first use of the mouse with no mouse message since; 0 = none
+uint64_t gWatchPressed = 0;             // first press with no button message since; 0 = none
+POINT gWatchCursor{LONG_MIN, LONG_MIN};
+uint32_t gWatchButtons = 0;
+uint32_t gWatchMoves = 0;
+uint32_t gWatchPresses = 0;
+// menunotes.1: a message posted to the menu window once it looks starved, and when the window's procedure got it.
+std::atomic<UINT> gProbeMessage{0};     // registered on first use; 0 = none
+std::atomic<uint32_t> gProbes{0};       // probes the menu window's procedure received
+uint64_t gWatchProbe = 0;               // probe posted; 0 = none
+uint64_t gWatchProbeSeen = 0;           // the procedure got it; 0 = not yet
+uint32_t gWatchProbeCount = 0;
 
 void Log(const wchar_t* line) noexcept
 {
@@ -519,7 +557,8 @@ DWORD WINAPI Thread(void*)
             const DWORD error = hook ? 0ul : GetLastError();
             applied = generation;
             wchar_t line[160]{};
-            swprintf_s(line, L"MFG_PROXY_UI mouse-route=low-level-hook reason=directinput installed=%d generation=%u error=%lu",
+            swprintf_s(line, L"MFG_PROXY_UI mouse-route=low-level-hook reason=%ls installed=%d generation=%u error=%lu",
+                gNoMessages.load(std::memory_order_seq_cst) ? L"no-window-messages" : L"directinput",
                 hook ? 1 : 0, generation, error);
             Log(line);
         }
@@ -580,10 +619,129 @@ bool DirectInputWindow() noexcept
     return false;
 }
 
+// Once per menu opening without DirectInput: whether a procedure set later sits
+// over ours, and where this process's raw mouse input goes.
+void LogWindowMessages(HWND window) noexcept
+{
+    const bool ours = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC)) == &WindowProc;
+    const wchar_t* target = L"none";
+    DWORD flags = 0;
+    RAWINPUTDEVICE devices[64]{};
+    UINT capacity = static_cast<UINT>(std::size(devices));
+    const UINT count = GetRegisteredRawInputDevices(devices, &capacity, sizeof(RAWINPUTDEVICE));
+    for (UINT index = 0; count <= std::size(devices) && index < count; ++index)
+    {
+        const auto& device = devices[index];
+        if (device.usUsagePage != 0x01 || device.usUsage != 0x02) continue;
+        flags = device.dwFlags;
+        target = !device.hwndTarget ? L"focus" : device.hwndTarget == window ? L"menu-window" : L"other-window";
+    }
+    wchar_t line[192]{};
+    swprintf_s(line, L"MFG_PROXY_UI mouse-route=window-messages directinput=0 wndproc=%ls raw-mouse=%ls flags=0x%lX",
+        ours ? L"ours" : L"set-later", target, flags);
+    Log(line);
+}
+
+void ResetWatch() noexcept
+{
+    gWatchSince = gWatchPressed = gWatchProbe = gWatchProbeSeen = 0;
+    gWatchCursor = POINT{LONG_MIN, LONG_MIN};
+    gWatchButtons = gWatchMoves = gWatchPresses = 0;
+}
+
+// Render thread, open menu in the foreground without the hook: true once the
+// mouse was used inside the client area and 500 ms passed without a mouse (or,
+// after a press, a button) message. A game pumps its messages every frame, so
+// only a window that never gets the mouse stays this quiet. A long game frame
+// stalls the pump just as long (menunotes.1), so a probe is posted: it decides
+// once our procedure got the probe and 100 ms more passed without the mouse,
+// or after 2 s when the probe never arrives (a pump that filters it).
+bool Watch(HWND window) noexcept
+{
+    std::unique_lock lock(gWatchMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return false;
+    const uint32_t messages = gMessages.load(std::memory_order_acquire);
+    const uint32_t clicks = gClicks.load(std::memory_order_acquire);
+    POINT cursor{};
+    RECT client{};
+    if (!GetCursorPos(&cursor) || !ScreenToClient(window, &cursor) || !GetClientRect(window, &client)) return false;
+    const bool inside = cursor.x >= 0 && cursor.y >= 0 && cursor.x < client.right && cursor.y < client.bottom;
+    constexpr int keys[]{VK_LBUTTON, VK_RBUTTON, VK_MBUTTON};
+    uint32_t buttons = 0;
+    for (unsigned index = 0; index < std::size(keys); ++index)
+        if (PhysicalKeyDown(keys[index])) buttons |= 1u << index;
+    const bool first = gWatchCursor.x == LONG_MIN;
+    const bool moved = !first && inside && (cursor.x != gWatchCursor.x || cursor.y != gWatchCursor.y);
+    const bool pressed = !first && inside && (buttons & ~gWatchButtons) != 0;
+    gWatchCursor = cursor;
+    gWatchButtons = buttons;
+    if (messages != gWatchMessages)
+    {
+        gWatchMessages = messages;
+        gWatchSince = 0;
+        gWatchMoves = 0;
+    }
+    if (clicks != gWatchClicks)
+    {
+        gWatchClicks = clicks;
+        gWatchPressed = 0;
+        gWatchPresses = 0;
+    }
+    const uint64_t now = GetTickCount64();
+    if ((moved || pressed) && !gWatchSince) gWatchSince = now;
+    if (pressed && !gWatchPressed) gWatchPressed = now;
+    gWatchMoves += moved ? 1 : 0;
+    gWatchPresses += pressed ? 1 : 0;
+    const bool silent = gWatchSince && now - gWatchSince >= 500;
+    const bool unclicked = gWatchPressed && now - gWatchPressed >= 500;
+    if (!silent && !unclicked)
+    {
+        gWatchProbe = gWatchProbeSeen = 0;
+        return false;
+    }
+    const wchar_t* pump = L"not probed";
+    if (reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC)) == &WindowProc)
+    {
+        if (!gWatchProbe)
+        {
+            UINT probe = gProbeMessage.load(std::memory_order_acquire);
+            if (!probe)
+            {
+                probe = RegisterWindowMessageW(L"MFG_PROXY_UI mouse-route probe");
+                gProbeMessage.store(probe, std::memory_order_release);
+            }
+            gWatchProbeCount = gProbes.load(std::memory_order_acquire);
+            if (probe && PostMessageW(window, probe, 0, 0))
+            {
+                gWatchProbe = now;
+                return false;
+            }
+        }
+        else if (gProbes.load(std::memory_order_acquire) == gWatchProbeCount)
+        {
+            if (now - gWatchProbe < 2000) return false; // the pump is late, or filters the probe
+            pump = L"probe not received";
+        }
+        else
+        {
+            if (!gWatchProbeSeen) gWatchProbeSeen = now;
+            if (now - gWatchProbeSeen < 100) return false;
+            pump = L"pump ran";
+        }
+    }
+    wchar_t line[224]{};
+    swprintf_s(line, L"MFG_PROXY_UI mouse-route: no %ls message reached the menu window in %llu ms (moves=%u presses=%u, %ls)",
+        silent ? L"mouse" : L"button", now - (silent ? gWatchSince : gWatchPressed), gWatchMoves, gWatchPresses, pump);
+    Log(line);
+    return true;
+}
+
 // Render thread, every frame: request the hook when the menu opens in a
-// DirectInput process, reinstall it when the game regains the foreground (a
-// low-level hook installed meanwhile would otherwise run ahead of ours), and
-// remove it when the menu closes.
+// DirectInput process or on a window found to get no mouse messages, watch
+// any other open menu's window, reinstall the hook when the game regains the
+// foreground (a low-level hook installed meanwhile would otherwise run ahead
+// of ours), and remove it when the menu closes. Beside OptiScaler's menu its
+// input layer withholds every message, and PollMouse reads the mouse.
 void Refresh(HWND window, bool foreground) noexcept
 {
     const bool open = window && gVisible.load(std::memory_order_acquire)
@@ -593,17 +751,41 @@ void Refresh(HWND window, bool foreground) noexcept
     {
         if (current && current == window) Request(nullptr);
         if (gDeclined.load(std::memory_order_acquire) == window) gDeclined.store(nullptr);
+        if (!gVisible.load(std::memory_order_acquire))
+        {
+            std::unique_lock lock(gWatchMutex, std::try_to_lock);
+            if (lock.owns_lock()) ResetWatch();
+        }
         return;
     }
     if (current != window)
     {
-        if (gDeclined.load(std::memory_order_acquire) == window) return;
-        if (!DirectInputWindow())
+        bool directInput = false;
+        if (gStarved.load(std::memory_order_acquire) != window)
         {
-            gDeclined.store(window, std::memory_order_release);
-            Log(L"MFG_PROXY_UI mouse-route=window-messages directinput=0");
-            return;
+            if (gDeclined.load(std::memory_order_acquire) != window)
+            {
+                directInput = DirectInputWindow();
+                if (!directInput)
+                {
+                    gDeclined.store(window, std::memory_order_release);
+                    LogWindowMessages(window);
+                }
+            }
+            if (!directInput)
+            {
+                if (!foreground)
+                {
+                    // Back in the foreground the watch starts afresh: an activating click is no unexplained press.
+                    std::unique_lock lock(gWatchMutex, std::try_to_lock);
+                    if (lock.owns_lock()) ResetWatch();
+                    return;
+                }
+                if (shared_menu::Active() || !Watch(window)) return;
+                gStarved.store(window, std::memory_order_release);
+            }
         }
+        gNoMessages.store(!directInput, std::memory_order_seq_cst);
         gForeground.store(foreground, std::memory_order_release);
         Request(window);
         return;
@@ -616,6 +798,11 @@ bool Serving(HWND window) noexcept
 {
     return window && gWindow.load(std::memory_order_acquire) == window
         && gCursor.load(std::memory_order_acquire) != 0;
+}
+
+bool Starved(HWND window) noexcept
+{
+    return window && gStarved.load(std::memory_order_acquire) == window;
 }
 }
 
@@ -754,7 +941,8 @@ void PollKey(HWND window, int key) noexcept
 // Render thread, this menu open with the game in the foreground: the cursor
 // and buttons, read below OptiScaler's input blocking. Window messages that
 // OptiScaler lets through give the same events, which ImGui drops as
-// duplicates, and the wheel.
+// duplicates, and the wheel. Also used on a window that gets no mouse
+// messages (mouse_route::Starved) until the hook serves it.
 void PollMouse(HWND window, ImGuiIO& io) noexcept
 {
     using SetContext = HANDLE (WINAPI*)(HANDLE);
@@ -818,11 +1006,49 @@ bool ProcessKey(HWND window, int key, bool down)
     }
     // Beside OptiScaler's menu, its key is polled each frame and reaches OptiScaler.
     if (shared_menu::Key()) return false;
+    // keybinds.1: while the Keybinds tab binds a key, the menu key neither opens nor closes the menu.
+    if (gKeybindCapture.load(std::memory_order_acquire)) return key == gMenuKey.Key();
     const bool wasBinding = gMenuKey.Binding();
     const auto action = gMenuKey.Process(key, down);
+    // dlss5presets.1: while a menu text field has focus, the menu key (Backspace by default) edits it: no toggle.
+    if (!wasBinding && key == gMenuKey.Key() && gVisible.load(std::memory_order_acquire)
+        && gTextInput.load(std::memory_order_acquire)) return false;
     if (action == KeyAction::Toggle)
         SetVisible(!gVisible.load(std::memory_order_acquire), window);
     return wasBinding || action != KeyAction::None || key == gMenuKey.Key();
+}
+
+// keybinds.1: the Pin panel key pins the open menu (or, closed, the panel) and unpins a pinned panel.
+void TogglePinnedPanel(HWND window)
+{
+    if (gVisible.load(std::memory_order_acquire))
+    {
+        SetVisible(false, window);
+        gPinned.store(true, std::memory_order_release);
+    }
+    else gPinned.store(!gPinned.load(std::memory_order_acquire), std::memory_order_release);
+}
+
+// keybinds.1: once per frame from WantsFrame, under gUiMutex. A key being bound in the Keybinds tab ends when the menu
+// closes. The tab's keys are read like the menu key and applied the next frame. Beside OptiScaler's menu only the
+// preset keys and Pin panel apply; in a DirectX 11 game only Pin panel does.
+void PollKeybindKeys(HWND window, bool foreground, bool shared, int sharedKey, bool d3d11)
+{
+    if (!gVisible.load(std::memory_order_acquire) && standalone_ui::KeybindCapturing())
+        standalone_ui::CancelKeybindCapture();
+    if (standalone_ui::KeybindCapturing()) gMenuKey.CancelBinding();
+    gKeybindCapture.store(standalone_ui::KeybindCapturing(), std::memory_order_release);
+    gTextInput.store(standalone_ui::TextInputActive(), std::memory_order_release);
+    if (!foreground || (!shared && gMenuKey.Binding())) return;
+    try
+    {
+        const auto action = standalone_ui::PollKeybinds(shared ? sharedKey : gMenuKey.Key());
+        if (shared && !keybinds::SharedAction(action)) return;
+        if (d3d11 && !keybinds::D3D11Action(action)) return;
+        if (action == keybinds::Action::ePinPanel) TogglePinnedPanel(window);
+        else if (action != keybinds::Action::eCount) standalone_ui::QueueKeybind(action);
+    }
+    catch (...) {}
 }
 
 // A compact one-line pill in the menu's own style: its panel colour and
@@ -872,6 +1098,100 @@ std::string KeyLabel()
     return KeyName(shared ? shared : gMenuKey.Key());
 }
 
+// keyrelease.1: keys and mouse buttons whose press reached the game, per route (window messages or raw input). While
+// the menu holds input, presses stay with the menu but these releases still reach the game, so no key stays down in
+// the game; a release the game never saw pressed stays with the menu.
+namespace held_input
+{
+enum Route : int { kMessages, kRaw, kRoutes };
+constexpr int kButtons = 5; // left, right, middle, X1, X2: MouseButton's order and raw input's buttons 1-5
+std::atomic<bool> gKeys[kRoutes][256]{};
+std::atomic<bool> gButtons[kRoutes][kButtons]{};
+
+struct Event
+{
+    int route = -1;       // Route; -1 = no key or mouse button
+    int key = -1;         // virtual key, -1 = none
+    bool keyDown = false;
+    uint32_t pressed = 0; // bit per button
+    uint32_t released = 0;
+};
+
+Event FromMessage(UINT message, WPARAM wparam) noexcept
+{
+    Event event;
+    if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN || message == WM_KEYUP || message == WM_SYSKEYUP)
+    {
+        event.route = kMessages;
+        event.key = static_cast<int>(wparam & 0xFF);
+        event.keyDown = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        return event;
+    }
+    bool down = false;
+    if (const int button = MouseButton(message, wparam, down); button >= 0)
+    {
+        event.route = kMessages;
+        (down ? event.pressed : event.released) = 1u << button;
+    }
+    return event;
+}
+
+Event FromRawKeyboard(const RAWKEYBOARD& keyboard) noexcept
+{
+    Event event;
+    // 0xFF is the fake key of an escaped sequence, not a physical key.
+    if (!keyboard.VKey || keyboard.VKey >= 0xFF) return event;
+    event.route = kRaw;
+    event.key = keyboard.VKey;
+    event.keyDown = !(keyboard.Flags & RI_KEY_BREAK);
+    return event;
+}
+
+Event FromRawMouse(const RAWMOUSE& mouse) noexcept
+{
+    Event event;
+    // RI_MOUSE_BUTTON_n_DOWN is bit 2(n-1), RI_MOUSE_BUTTON_n_UP the bit above it.
+    for (int button = 0; button < kButtons; ++button)
+    {
+        if (mouse.usButtonFlags & (1u << (2 * button))) event.pressed |= 1u << button;
+        if (mouse.usButtonFlags & (2u << (2 * button))) event.released |= 1u << button;
+    }
+    if (event.pressed || event.released) event.route = kRaw;
+    return event;
+}
+
+bool ReleasesHeld(const Event& event) noexcept
+{
+    if (event.route < 0) return false;
+    if (event.key >= 0 && !event.keyDown && gKeys[event.route][event.key].load(std::memory_order_relaxed))
+        return true;
+    for (int button = 0; button < kButtons; ++button)
+        if ((event.released >> button & 1u) && gButtons[event.route][button].load(std::memory_order_relaxed))
+            return true;
+    return false;
+}
+
+// The event reached the game's window procedure.
+void Record(const Event& event) noexcept
+{
+    if (event.route < 0) return;
+    if (event.key >= 0) gKeys[event.route][event.key].store(event.keyDown, std::memory_order_relaxed);
+    // A raw packet can carry a press and a release of one button: the release is the later of the two.
+    for (int button = 0; button < kButtons; ++button)
+    {
+        if (event.pressed >> button & 1u) gButtons[event.route][button].store(true, std::memory_order_relaxed);
+        if (event.released >> button & 1u) gButtons[event.route][button].store(false, std::memory_order_relaxed);
+    }
+}
+
+// The process lost the foreground: releases go to the next window, and games drop held input themselves.
+void Clear() noexcept
+{
+    for (auto& route : gKeys) for (auto& key : route) key.store(false, std::memory_order_relaxed);
+    for (auto& route : gButtons) for (auto& button : route) button.store(false, std::memory_order_relaxed);
+}
+}
+
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     const LPARAM extra = GetMessageExtraInfo();
@@ -891,7 +1211,21 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         }
     }
     if (!original) return DefWindowProcW(window, message, wparam, lparam);
+    // mouse_route::Watch's probe: the pump ran. Ours, so the game never sees it.
+    if (const UINT probe = mouse_route::gProbeMessage.load(std::memory_order_acquire); probe && message == probe)
+    {
+        mouse_route::gProbes.fetch_add(1, std::memory_order_release);
+        return 0;
+    }
     UpdateMouseCapture(window, message, wparam);
+    held_input::Event held = held_input::FromMessage(message, wparam); // keyrelease.1; WM_INPUT's below
+    // mouse_route::Watch: this procedure gets the menu window's mouse.
+    const bool menuWindow = hasClient && window == gActiveWindow.load(std::memory_order_acquire);
+    if (menuWindow && message >= WM_MOUSEFIRST && message <= WM_MOUSELAST)
+    {
+        if (message != WM_MOUSEMOVE) mouse_route::gClicks.fetch_add(1, std::memory_order_release);
+        mouse_route::gMessages.fetch_add(1, std::memory_order_release);
+    }
     // OptiScaler's menu key reaches OptiScaler (and the game) even while this menu is open.
     const int sharedKey = hasClient ? shared_menu::Key() : 0;
     bool passKey = sharedKey && (message == WM_KEYDOWN || message == WM_KEYUP) && static_cast<int>(wparam) == sharedKey;
@@ -920,19 +1254,28 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 if (sharedKey && input.data.keyboard.VKey == sharedKey) passKey = true;
                 else if (ProcessKey(window, input.data.keyboard.VKey, !(input.data.keyboard.Flags & RI_KEY_BREAK)))
                     return DefWindowProcW(window, message, wparam, lparam);
+                held = held_input::FromRawKeyboard(input.data.keyboard);
             }
             if (input.header.dwType == RIM_TYPEMOUSE
                 && input.header.dwSize >= offsetof(RAWINPUT, data) + sizeof(RAWMOUSE))
             {
                 if (drainRawCapture) ReleaseRetiredRawMouse(window, input.data.mouse);
-                else QueueRawMouse(window, input.data.mouse);
+                else
+                {
+                    if (menuWindow && input.data.mouse.usButtonFlags)
+                        mouse_route::gClicks.fetch_add(1, std::memory_order_release);
+                    if (menuWindow) mouse_route::gMessages.fetch_add(1, std::memory_order_release);
+                    QueueRawMouse(window, input.data.mouse);
+                    held = held_input::FromRawMouse(input.data.mouse);
+                }
             }
         }
     }
     if (!hasClient) DetachWindow(window, false);
     if (hasClient)
     {
-        if ((gVisible.load(std::memory_order_acquire)
+        // WM_INPUT itself is not queued: QueueRawMouse queued what the menu needs from it.
+        if ((gVisible.load(std::memory_order_acquire) && message != WM_INPUT
                 && (MouseMessage(message) || KeyboardMessage(message)
                     || message == WM_NCMOUSEMOVE
                     || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP))
@@ -950,8 +1293,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             SetCursor(nullptr); // ImGui draws its own cursor at the game position.
             return TRUE;
         }
-        if (!passKey && ((MouseMessage(message) && gWantMouse.load(std::memory_order_acquire))
-            || (KeyboardMessage(message) && gWantKeyboard.load(std::memory_order_acquire))))
+        // keyrelease.1: the release of a key or button the game holds still reaches it (a raw packet with its motion).
+        if (!passKey && !held_input::ReleasesHeld(held)
+            && ((MouseMessage(message) && gWantMouse.load(std::memory_order_acquire))
+                || (KeyboardMessage(message) && gWantKeyboard.load(std::memory_order_acquire))))
         {
             // WM_INPUT still requires the OS cleanup performed by DefWindowProc.
             return message == WM_INPUT
@@ -962,6 +1307,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     {
         InternalScope internal;
         gMenuKey.ResetPressed();
+        held_input::Clear();
         ClipCursor(nullptr);
     }
     if (message == WM_NCDESTROY)
@@ -974,6 +1320,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         std::lock_guard lock(gInputMutex);
         gWindows.erase(window);
     }
+    held_input::Record(held);
     return CallWindowProcW(original, window, message, wparam, lparam);
 }
 
@@ -1346,6 +1693,7 @@ bool PlatformState::WantsFrame() const noexcept
             ProcessKey(window, key, (GetAsyncKeyState(key) & 0x8000) != 0);
         }
     }
+    PollKeybindKeys(window, foreground, shared || sharedKey != 0, sharedKey, d3d11); // keybinds.1
     if (context && inputAttached) mouse_route::Refresh(window, foreground);
     if (!ready) return false;
     // Beside OptiScaler's menu the startup hint follows the first DLSS feature.
@@ -1353,7 +1701,9 @@ bool PlatformState::WantsFrame() const noexcept
     float split = 0.0f;
     bool held = false;
     return context && inputAttached && IsWindow(window) && (gVisible.load(std::memory_order_acquire)
-        || gPinned.load(std::memory_order_acquire) || (standalone_ui::PinnedFps() && !shared)
+        || gPinned.load(std::memory_order_acquire) || (standalone_ui::PinnedFps() && !shared && !d3d11)
+        || (standalone_ui::PinnedLatency() && !shared && !d3d11) // latmon.2
+        || standalone_ui::KeybindFrameWanted()
         || GetTickCount64() - hintStart < 7000 || CompareLabels(split, held));
 }
 
@@ -1421,7 +1771,11 @@ bool PlatformState::NewFrame(uint32_t outputWidth, uint32_t outputHeight)
     ImGui_ImplWin32_NewFrame();
     // The backend reads the cursor only while it tracks no window area, so the
     // open menu reads it here: the hook's last cursor when the hook drives the
-    // mouse, else the cursor itself. Beside OptiScaler, PollMouse reads it.
+    // mouse, else the cursor itself. Beside OptiScaler, PollMouse reads it and
+    // the buttons; so it does on a window that gets no mouse messages while the
+    // hook does not serve it (not installed yet, or refused).
+    const bool polled = shared || (visible && Foreground(window)
+        && mouse_route::Starved(window) && !mouse_route::Serving(window));
     if (visible && Foreground(window))
     {
         if (mouse_route::Serving(window))
@@ -1429,9 +1783,9 @@ bool PlatformState::NewFrame(uint32_t outputWidth, uint32_t outputHeight)
             if (const auto position = mouse_route::Map(mouse_route::gCursor.load(std::memory_order_acquire), io.DisplaySize))
                 io.AddMousePosEvent(position->x, position->y);
         }
-        else if (!shared) PollCursor(window, io);
+        else if (!polled) PollCursor(window, io);
     }
-    if (shared) shared_menu::PollMouse(window, io);
+    if (polled) shared_menu::PollMouse(window, io);
     const auto scaling = CalculateOverlayScaling(outputWidth, outputHeight,
         io.DisplaySize.x, io.DisplaySize.y, ImGui_ImplWin32_GetDpiScaleForHwnd(window));
     if (!scaling.valid) return false;
@@ -1464,6 +1818,8 @@ void PlatformState::Draw()
         gShortcutSaveFailed = path.empty() || !WritePrivateProfileStringW(
             L"Overlay", L"ToggleKey", value.c_str(), path.c_str());
     }
+    // keybinds.1: the key WantsFrame read, applied through the menu's own write before the menu draws it.
+    standalone_ui::RunQueuedKeybind();
     const bool visible = gVisible.load(std::memory_order_acquire);
     bool open = visible;
     const bool pinned = !open && gPinned.load(std::memory_order_acquire);
@@ -1478,12 +1834,25 @@ void PlatformState::Draw()
         // the place they would have below it.
         pillTop = inset + ImGui::GetTextLineHeight() + 4.0f*uiScale + ImGui::GetStyle().ItemSpacing.y;
     }
-    else if (!open && !pinned && standalone_ui::PinnedFps())
+    // The FPS readout reports frame generation's rates, which a DirectX 11 game has none of.
+    else if (!open && !pinned && (standalone_ui::PinnedFps() || standalone_ui::PinnedLatency()) && !d3d11)
     {
-        const float bottom = Pill("##RTX40MFG pinned fps", ImVec2(inset, inset), ImVec2(0.0f, 0.0f), uiScale,
-            [] { standalone_ui::DrawPinnedFps(); });
-        cornerBottom = std::max(margin, bottom + ImGui::GetStyle().ItemSpacing.y);
-        pillTop = bottom + ImGui::GetStyle().ItemSpacing.y;
+        // The FPS readout first; latmon.2's latency readout below it, or in its place.
+        float top = inset;
+        if (standalone_ui::PinnedFps())
+        {
+            const float bottom = Pill("##RTX40MFG pinned fps", ImVec2(inset, top), ImVec2(0.0f, 0.0f), uiScale,
+                [] { standalone_ui::DrawPinnedFps(); });
+            top = bottom + ImGui::GetStyle().ItemSpacing.y;
+        }
+        if (standalone_ui::PinnedLatency())
+        {
+            const float bottom = Pill("##RTX40MFG pinned latency", ImVec2(inset, top), ImVec2(0.0f, 0.0f), uiScale,
+                [] { standalone_ui::DrawPinnedLatency(); });
+            top = bottom + ImGui::GetStyle().ItemSpacing.y;
+        }
+        cornerBottom = std::max(margin, top);
+        pillTop = top;
     }
     // DLSS 5 Compare: the divider over the finished image, for every Hook Method,
     // and which side is which in the same pills at the screen's left and right
@@ -1514,6 +1883,10 @@ void PlatformState::Draw()
             [right] { ImGui::TextUnformatted(right); });
         cornerBottom = std::max(cornerBottom, bottom + ImGui::GetStyle().ItemSpacing.y);
     }
+    // keybinds.1: what a key just did, for 1.5 s at the top centre.
+    if (const char* note = standalone_ui::KeybindNote())
+        Pill("##RTX40MFG keybind note", ImVec2(0.5f*ImGui::GetIO().DisplaySize.x, inset), ImVec2(0.5f, 0.0f),
+            uiScale, [note] { ImGui::TextUnformatted(note); });
     if (open || pinned)
     {
         const bool rescaleLayout = !layoutPrepared || std::abs(layoutScale-uiScale) > 0.0001f;
@@ -1581,7 +1954,7 @@ void PlatformState::Draw()
             if (gShortcutSaveFailed) footer += 2.0f*ImGui::GetTextLineHeightWithSpacing();
             if (gLanguageSaveFailed) footer += 2.0f*ImGui::GetTextLineHeightWithSpacing();
             if (ImGui::BeginChild("##settings", ImVec2(0.0f, -footer), ImGuiChildFlags_NavFlattened))
-                standalone_ui::Draw();
+                standalone_ui::Draw(d3d11);
             ImGui::EndChild();
             ImGui::Separator();
             ImGui::AlignTextToFramePadding();
@@ -1599,7 +1972,11 @@ void PlatformState::Draw()
                     ImGui::SameLine();
                     if (ImGui::Button(l10n::Label("Cancel"))) gMenuKey.CancelBinding();
                 }
-                else if (ImGui::Button(l10n::Label("Change key"))) gMenuKey.BeginBinding();
+                else if (ImGui::Button(l10n::Label("Change key")))
+                {
+                    standalone_ui::CancelKeybindCapture(); // keybinds.1: one key binds at a time
+                    gMenuKey.BeginBinding();
+                }
                 ImGui::SameLine();
                 DrawLanguagePicker();
             }
@@ -1686,7 +2063,8 @@ bool PublishBoundedInputOriginal(const char* name, void* target, void* trampolin
 bool PrepareBoundedInput(HMODULE user32, slots::Batch& batch) noexcept
 {
     HMODULE executable = GetModuleHandleW(nullptr);
-    return slots::VisitImports(executable, [&](const char* name, void** address) {
+    bool refused = false;
+    const bool walked = slots::VisitImports(executable, [&](const char* name, void** address) {
         FARPROC original = GetProcAddress(user32, name);
         FARPROC replacement = ResolveBoundedInput(user32, name, original);
         if (replacement == original) return true;
@@ -1702,9 +2080,16 @@ bool PrepareBoundedInput(HMODULE user32, slots::Batch& batch) noexcept
             swprintf_s(line,L"MFG_PROXY_UI input preparation failed symbol=%hs slotRva=0x%llX protection=0x%lX",name,
                 static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address)-reinterpret_cast<uintptr_t>(executable)),memory.Protect);
             single_module::Log(line);
+            refused = true;
         }
         return added;
     });
+    if (walked || refused) return walked;
+    // An unreadable import directory (seen once some games run) publishes no input slot: the menu takes its input
+    // from window messages, as with a packed executable that imports no input functions.
+    batch.count = 0;
+    single_module::Log(L"MFG_PROXY_UI executable import directory unreadable; menu input from window messages only");
+    return true;
 }
 
 void OnBoundedInputActivated() noexcept

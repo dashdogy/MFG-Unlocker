@@ -31,7 +31,9 @@ int wmain(int argc, wchar_t** argv)
     const bool large = layout.profile == ampere_wrapper::Profile::eLegacyLarge;
     const bool direct = layout.profile == ampere_wrapper::Profile::eLegacyDirect;
     const bool legacy = pacer || small || large || layout.profile == ampere_wrapper::Profile::eLegacyCompact;
-    Check(layout.maximumGeneratedFrames == (legacy || direct ? 1u : 5u), "legacy wrapper falls back to 2x and modern wrapper retains MFG capacity");
+    // Streamline 2.12's direct ring sits on the context like the compact one: MFG, not 2x (GitHub issue 153).
+    Check(layout.maximumGeneratedFrames == (legacy ? 1u : 5u),
+        "pacer-ring legacy wrapper falls back to 2x; compact, extended and direct wrappers retain MFG capacity");
     Check(layout.frameIdAvailable == !pacer, "only the audited pre-frame-ID wrapper uses native-call interval ordinals");
     Check(layout.createEnd > layout.createBegin, "Create caller range is established by the image unwind table");
     size_t maximum, swapchain, count, buffers;
@@ -79,7 +81,7 @@ int wmain(int argc, wchar_t** argv)
     Put(context, maximum, layout.maximumGeneratedFrames);
     Put(context, swapchain, uintptr_t{0x1000});
     Check(!ampere_wrapper::BeforeSwapchain(layout), "allocated swapchain closes the bootstrap window");
-    for (unsigned n = legacy || direct ? 2 : 6; n <= 6; ++n)
+    for (unsigned n = legacy ? 2 : 6; n <= 6; ++n)
     {
         Put(ring, count, n); Put(ring, buffers, storage);
         Put(ring, buffers + 8, storage + n * sizeof(uintptr_t));
@@ -153,13 +155,13 @@ int wmain(int argc, wchar_t** argv)
     Put(ring, count, 6u); Put(ring, buffers + 8, storage + 48); Put(ring, buffers + 16, storage + 48);
     // ringcap.1: a legacy layout holds exactly one generated frame; an MFG
     // layout holds the N (1-5) its startup cached, with exactly N+1 buffers.
-    Put(context, maximum, legacy || direct ? 5u : 6u);
+    Put(context, maximum, legacy ? 5u : 6u);
     Check(!ampere_wrapper::Read(layout, capacity) && Stage(layout, "maximum-out-of-range"),
         "a generated maximum the layout cannot hold never establishes capacity");
     Put(context, maximum, 0u);
     Check(!ampere_wrapper::Read(layout, capacity) && Stage(layout, "maximum-out-of-range"),
         "a zero generated maximum never establishes capacity");
-    if (!legacy && !direct)
+    if (!legacy)
     {
         Put(context, maximum, 1u);
         Check(!ampere_wrapper::Read(layout, capacity) && Stage(layout, "count-not-maximum-plus-one"),
@@ -184,7 +186,7 @@ int wmain(int argc, wchar_t** argv)
         }
         Check(ringCertified, "a ring of N+1 distinct buffers certifies the N (1-5) its wrapper cached and revalidates on the frame path");
         Check(ringExact, "a ring with N+2 buffers for a cached N is refused");
-        // The FF7 Rebirth ring (diag171.1 tester log): maximum 3, four buffers.
+        // The FF7 Rebirth ring: maximum 3, four buffers.
         Put(context, maximum, 3u);
         Put(ring, count, 4u); Put(ring, buffers + 8, storage + 32); Put(ring, buffers + 16, storage + 32);
         ampere_wrapper::Capacity ff7{};
@@ -213,6 +215,11 @@ int wmain(int argc, wchar_t** argv)
     for (const uint8_t* pattern : {createPattern, alternatePattern})
         for (uintptr_t p = layout.createBegin; pattern && !contract && p + patternBytes <= layout.createEnd; ++p)
             if (!std::memcmp(reinterpret_cast<void*>(p), pattern, patternBytes)) contract = p;
+    // The 2.12 Create contract is a window inside the function (entry + 0x2f in 2.12.0 and 2.12.129);
+    // the caller range is the one unwind entry that contains it, not a range starting at the window.
+    if (direct)
+        Check(contract > layout.createBegin && contract + patternBytes <= layout.createEnd,
+            "the direct Create contract lies inside its unwind entry, which gives the caller range");
     DWORD protection = 0, ignored = 0;
     Check(contract && VirtualProtect(reinterpret_cast<void*>(contract), 1, PAGE_EXECUTE_READWRITE, &protection),
         "negative fixture changes only a bounded mapped-image contract");

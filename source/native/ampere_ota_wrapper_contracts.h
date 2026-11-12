@@ -69,7 +69,7 @@ constexpr uint8_t kLegacyDirectCreateWindow[]{
     0x4d,0x8b,0xe8,0x48,0x8b,0xda,0x4c,0x8b,0xe1,0x48,0x8d,0x8a,0x38,0x43,0x00,0x00,
     0x4c,0x8b,0x82,0xc8,0x43,0x00,0x00,
 };
-// OTA 2.14.16 (14 Oct 2026): the 2.14 extended fields (maximum +460c, swapchain +4180, count +4188,
+// OTA 2.14.16: the 2.14 extended fields (maximum +460c, swapchain +4180, count +4188,
 // buffers +42f0) with the count-override flag/value moved from +46d8/+46d4 to +46dc/+46d8, and a new
 // Create frame that still prepares the same context members (+4360, +43f0).
 constexpr uint8_t kOverrideSwapchainCountWindow[]{

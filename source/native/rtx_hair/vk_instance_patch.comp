@@ -1,0 +1,77 @@
+#version 460
+// vkhair.3: a Vulkan top-level build's instances, copied with VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR
+// set on every instance of a DOTS hair BLAS (the twin of instance_patch.hlsl). An LSS hit is never culled and DOTS
+// ribbons are single-sided, so rays that cull back faces must not cull hair. Everything else is copied unchanged,
+// into a contiguous array (an array of pointers is gathered).
+#extension GL_GOOGLE_include_directive : require
+#include "vk_common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct Params
+{
+    uvec2 source;          // the instances (or pointers to them), primitiveOffset included
+    uvec2 target;          // our copy
+    uvec2 table;           // sorted 64-bit device addresses of DOTS hair BLASes, as (low, high)
+    uint count;            // instances
+    uint tableCount;
+    uint arrayOfPointers;
+    uint pad0, pad1, pad2;
+};
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ParamsRef
+{
+    Params p;
+};
+
+const uint kCullDisable = 0x1u; // VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR
+
+bool Less(uvec2 a, uvec2 b)
+{
+    return a.y < b.y || (a.y == b.y && a.x < b.x);
+}
+
+uvec2 TableEntry(Params p, uint i)
+{
+    uvec2 a = At(p.table, 0u, i, 8u);
+    return uvec2(Load32(a), Load32(Offset(a, 4u)));
+}
+
+bool Hair(Params p, uvec2 address)
+{
+    uint lo = 0u, hi = p.tableCount;
+    while (lo < hi)
+    {
+        uint mid = (lo + hi) / 2u;
+        if (Less(TableEntry(p, mid), address))
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo < p.tableCount && all(equal(TableEntry(p, lo), address));
+}
+
+void main()
+{
+    Params p = ParamsRef(Slot()).p;
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= p.count)
+        return;
+    uvec2 from;
+    if (p.arrayOfPointers != 0u)
+    {
+        uvec2 pointer = At(p.source, 0u, i, 8u);
+        from = uvec2(Load32(pointer), Load32(Offset(pointer, 4u)));
+    }
+    else
+        from = At(p.source, 0u, i, 64u);
+    uint w[16];
+    for (uint k = 0u; k < 16u; ++k)
+        w[k] = Load32(Offset(from, k * 4u));
+    // Word 12: instanceCustomIndex | mask << 24; word 13: shader binding table offset | flags << 24; words 14-15:
+    // accelerationStructureReference.
+    if (Hair(p, uvec2(w[14], w[15])))
+        w[13] |= kCullDisable << 24;
+    uvec2 to = At(p.target, 0u, i, 64u);
+    for (uint k = 0u; k < 16u; ++k)
+        Store32(Offset(to, k * 4u), w[k]);
+}

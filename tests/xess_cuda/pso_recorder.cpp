@@ -1,4 +1,4 @@
-// psorefused.1 (board #543): a module that hooks pipeline creation only, in its own image: the shape of the SCSKiller
+// A module that hooks pipeline creation only, in its own image: the shape of the SCSKiller
 // shader recorder's d3d12.dll, which hooks the device a layer (ReShade) returns. Slots 11 (CreateComputePipelineState)
 // and 47 (ID3D12Device2::CreatePipelineState) of that device's table point here and pass each call on to the table's
 // original from this image; list creation is not hooked. The provider's pipeline calls then reach the wrapper from here.

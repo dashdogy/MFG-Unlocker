@@ -2,6 +2,7 @@
 #include "dlss5.h"
 #include "dlss5_auto.h"
 #include "dlss5_parameters.h"
+#include "dlss5_stage_common.h"
 #ifndef VK_NO_PROTOTYPES
 #define VK_NO_PROTOTYPES
 #endif
@@ -9,6 +10,7 @@
 #include <nvsdk_ngx_vk.h>
 #include <nvsdk_ngx_helpers_vk.h>
 #include "dlss5_vk_spirv.h"
+#include "dlss5_vk.packed.h"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -36,40 +38,38 @@ std::atomic<uint64_t> gStageRefusedTick{0};
 std::atomic<void*> gInitInstance{nullptr}, gInitPhysical{nullptr}, gInitDevice{nullptr};
 VulkanDirectProvider gDirect;
 HMODULE gDirectRuntime = nullptr;
-// alpha.15 (B4-18): the provider-ownership snapshot once per process, as dlss5.cpp's (its own pair for Vulkan).
+// The provider-ownership snapshot once per process, as dlss5.cpp's (its own pair for Vulkan).
 bool gProviderChecked = false, gProviderForeign = false;
 uint64_t gNativeAttempts = 0;
 std::atomic<bool> gForeignLogged{false};
 
+// The stage's Vulkan entries, X(name) each: the device's (vkGetDeviceProcAddr),
+// and the physical-device queries: the loader's exports, valid for any
+// VkPhysicalDevice it handed out.
+#define MFG_DLSS5_VK_DEVICE_ENTRIES(X) X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements) \
+    X(vkAllocateMemory) X(vkFreeMemory) X(vkBindImageMemory) X(vkCreateImageView) X(vkDestroyImageView) X(vkCreateBuffer) \
+    X(vkDestroyBuffer) X(vkGetBufferMemoryRequirements) X(vkBindBufferMemory) X(vkMapMemory) X(vkUnmapMemory) \
+    X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreateComputePipelines) X(vkDestroyPipeline) \
+    X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout) \
+    X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkGetQueryPoolResults) X(vkCmdBindPipeline) X(vkCmdPushDescriptorSetKHR) \
+    X(vkCmdPushConstants) X(vkCmdDispatch) X(vkCmdPipelineBarrier) X(vkCmdUpdateBuffer) X(vkCmdWriteTimestamp) \
+    X(vkCmdResetQueryPool)
+#define MFG_DLSS5_VK_LOADER_ENTRIES(X) X(vkGetPhysicalDeviceMemoryProperties) X(vkGetPhysicalDeviceProperties) \
+    X(vkGetPhysicalDeviceFormatProperties)
 struct Functions {
 #define MFG_DLSS5_VK(name) PFN_##name name = nullptr;
-    MFG_DLSS5_VK(vkCreateImage) MFG_DLSS5_VK(vkDestroyImage) MFG_DLSS5_VK(vkGetImageMemoryRequirements)
-    MFG_DLSS5_VK(vkAllocateMemory) MFG_DLSS5_VK(vkFreeMemory) MFG_DLSS5_VK(vkBindImageMemory)
-    MFG_DLSS5_VK(vkCreateImageView) MFG_DLSS5_VK(vkDestroyImageView) MFG_DLSS5_VK(vkCreateBuffer)
-    MFG_DLSS5_VK(vkDestroyBuffer) MFG_DLSS5_VK(vkGetBufferMemoryRequirements) MFG_DLSS5_VK(vkBindBufferMemory)
-    MFG_DLSS5_VK(vkMapMemory) MFG_DLSS5_VK(vkUnmapMemory) MFG_DLSS5_VK(vkCreateShaderModule)
-    MFG_DLSS5_VK(vkDestroyShaderModule) MFG_DLSS5_VK(vkCreateComputePipelines) MFG_DLSS5_VK(vkDestroyPipeline)
-    MFG_DLSS5_VK(vkCreatePipelineLayout) MFG_DLSS5_VK(vkDestroyPipelineLayout) MFG_DLSS5_VK(vkCreateDescriptorSetLayout)
-    MFG_DLSS5_VK(vkDestroyDescriptorSetLayout) MFG_DLSS5_VK(vkCreateQueryPool) MFG_DLSS5_VK(vkDestroyQueryPool)
-    MFG_DLSS5_VK(vkGetQueryPoolResults) MFG_DLSS5_VK(vkCmdBindPipeline) MFG_DLSS5_VK(vkCmdPushDescriptorSetKHR)
-    MFG_DLSS5_VK(vkCmdPushConstants) MFG_DLSS5_VK(vkCmdDispatch) MFG_DLSS5_VK(vkCmdPipelineBarrier)
-    MFG_DLSS5_VK(vkCmdUpdateBuffer) MFG_DLSS5_VK(vkCmdWriteTimestamp) MFG_DLSS5_VK(vkCmdResetQueryPool)
-    // Physical-device queries: the loader's exports, valid for any VkPhysicalDevice it handed out.
-    MFG_DLSS5_VK(vkGetPhysicalDeviceMemoryProperties) MFG_DLSS5_VK(vkGetPhysicalDeviceProperties)
-    MFG_DLSS5_VK(vkGetPhysicalDeviceFormatProperties)
+    MFG_DLSS5_VK_DEVICE_ENTRIES(MFG_DLSS5_VK)
+    MFG_DLSS5_VK_LOADER_ENTRIES(MFG_DLSS5_VK)
 #undef MFG_DLSS5_VK
 };
 
 // The game's output formats the stage writes back (a storage format of its
 // own SPIR-V variant) and the format of our copy of it.
-struct OutputFormat { VkFormat game, copy; const uint32_t* decode; size_t decodeBytes; const uint32_t* copyIn; size_t copyInBytes; };
+struct OutputFormat { VkFormat game, copy; uint32_t decode, copyIn; };
 const std::array<OutputFormat, 3> kOutputs{{
-    {VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT, spirv::decode_rgba16f, sizeof(spirv::decode_rgba16f),
-        spirv::copy_in_rgba16f, sizeof(spirv::copy_in_rgba16f)},
-    {VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT, spirv::decode_rgba32f, sizeof(spirv::decode_rgba32f),
-        spirv::copy_in_rgba32f, sizeof(spirv::copy_in_rgba32f)},
-    {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT, spirv::decode_rgba8, sizeof(spirv::decode_rgba8),
-        spirv::copy_in_rgba8, sizeof(spirv::copy_in_rgba8)},
+    {VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT, spirv::decode_rgba16f, spirv::copy_in_rgba16f},
+    {VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT, spirv::decode_rgba32f, spirv::copy_in_rgba32f},
+    {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT, spirv::decode_rgba8, spirv::copy_in_rgba8},
 }};
 
 struct Device {
@@ -101,44 +101,26 @@ struct Image {
 
 // A provider feature and its textures at the processing extent, as the D3D12
 // stage's: the slot's live one, or the replacement created beside it.
-struct Feature {
-    bool createdReady = false;
-    Settings applied{};
-    NVSDK_NGX_Parameter* params = nullptr;
-    std::array<NVSDK_NGX_Handle*, kMaxPasses> handles{};
-    uint32_t passes = 0;
+struct Feature : common::FeatureCore {
     // encoded: the network input; ping/pong: pass outputs.
     Image encoded, ping, pong;
-    uint32_t width = 0, height = 0, extentWidth = 0, extentHeight = 0;
-    bool HasFeature() const noexcept { return passes != 0; }
     bool Holds() const noexcept { return passes || params || encoded.image || ping.image || pong.image; }
 };
 // A replaced feature, released once every recording up to sequence `after` executed.
 struct Retired { Feature feature; uint64_t after = 0; };
 // One per game DLSS SR/RR feature (handle on a route).
-struct Slot : Feature {
-    size_t route = 0;
-    uintptr_t game = 0;
-    bool occupied = false, retiring = false;
-    dlss_sr::CreateKeys keys{};
+struct Slot : Feature, common::SlotState {
     VkDevice device = VK_NULL_HANDLE;
-    bool nativeAttempted = false, nativeSucceeded = false, direct = false, directOwnershipDenied = false;
-    bool ownershipLogged = false; uint32_t nativeResult = 0;
-    bool failed = false, cleanupFailed = false, resetHistory = true;
-    uint64_t revision = 0, failureRevision = 0;
-    State failureState = State::eOff;
-    uint32_t failureResult = 0;
     Api api{};
     // copy: the stage's copy of the game's output (same size, our format), read by Encode/Decode.
     Image copy;
-    // autoscale.1: the replacement being created (ready once sequence nextReady
+    // The replacement being created (ready once sequence nextReady
     // executed), the features it replaced, and whether this slot replaces its
     // feature in place instead.
     Feature next;
     uint64_t nextReady = 0;
     std::array<Retired, 3> retired{};
     bool replaceRefused = false;
-    Encoding automatic = Encoding::eLinear;
     VkBuffer sets = VK_NULL_HANDLE;
     VkDeviceMemory setMemory = VK_NULL_HANDLE;
     volatile uint8_t* mapped = nullptr;
@@ -148,13 +130,6 @@ struct Slot : Feature {
     std::array<bool, kSets> measured{};
     // The Resolution Scale of the feature each set measured (only the controller's level feeds Auto).
     std::array<float, kSets> measuredScale{};
-    auto_mode::ScaleController scaling{};
-    bool scalingSeeded = false, floorLogged = false;
-    auto_mode::ExposureController exposure{};
-    auto_mode::FrameClock clock{};
-    double frameSeconds = 0.0;
-    float gpuMs = -1.0f;
-    shared::CostLog cost{};
 };
 std::array<Slot, 8> gSlots;
 
@@ -327,6 +302,14 @@ void Pump() noexcept {
         Destroy(slot);
         if (!Outstanding(slot) && !slot.cleanupFailed) { DestroySets(slot); slot = Slot{}; }
     }
+    // Hook Method Off releases the features once their work executed (as on D3D12).
+    uint64_t revision = 0;
+    if (!shared::Wanted(revision).enabled) for (auto& slot : gSlots) if (slot.occupied && !slot.retiring && Outstanding(slot)) {
+        Collect(slot);
+        if (!Completed(slot)) continue;
+        Destroy(slot);
+        if (!Outstanding(slot)) { slot.gpuMs = -1.0f; Log(L"DLSS 5 off: its feature was released (Vulkan)"); }
+    }
 }
 
 void Barrier(VkCommandBuffer cmd, VkPipelineStageFlags from, VkAccessFlags written, VkPipelineStageFlags to, VkAccessFlags used) noexcept {
@@ -392,10 +375,14 @@ void Run(VkCommandBuffer cmd, VkPipeline pipeline, const Bindings& b, const void
     vk.vkCmdDispatch(cmd, group ? 1 : (x + 7) / 8, group ? 1 : (y + 7) / 8, 1);
 }
 
-bool MakePipeline(const uint32_t* code, size_t bytes, const char* entry, VkPipeline& out) noexcept {
+// A pass's SPIR-V (a payload of the packed dlss5_vk group, word-aligned) as a compute pipeline.
+bool MakePipeline(uint32_t pass, const char* entry, VkPipeline& out) noexcept {
+    const auto code = embedded_payload::Find(embedded_payload::Owner(), embedded_payload::packed::dlss5_vk,
+        embedded_payload::packed::dlss5_vk_items, pass);
+    if (code.empty() || code.size() % 4) return false;
     auto& vk = gDevice.vk;
     VkShaderModuleCreateInfo module{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    module.codeSize = bytes; module.pCode = code;
+    module.codeSize = code.size(); module.pCode = reinterpret_cast<const uint32_t*>(code.data());
     VkShaderModule shader = VK_NULL_HANDLE;
     if (vk.vkCreateShaderModule(gDevice.device, &module, nullptr, &shader) != VK_SUCCESS) return false;
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
@@ -428,22 +415,13 @@ const wchar_t* SetupDevice(VkDevice device) noexcept {
     gDevice.device = device; gDevice.physical = physical; gDevice.gipa = gipa; gDevice.gdpa = gdpa;
     auto& vk = gDevice.vk;
 #define MFG_DLSS5_PHYSICAL(name) vk.name = reinterpret_cast<PFN_##name>(GetProcAddress(loader, #name)); if (!vk.name) return L"loader export " L#name;
-    MFG_DLSS5_PHYSICAL(vkGetPhysicalDeviceMemoryProperties) MFG_DLSS5_PHYSICAL(vkGetPhysicalDeviceProperties)
-    MFG_DLSS5_PHYSICAL(vkGetPhysicalDeviceFormatProperties)
+    MFG_DLSS5_VK_LOADER_ENTRIES(MFG_DLSS5_PHYSICAL)
 #undef MFG_DLSS5_PHYSICAL
 #define MFG_DLSS5_DEVICE(name) vk.name = reinterpret_cast<PFN_##name>(gdpa(device, #name)); if (!vk.name) return L"device entry " L#name;
-    MFG_DLSS5_DEVICE(vkCreateImage) MFG_DLSS5_DEVICE(vkDestroyImage) MFG_DLSS5_DEVICE(vkGetImageMemoryRequirements)
-    MFG_DLSS5_DEVICE(vkAllocateMemory) MFG_DLSS5_DEVICE(vkFreeMemory) MFG_DLSS5_DEVICE(vkBindImageMemory)
-    MFG_DLSS5_DEVICE(vkCreateImageView) MFG_DLSS5_DEVICE(vkDestroyImageView) MFG_DLSS5_DEVICE(vkCreateBuffer)
-    MFG_DLSS5_DEVICE(vkDestroyBuffer) MFG_DLSS5_DEVICE(vkGetBufferMemoryRequirements) MFG_DLSS5_DEVICE(vkBindBufferMemory)
-    MFG_DLSS5_DEVICE(vkMapMemory) MFG_DLSS5_DEVICE(vkUnmapMemory) MFG_DLSS5_DEVICE(vkCreateShaderModule)
-    MFG_DLSS5_DEVICE(vkDestroyShaderModule) MFG_DLSS5_DEVICE(vkCreateComputePipelines) MFG_DLSS5_DEVICE(vkDestroyPipeline)
-    MFG_DLSS5_DEVICE(vkCreatePipelineLayout) MFG_DLSS5_DEVICE(vkDestroyPipelineLayout) MFG_DLSS5_DEVICE(vkCreateDescriptorSetLayout)
-    MFG_DLSS5_DEVICE(vkDestroyDescriptorSetLayout) MFG_DLSS5_DEVICE(vkCreateQueryPool) MFG_DLSS5_DEVICE(vkDestroyQueryPool)
-    MFG_DLSS5_DEVICE(vkGetQueryPoolResults) MFG_DLSS5_DEVICE(vkCmdBindPipeline) MFG_DLSS5_DEVICE(vkCmdPushDescriptorSetKHR)
-    MFG_DLSS5_DEVICE(vkCmdPushConstants) MFG_DLSS5_DEVICE(vkCmdDispatch) MFG_DLSS5_DEVICE(vkCmdPipelineBarrier)
-    MFG_DLSS5_DEVICE(vkCmdUpdateBuffer) MFG_DLSS5_DEVICE(vkCmdWriteTimestamp) MFG_DLSS5_DEVICE(vkCmdResetQueryPool)
+    MFG_DLSS5_VK_DEVICE_ENTRIES(MFG_DLSS5_DEVICE)
 #undef MFG_DLSS5_DEVICE
+#undef MFG_DLSS5_VK_DEVICE_ENTRIES
+#undef MFG_DLSS5_VK_LOADER_ENTRIES
     VkPhysicalDeviceProperties properties{};
     vk.vkGetPhysicalDeviceProperties(physical, &properties);
     if (properties.vendorID != 0x10DE) return L"adapter is not NVIDIA";
@@ -465,11 +443,11 @@ const wchar_t* SetupDevice(VkDevice device) noexcept {
     VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout.setLayoutCount = 1; layout.pSetLayouts = &gDevice.setLayout; layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
     if (vk.vkCreatePipelineLayout(device, &layout, nullptr, &gDevice.layout) != VK_SUCCESS) return L"pipeline layout";
-    if (!MakePipeline(spirv::encode, sizeof(spirv::encode), "Encode", gDevice.encode)
-        || !MakePipeline(spirv::meter, sizeof(spirv::meter), "Meter", gDevice.meter)) return L"compute pipelines";
+    if (!MakePipeline(spirv::encode, "Encode", gDevice.encode)
+        || !MakePipeline(spirv::meter, "Meter", gDevice.meter)) return L"compute pipelines";
     for (size_t n = 0; n < kOutputs.size(); ++n)
-        if (gDevice.outputs[n] && (!MakePipeline(kOutputs[n].decode, kOutputs[n].decodeBytes, "Decode", gDevice.decode[n])
-            || !MakePipeline(kOutputs[n].copyIn, kOutputs[n].copyInBytes, "CopyIn", gDevice.copyIn[n]))) return L"compute pipelines";
+        if (gDevice.outputs[n] && (!MakePipeline(kOutputs[n].decode, "Decode", gDevice.decode[n])
+            || !MakePipeline(kOutputs[n].copyIn, "CopyIn", gDevice.copyIn[n]))) return L"compute pipelines";
     gDevice.ready = true;
     wchar_t message[300]{};
     swprintf_s(message, L"DLSS 5 Vulkan stage ready: device=%p physical=%p timestamps=%d outputs rgba16f=%d rgba32f=%d rgba8=%d",
@@ -512,34 +490,11 @@ bool Recovered(Slot& slot) noexcept {
     Destroy(slot); if (Outstanding(slot)) return false;
     slot.failed = false; return true;
 }
-void Tick(Slot& slot) noexcept {
-    static LARGE_INTEGER frequency{};
-    if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
-    LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
-    slot.frameSeconds += slot.clock.Tick(static_cast<uint64_t>(now.QuadPart), static_cast<uint64_t>(frequency.QuadPart));
-}
-Settings Effective(Slot& slot, const Settings& wanted, uint32_t width, uint32_t height) noexcept {
-    Settings run = wanted; run.stage = static_cast<uint32_t>(Stage::eUpscaled);
-    if (wanted.scaleAuto) {
-        const size_t ceiling = auto_mode::CeilingLevel(wanted.scale);
-        if (!slot.scalingSeeded) {
-            slot.scaling.Reset(std::clamp(auto_mode::StartingLevel(width, height), ceiling, auto_mode::FloorLevel(ceiling)));
-            slot.scalingSeeded = true;
-        } else slot.scaling.Clamp(ceiling);
-        run.scale = slot.scaling.Scale();
-    }
-    return run;
-}
-Settings Expected(const Slot& slot, Settings wanted) noexcept {
+// autorect.1: Resolution Scale Auto's feature is its capacity, whatever its level.
+Settings Expected(const Slot&, Settings wanted) noexcept {
     wanted.stage = static_cast<uint32_t>(Stage::eUpscaled);
-    if (wanted.scaleAuto && slot.scalingSeeded) wanted.scale = slot.scaling.Scale();
+    if (wanted.scaleAuto) wanted.scale = auto_mode::CapacityScale(wanted.scale);
     return wanted;
-}
-bool Unbounded(const Slot& slot, const Settings& wanted) noexcept {
-    return UnboundedColor(wanted, slot.automatic, slot.keys.createFlags);
-}
-float AdaptiveGain(const Slot& slot, const Settings& wanted) noexcept {
-    return wanted.adaptiveExposure && Unbounded(slot, wanted) && slot.exposure.valid ? slot.exposure.Gain() : 1.0f;
 }
 // Executed sets' timestamps and meters feed Auto (as the D3D12 stage's Harvest).
 void Harvest(Slot& slot, const Settings& wanted) noexcept {
@@ -562,24 +517,10 @@ void Harvest(Slot& slot, const Settings& wanted) noexcept {
     const double seconds = slot.frameSeconds; slot.frameSeconds = 0.0;
     if (timed) {
         slot.gpuMs = static_cast<float>(ms / timed);
-        shared::Cost(slot.cost, slot.applied.stage, slot.extentWidth, slot.extentHeight, slot.gpuMs, slot.clock.averageMs);
-        const float before = slot.scaling.Scale();
-        const float budget = auto_mode::BudgetMs(slot.clock.averageMs, slot.gpuMs);
-        if (wanted.scaleAuto && slot.scalingSeeded && !otherLevel
-            && slot.scaling.Update(slot.gpuMs, budget, seconds, auto_mode::CeilingLevel(wanted.scale))) {
-            wchar_t message[200]{};
-            swprintf_s(message, L"DLSS 5 Auto resolution scale (Vulkan): %.0f%% -> %.0f%% (stage %.2f ms, budget %.2f ms)",
-                before, slot.scaling.Scale(), slot.gpuMs, budget);
-            Log(message); slot.floorLogged = false;
-        }
-        // Logged once per level.
-        if (slot.scaling.floorHeld && !slot.floorLogged) {
-            slot.floorLogged = true;
-            wchar_t message[200]{};
-            swprintf_s(message, L"DLSS 5 Auto resolution scale (Vulkan) holds its %.0f%% quality floor (stage %.2f ms, budget %.2f ms)",
-                slot.scaling.Scale(), slot.gpuMs, budget);
-            Log(message);
-        }
+        shared::Cost(slot.cost, slot.applied.stage, common::ShownWidth(slot), common::ShownHeight(slot), slot.gpuMs, slot.clock.averageMs);
+        common::StepScale(slot, wanted, seconds, otherLevel, Log,
+            L"DLSS 5 Auto resolution scale (Vulkan): %.0f%% -> %.0f%% (stage %.2f ms, budget %.2f ms), within the feature",
+            L"DLSS 5 Auto resolution scale (Vulkan) holds its %.0f%% quality floor (stage %.2f ms, budget %.2f ms)");
     }
     if (samples > 0.0f && wanted.adaptiveExposure) slot.exposure.Update(sum / samples, seconds, wanted.adaptiveTarget);
 }
@@ -658,7 +599,7 @@ void CreateFeature(Slot& slot, VkCommandBuffer cmd, const Frame& frame, const Se
             gProviderChecked = true;
             const HMODULE loaded = GetModuleHandleW(L"nvngx_dlssnr.dll");
             gProviderForeign = loaded && !gDirect.Module();
-            if (gProviderForeign) shared::ProviderLoaded(loaded, path, gNativeAttempts);
+            if (gProviderForeign) common::LogProviderLoaded(Log, L" Vulkan", loaded, path, gNativeAttempts);
         }
         slot.directOwnershipDenied = gProviderForeign;
     }
@@ -687,7 +628,7 @@ void CreateFeature(Slot& slot, VkCommandBuffer cmd, const Frame& frame, const Se
         else if (!instance) { result = NVSDK_NGX_Result_FAIL_PlatformError; directStep = L"initialize (the game's VkInstance was not observed)"; }
         else if ((!gDirectRuntime || gDirectRuntime == slot.api.runtime) && gDirect.Open(path.c_str(), slot.api.runtime)) {
             gDirectRuntime = slot.api.runtime;
-            shared::DirectIdentity(gDirect.Module(), path);
+            common::LogDirectIdentity(Log, L" Vulkan", gDirect.Module(), path);
             result = gDirect.Initialize(instance, gDevice.physical, slot.device, reinterpret_cast<void*>(gDevice.gipa),
                 reinterpret_cast<void*>(gDevice.gdpa), slot.params);
             directStep = L"initialize";
@@ -715,7 +656,6 @@ void CreateFeature(Slot& slot, VkCommandBuffer cmd, const Frame& frame, const Se
     if (!slot.direct) slot.nativeResult = code;
     if (result != NVSDK_NGX_Result_Success || slot.passes != run.passes) {
         wchar_t message[2048]{};
-        // alpha.15 (B4-21): and how long the failed create took on the game's thread.
         if (slot.direct) swprintf_s(message, L"DLSS 5 Vulkan direct provider %ls failed: result=0x%08X passes=%u/%u createMs=%.1f provider=%.1700ls",
             directStep, code, slot.passes, run.passes, createMs, path.c_str());
         else swprintf_s(message, L"DLSS 5 Vulkan native NGX create returned 0x%08X%ls%ls (createMs=%.1f)", code,
@@ -745,7 +685,7 @@ void CreateFeature(Slot& slot, VkCommandBuffer cmd, const Frame& frame, const Se
 }
 
 // The live feature for `run` at this extent, on `cmd`: kept, created or
-// replaced, as the D3D12 stage's Settle (autoscale.1). True when a feature
+// replaced, as the D3D12 stage's Settle. True when a feature
 // evaluates on `cmd` now; `run` is then what it evaluates with. A replacement
 // is created beside a ready live feature at the same stage size and takes
 // over once its create's recording executed; otherwise the feature is
@@ -832,10 +772,12 @@ bool Record(Slot& slot, VkCommandBuffer cmd, Frame frame, const Settings& run, c
     Barrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
     // Encode (and the meter) read the copy: no exposure texture on Vulkan, its layout is unknown here.
     frame.exposure = 0;
-    const auto encode = shared::Constants(frame, run, slot.extentWidth, slot.extentHeight, slot.automatic, Unbounded(slot, run),
-        AdaptiveGain(slot, run), false, false);
+    // autorect.1: the network's rect within the processing extent (Activate) is the shaders' extent.
+    const uint32_t activeWidth = common::ShownWidth(slot), activeHeight = common::ShownHeight(slot);
+    const auto encode = shared::Constants(frame, run, activeWidth, activeHeight, slot.automatic, common::Unbounded(slot, run),
+        common::AdaptiveGain(slot, run), false, false);
     bindings.storage = slot.encoded.view; bindings.game = slot.encoded.view;
-    Run(cmd, gDevice.encode, bindings, &encode, sizeof(encode), slot.extentWidth, slot.extentHeight);
+    Run(cmd, gDevice.encode, bindings, &encode, sizeof(encode), activeWidth, activeHeight);
     if (measuring) Run(cmd, gDevice.meter, bindings, &encode, sizeof(encode), 1, 1, true);
     Barrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_READ_BIT);
     Image* outputs[2]{&slot.ping, &slot.pong};
@@ -846,15 +788,15 @@ bool Record(Slot& slot, VkCommandBuffer cmd, Frame frame, const Settings& run, c
         Frame neural = frame;
         neural.color = reinterpret_cast<uintptr_t>(pass == 0 ? &slot.encoded.resource : &outputs[(pass - 1) % 2]->resource);
         neural.output = reinterpret_cast<uintptr_t>(&outputs[pass % 2]->resource);
-        neural.colorRect = neural.outputRect = {0, 0, static_cast<int32_t>(slot.extentWidth), static_cast<int32_t>(slot.extentHeight)};
+        neural.colorRect = neural.outputRect = {0, 0, static_cast<int32_t>(activeWidth), static_cast<int32_t>(activeHeight)};
         WriteEvaluate(slot.params, neural, PassSettings(run, pass));
         result = slot.direct ? gDirect.Evaluate(cmd, slot.handles[pass], slot.params) : slot.api.evaluate(cmd, slot.handles[pass], slot.params, nullptr);
         if (result != NVSDK_NGX_Result_Success) break;
     }
     if (result == NVSDK_NGX_Result_Success) {
         Barrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-        const auto decode = shared::Constants(frame, run, slot.extentWidth, slot.extentHeight, slot.automatic, Unbounded(slot, run),
-            AdaptiveGain(slot, run), true, false);
+        const auto decode = shared::Constants(frame, run, activeWidth, activeHeight, slot.automatic, common::Unbounded(slot, run),
+            common::AdaptiveGain(slot, run), true, false);
         bindings.sampled = {slot.encoded.view, outputs[(slot.passes - 1) % 2]->view, copy, copy};
         bindings.storage = output.view; bindings.game = slot.encoded.view;
         Run(cmd, gDevice.decode[output.format], bindings, &decode, sizeof(decode), frame.width, frame.height);
@@ -863,7 +805,7 @@ bool Record(Slot& slot, VkCommandBuffer cmd, Frame frame, const Settings& run, c
             VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
         if (measuring) {
             vk.vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, slot.queries, set * 2 + 1);
-            slot.measured[set] = true; slot.measuredScale[set] = slot.applied.scale;
+            slot.measured[set] = true; slot.measuredScale[set] = common::ShownScale(slot);
         }
         slot.resetHistory = false;
         shared::Evaluated();
@@ -874,9 +816,9 @@ bool Record(Slot& slot, VkCommandBuffer cmd, Frame frame, const Settings& run, c
 
 void Process(Slot& slot, const Api& api, VkCommandBuffer cmd, const NVSDK_NGX_Parameter* params, const Settings& wanted, uint64_t revision) noexcept {
     slot.revision = revision;
-    Tick(slot);
+    common::Tick(slot);
     if (shared::Foreign()) {
-        // alpha.15 (B4-18): the D3D12 route's 'DLSS 5 stopped' line names the caller.
+        // The D3D12 route's 'DLSS 5 stopped' line names the caller.
         if (!gForeignLogged.exchange(true)) Log(L"DLSS 5 Vulkan stopped: another caller created NGX feature 18 (see 'DLSS 5 stopped')");
         shared::SetState(State::eOtherMod); return;
     }
@@ -888,7 +830,7 @@ void Process(Slot& slot, const Api& api, VkCommandBuffer cmd, const NVSDK_NGX_Pa
     if (!Setup(slot, api)) return;
     Output output{};
     if (!Inputs(frame, output)) { slot.resetHistory = true; shared::SetState(State::eMissingInputs); return; }
-    Settings run = Effective(slot, wanted, frame.width, frame.height);
+    Settings run = common::Effective(slot, wanted, Stage::eUpscaled, frame.width, frame.height);
     uint32_t extentWidth = 0, extentHeight = 0;
     if (!ProcessingExtent(frame.width, frame.height, run.scale, extentWidth, extentHeight)) {
         wchar_t reason[160]{};
@@ -900,6 +842,8 @@ void Process(Slot& slot, const Api& api, VkCommandBuffer cmd, const NVSDK_NGX_Pa
     if (!CopyFor(slot, output)) return;
     uint32_t set = 0;
     if (!Reserve(slot, wanted, set)) return;
+    // autorect.1: after Harvest, so an Auto step applies to this evaluation.
+    common::Activate(slot, slot, wanted, run);
     if (Record(slot, cmd, frame, run, output, set)) shared::InputsAvailable();
 }
 
@@ -910,11 +854,12 @@ void Publish() noexcept {
     for (const auto& slot : gSlots) {
         if (!slot.occupied || !slot.HasFeature()) continue;
         ++view.live; view.route = slot.direct ? 2 : 1; view.stage = slot.applied.stage; view.passes = slot.passes;
-        view.width = slot.width; view.height = slot.height; view.extentWidth = slot.extentWidth; view.extentHeight = slot.extentHeight;
+        view.width = slot.width; view.height = slot.height;
+        view.extentWidth = common::ShownWidth(slot); view.extentHeight = common::ShownHeight(slot);
         view.pending |= !SameFeature(slot.applied, Expected(slot, requested)) || !slot.createdReady;
-        view.scale = slot.applied.scale; view.gpuMs = slot.gpuMs; view.budgetMs = auto_mode::BudgetMs(slot.clock.averageMs, slot.gpuMs);
+        view.scale = common::ShownScale(slot); view.gpuMs = slot.gpuMs; view.budgetMs = common::AutoBudgetMs(slot);
         view.scaleFloorHeld |= requested.scaleAuto && slot.scalingSeeded && slot.scaling.floorHeld;
-        view.frameMs = static_cast<float>(slot.clock.averageMs); view.exposureGain = AdaptiveGain(slot, requested);
+        view.frameMs = static_cast<float>(slot.clock.averageMs); view.exposureGain = common::AdaptiveGain(slot, requested);
     }
     std::lock_guard lock(gLiveMutex);
     gLive = view;

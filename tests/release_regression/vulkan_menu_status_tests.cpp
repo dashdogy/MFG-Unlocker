@@ -1,4 +1,4 @@
-// Vulkan menu status (vkmenu.1): the V-Sync Off present-mode choice at swapchain
+// Vulkan menu status: the V-Sync Off present-mode choice at swapchain
 // creation and its status, and the DLSS output rate from DLSS-G's own
 // presented-frame count. Deterministic; no GPU, window or game.
 #include "present_counter.h"

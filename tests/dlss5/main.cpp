@@ -1,5 +1,7 @@
 #include "dlss5.h"
+#include "dlss5_auto.h"
 #include "dlss5_settings.h"
+#include "frame_gen_target.h"
 #include "overlay_native.h"
 #include <dxgi1_6.h>
 #include <wrl/client.h>
@@ -44,8 +46,14 @@ ID3D12Resource* providerSource=nullptr;
 void *lastDepth=nullptr,*lastMotion=nullptr,*lastOutput=nullptr;int lastDepthWidth=0,lastMotionWidth=0,lastReset=-1,lastUi=-1;float lastMotionScale=0;
 // The network input of the provider's last evaluation (hdrbridge.1 reads it back).
 void* lastColor=nullptr;
+// autorect.1: the Color and Output subrects of the provider's last evaluation (the network's rect).
+int lastColorRectWidth=0,lastColorRectHeight=0,lastOutputRectWidth=0,lastOutputRectHeight=0;
 // The game's reconstruction input at the moment its evaluation runs.
 void* gameColorDuringEvaluate=nullptr;
+// nrscale.1 (replace-memory): the video memory the provider's creates take and its releases give back, reported to
+// DLSS 5 (testing::SetVideoMemory) while memoryBudget is set.
+uint64_t memoryUsage=0,memoryBudget=0,memoryPerCreate=0;
+void ReportMemory(){dlss5::testing::SetVideoMemory(memoryUsage,memoryBudget);}
 NVSDK_NGX_Result NVSDK_CONV Allocate(NVSDK_NGX_Parameter** out){++allocates;*out=new Params;return NVSDK_NGX_Result_Success;}
 NVSDK_NGX_Result NVSDK_CONV Destroy(NVSDK_NGX_Parameter* params){++destroys;delete static_cast<Params*>(params);return NVSDK_NGX_Result_Success;}
 NVSDK_NGX_Result NVSDK_CONV Create(ID3D12GraphicsCommandList*,NVSDK_NGX_Feature feature,const NVSDK_NGX_Parameter* params,NVSDK_NGX_Handle** out){
@@ -54,6 +62,7 @@ NVSDK_NGX_Result NVSDK_CONV Create(ID3D12GraphicsCommandList*,NVSDK_NGX_Feature 
  CHECK(params->Get("DLSSNR.Intensity",&intensity)==NVSDK_NGX_Result_Success && std::isfinite(intensity));
  CHECK(params->Get("DLSSNR.Hint.Render.Preset",&lastPreset)==NVSDK_NGX_Result_Success);
  if(failCreate)return createFailure;
+ if(memoryBudget){memoryUsage+=memoryPerCreate;ReportMemory();}
  *out=reinterpret_cast<NVSDK_NGX_Handle*>(uintptr_t(0x1000+creates));return NVSDK_NGX_Result_Success;
 }
 void Barrier(ID3D12GraphicsCommandList* cmd,ID3D12Resource* resource,D3D12_RESOURCE_STATES before,D3D12_RESOURCE_STATES after){
@@ -73,6 +82,13 @@ NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandList* cmd,const NVSDK_
  CHECK(params->Get("DLSSNR.MVecSubrectWidth",&lastMotionWidth)==NVSDK_NGX_Result_Success);
  CHECK(params->Get("DLSSNR.MVecScaleX",&lastMotionScale)==NVSDK_NGX_Result_Success);
  CHECK(params->Get("DLSSNR.UICorrection",&lastUi)==NVSDK_NGX_Result_Success);
+ CHECK(params->Get("DLSSNR.ColorSubrectWidth",&lastColorRectWidth)==NVSDK_NGX_Result_Success
+  &&params->Get("DLSSNR.ColorSubrectHeight",&lastColorRectHeight)==NVSDK_NGX_Result_Success);
+ CHECK(params->Get("DLSSNR.OutputSubrectWidth",&lastOutputRectWidth)==NVSDK_NGX_Result_Success
+  &&params->Get("DLSSNR.OutputSubrectHeight",&lastOutputRectHeight)==NVSDK_NGX_Result_Success);
+ // The network's rect stays within the feature (DLSSNR's capacity) and its textures.
+ {const auto desc=static_cast<ID3D12Resource*>(output)->GetDesc();
+  CHECK(lastOutputRectWidth>0&&lastOutputRectHeight>0&&uint64_t(lastOutputRectWidth)<=desc.Width&&UINT(lastOutputRectHeight)<=desc.Height);}
  lastOutput=output;lastReset=reset;lastColor=color;
  if(evaluates==1)CHECK(reset==1);
  auto* src=static_cast<ID3D12Resource*>(color);auto* dst=static_cast<ID3D12Resource*>(output);
@@ -91,7 +107,11 @@ NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandList* cmd,const NVSDK_
  Barrier(cmd,dst,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
  return NVSDK_NGX_Result_Success;
 }
-NVSDK_NGX_Result NVSDK_CONV Release(NVSDK_NGX_Handle*){++releases;return failRelease?NVSDK_NGX_Result_FAIL_PlatformError:NVSDK_NGX_Result_Success;}
+NVSDK_NGX_Result NVSDK_CONV Release(NVSDK_NGX_Handle*){
+ ++releases;if(failRelease)return NVSDK_NGX_Result_FAIL_PlatformError;
+ if(memoryBudget){memoryUsage-=memoryPerCreate;ReportMemory();}
+ return NVSDK_NGX_Result_Success;
+}
 // The lifecycle cases pin feature extents: Resolution Scale Auto off unless a case turns it on.
 dlss5::Settings On(dlss5::Stage stage=dlss5::Stage::eUpscaled){dlss5::Settings s{};s.enabled=true;s.stage=static_cast<uint32_t>(stage);s.scaleAuto=false;return s;}
 void Policies(){
@@ -155,10 +175,9 @@ void Policies(){
  CHECK(settings_json::Write(file,custom)&&settings_json::Parse(file,back)&&back==custom);
  const std::string status="{"+settings_json::StatusFields(custom).substr(1)+"}";
  CHECK(ui_status_json::CompleteObject(status));back={};CHECK(settings_json::Parse(status,back)&&back==custom);
- // autoscale.2: a config written before it (no dlss5DefaultsVersion) that still holds an old default look moves to the
- // new one, and Auto at its old default (on, up to 100 %) goes off; custom strengths, Auto with another maximum and
- // anything a marked config holds stay as saved. alpha.15 (generation 3): Adaptive exposure goes off for generations
- // 1 and 2, and a generation 3 file keeps it as saved.
+ // A generation 1 config (no dlss5DefaultsVersion) moves an old default look to the new one and Auto at its old
+ // default (on, up to 100 %) to off; custom strengths, other Auto maxima and marked configs stay as saved. Adaptive
+ // exposure goes off for generations 1 and 2; a generation 3 file keeps it as saved.
  Settings migrated{};
  CHECK(settings_json::Parse("{\"dlss5\":true,\"dlss5AdaptiveExposure\":true,\"dlss5OverallIntensity\":1,\"dlss5Model\":0,\"dlss5StructureIntensity\":0.7,\"dlss5ToneIntensity\":0.3,"
      "\"dlss5CharacterIntensity\":0.5,\"dlss5ResolutionScale\":100,\"dlss5ResolutionScaleAuto\":true,\"dlss5LaterStructure\":0.7,"
@@ -193,10 +212,13 @@ void Policies(){
  CHECK(Build(source,keys,Stage::eRender,false,f));CHECK(f.color==4&&f.width==64&&f.height==32&&(f.colorRect==Rect{5,6,64,32}));
  source.color=0;CHECK(!Build(source,keys,Stage::eRender,false,f));CHECK(Build(source,keys,Stage::eUpscaled,false,f));source.color=4;
  keys.createFlags=0;CHECK(Build(source,keys,Stage::eUpscaled,false,f));CHECK(f.motionRect.width==128);
- // A render subrect beyond the Create size is refused, not clamped: DLSS SR reads such a subrect whole.
+ // A render subrect beyond the Create size is refused, not clamped: DLSS SR reads such a subrect whole. One pixel over
+ // is the game's own rounding of its render size (GitHub issue 160, 3414 against 3413) and is taken as it is.
  InputsWhy why{};
- source.renderWidth=65;CHECK(!Build(source,keys,Stage::eUpscaled,false,f,&why));CHECK(why.gap==InputGap::eRenderSize);source.renderWidth=0;
- source.renderHeight=33;CHECK(!Build(source,keys,Stage::eUpscaled,false,f,&why));CHECK(why.gap==InputGap::eRenderSize);
+ source.renderWidth=65;CHECK(Build(source,keys,Stage::eUpscaled,false,f,&why));CHECK(f.depthRect.width==65);
+ source.renderWidth=66;CHECK(!Build(source,keys,Stage::eUpscaled,false,f,&why));CHECK(why.gap==InputGap::eRenderSize);source.renderWidth=0;
+ source.renderHeight=33;CHECK(Build(source,keys,Stage::eUpscaled,false,f,&why));CHECK(f.depthRect.height==33);
+ source.renderHeight=34;CHECK(!Build(source,keys,Stage::eUpscaled,false,f,&why));CHECK(why.gap==InputGap::eRenderSize);
  source.renderWidth=64;source.renderHeight=32;CHECK(Build(source,keys,Stage::eUpscaled,false,f,&why));source.renderWidth=source.renderHeight=0;
  source.motionScaleX=std::numeric_limits<float>::infinity();CHECK(!Build(source,keys,Stage::eUpscaled,false,f,&why));
  CHECK(why.gap==InputGap::eMotionScale);source.motionScaleX=1;
@@ -244,8 +266,11 @@ void Policies(){
  CHECK(clamped.structure==1.8f&&clamped.tone==kMaxStrength&&clamped.character==kMinCharacter&&clamped.laterCharacter==kMinCharacter);
  CHECK(clamped.blend==0.0f&&clamped.color==kMaxColor&&clamped.highlightLimit==kMinHighlightLimit&&clamped.haloDark==1.0f);
  CHECK(clamped.haloRadius==kMaxHaloRadius&&clamped.upsample==0&&clamped.reconstruction==0&&clamped.supersample==0);
+ {Settings ratio{};ratio.reconstruction=2;CHECK(Sanitized(ratio).reconstruction==0);
+  Settings saved{};saved.reconstruction=1;saved.intensity=0.4f;
+  CHECK(settings_json::Parse("{\"dlss5ScaleReconstruction\":2,\"dlss5OverallIntensity\":0.6}",saved));
+  CHECK(saved.reconstruction==0&&saved.intensity==0.6f);}
  CHECK(clamped.knee==kMaxKnee&&clamped.adaptiveTarget==kMinAdaptiveTarget&&clamped.boostTolerance==1&&clamped.debugView==0&&clamped.laterModel==0);
- // halfgrid.1: Half rate is offered again; a saved dlss5Boost is kept.
  Settings halfRate{};halfRate.boost=true;
  CHECK(kHalfRateOffered&&Sanitized(halfRate).boost);
  // Its look model grid: 16-texel cells up to about 1080 lines, a multiple of 16 above, partial cells counted.
@@ -261,7 +286,7 @@ void Policies(){
  Settings advanced=custom;advanced.laterCustom=true;advanced.laterModel=1;advanced.laterIntensity=0.6f;advanced.laterStructure=1.25f;
  advanced.laterTone=0.1f;advanced.laterCharacter=-1.0f;advanced.blend=1.4f;advanced.color=0.25f;advanced.highlightGuard=true;
  advanced.highlightLimit=3.5f;advanced.haloDark=0.75f;advanced.haloBright=0.2f;advanced.haloRadius=3;advanced.supersample=1;
- advanced.upsample=3;advanced.reconstruction=2;advanced.knee=0.65f;advanced.adaptiveTarget=0.3f;advanced.boostTolerance=2;
+ advanced.upsample=3;advanced.reconstruction=1;advanced.knee=0.65f;advanced.adaptiveTarget=0.3f;advanced.boostTolerance=2;
  advanced.debugView=3;advanced.compareSwap=true;advanced.structure=2.0f;advanced.character=-1.0f;
  std::string advancedFile="{\"multiplier\":2}";CHECK(settings_json::Write(advancedFile,advanced));
  back={};CHECK(settings_json::Parse(advancedFile,back)&&back==advanced);
@@ -290,8 +315,8 @@ struct Gpu {
   CHECK(WaitForSingleObject(event,10000)==WAIT_OBJECT_0);CHECK(device->GetDeviceRemovedReason()==S_OK);
   CHECK(SUCCEEDED(allocator->Reset()));CHECK(SUCCEEDED(cmd->Reset(allocator.Get(),nullptr)));
  }
- ComPtr<ID3D12Resource> Texture(DXGI_FORMAT format,D3D12_RESOURCE_STATES state,D3D12_RESOURCE_FLAGS flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS){
-  D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;d.Width=d.Height=64;d.DepthOrArraySize=d.MipLevels=d.SampleDesc.Count=1;
+ ComPtr<ID3D12Resource> Texture(DXGI_FORMAT format,D3D12_RESOURCE_STATES state,D3D12_RESOURCE_FLAGS flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,UINT16 mips=1){
+  D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;d.Width=d.Height=64;d.DepthOrArraySize=d.SampleDesc.Count=1;d.MipLevels=mips;
   d.Format=format;d.Flags=flags;D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};ComPtr<ID3D12Resource> result;
   CHECK(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,state,nullptr,IID_PPV_ARGS(&result))));return result;
  }
@@ -384,6 +409,17 @@ void Runtime(const std::string& mode){
   game.Set("DLSS.Render.Subrect.Dimensions.Width",128u);run();run();game.Set("DLSS.Render.Subrect.Dimensions.Width",64u);
   CHECK(evaluates==beforeSubrect+1&&Logged(L"render subrect 128x64 exceeds the DLSS Create size 64x64")==2);
  }
+ // A mipped output (Control Resonant's HDR target has a full chain) runs on
+ // mip 0, with only that subresource moved out of UNORDERED_ACCESS and back.
+ {
+  auto mipped=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,7);
+  game.Set("Output",mipped.Get());const unsigned beforeMipped=evaluates;
+  run();gpu.Submit();CHECK(evaluates==beforeMipped+1&&Read().state==State::eRunning);
+  CHECK(Logged(L"DLSS 5: output has 7 mips, processing mip 0 only")==1);
+  run();gpu.Submit();CHECK(evaluates==beforeMipped+2);
+  CHECK(Logged(L"DLSS 5: output has 7 mips, processing mip 0 only")==1);
+  game.Set("Output",output.Get());
+ }
  // Provider pass-through makes the production HDR encode/decode a no-op, in
  // every Scaling Domain and NR Signal Encoding (RGB residual reconstruction).
  CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
@@ -470,11 +506,11 @@ void Runtime(const std::string& mode){
  CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
  // dlss5adv.1: the Advanced decode controls on the same feature. A pass-through
  // network changes nothing, so Blend and Color strength, the highlight guard,
- // both halo reductions, Edge-aware upsampling, Ratio reconstruction and another
+ // both halo reductions, Edge-aware upsampling, RGB residual reconstruction and another
  // HDR knee must leave the HDR image exact.
  {
   Settings advanced=scaled;advanced.blend=1.7f;advanced.color=0.3f;advanced.highlightGuard=true;advanced.highlightLimit=1.5f;
-  advanced.haloDark=0.6f;advanced.haloBright=0.4f;advanced.haloRadius=3;advanced.upsample=3;advanced.reconstruction=2;advanced.knee=0.6f;
+  advanced.haloDark=0.6f;advanced.haloBright=0.4f;advanced.haloRadius=3;advanced.upsample=3;advanced.reconstruction=0;advanced.knee=0.6f;
   advanced.laterCustom=true;advanced.laterTone=0.0f;
   const unsigned beforeAdvanced=evaluates;Configure(advanced);run();gpu.Submit();run();gpu.Submit();
   CHECK(evaluates==beforeAdvanced+2&&creates==3&&releases==2);
@@ -500,6 +536,8 @@ void Runtime(const std::string& mode){
  const unsigned beforePasses=evaluates;run();CHECK(evaluates==beforePasses+3);gpu.Submit();
  CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
  Settings off=passes;off.enabled=false;Configure(off);run();CHECK(Read().state==State::eOff);CHECK(evaluates==beforePasses+3);
+ // Off releases the features once their work executed, and shows no cost.
+ gpu.Submit();run();CHECK(releases==6&&Read().live==0&&Read().gpuMs<0.0f&&Read().boostNetworkMs<0.0f&&evaluates==beforePasses+3);
  // Render stage: our processed copy is the reconstruction input for exactly one call.
  Settings render=passes;render.enabled=true;render.stage=static_cast<uint32_t>(Stage::eRender);render.passes=1;Configure(render);
  auto evaluateRender=[&]{
@@ -803,6 +841,15 @@ void PresentRuntime(){
   CHECK(evaluates==beforeWrapped+3&&streamline.executes==0&&Read().state==State::eRunning);
   CHECK(wrapped.refs==1&&opaque.refs==1&&streamline.refs==1&&wrapperDevice.refs==1&&streamlineDevice.refs==1);
  }
+ // hudlatch.1: Block Hudless ends with its chain. Draining another owner leaves it; draining the stage's owner (a
+ // resize, or the chain moved to XeFG, whose layer has no Present stage) gives frame generation the HUD-less tag
+ // back until a present is processed again.
+ settings.blockHudless=true;Configure(settings);
+ evaluate();present(target8);CHECK(BlockHudless());
+ CHECK(DrainPresent(0x5000)&&BlockHudless()&&Logged(L"its swapchain was released or resized")==0);
+ CHECK(DrainPresent(0x6000)&&!BlockHudless()&&Logged(L"its swapchain was released or resized")==1);
+ CHECK(DrainPresent(0x6000)&&!BlockHudless()&&Logged(L"its swapchain was released or resized")==1);
+ evaluate();present(target8);CHECK(BlockHudless());
  // The swapchain's work drains before its buffers go; another owner is untouched.
  CHECK(DrainPresent(0x6000)&&DrainPresent(0x5000));
  // Another Hook Method releases the Present feature once its work completed.
@@ -840,15 +887,14 @@ struct ExecutableVtable{
  }
  ~ExecutableVtable(){DWORD ignored=0;if(changed)VirtualProtect(table,3*sizeof(void*),previous,&ignored);}
 };
-// Monster Hunter Wilds (Streamline 2.7.32, RTX 4070 Ti SUPER): the presentation
-// queue is Streamline's proxy, which answers Streamline's base-interface IID
-// with the native queue and whose GetDevice gives Streamline's proxy device,
-// over the native device NGX holds. The native NGX create is refused as on Ada
+// Monster Hunter Wilds (Streamline 2.7.32): the presentation queue is
+// Streamline's proxy, which answers Streamline's base-interface IID with the
+// native queue and whose GetDevice gives Streamline's proxy device, over the
+// native device NGX holds. The native NGX create is refused as on Ada
 // (0xBAD0000B, the direct provider is next) and the list holding that attempt
 // is the first submission. Our list and fences were created on that native
 // device, so they go to the native queue as they are, also when objects of the
-// native device no longer pass the unwrap contract (V1.7.0-beta.1 refused here:
-// "the native list or fences underneath ours").
+// native device do not pass the unwrap contract.
 void PresentStreamline(){
  using namespace dlss5;Gpu gpu;testing::AllowSoftwareDevice();
  auto output=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
@@ -942,7 +988,8 @@ void OwnQueueLayer(){
  GameCreated(1,handle,keys);Configure(On());
  auto run=[&]{AfterEvaluate(1,api,gpu.cmd.Get(),handle,&game,NVSDK_NGX_Result_Success);};
  run();CHECK(creates==0&&Read().state==State::eUnsupported);
- CHECK(Logged(L"DLSS 5 setup refused: step=queue submission hook owner=")==1&&Logged(L"DLSS 5 queue submission hook: owner=")==0);
+ // GitHub issue 160: the refusal names the part that failed (here the entry is in this executable, as our own code).
+ CHECK(Logged(L"DLSS 5 setup refused: step=queue submission hook (own module) owner=")==1&&Logged(L"DLSS 5 queue submission hook: owner=")==0);
  SetQueueForward(&LayerForward);
  Settings retry=On();retry.intensity=0.71f;Configure(retry);run();CHECK(creates==1&&evaluates==0);
  CHECK(Logged(L"DLSS 5 queue submission hook: owner=")==1&&Logged(L" (behind our own table hook)")==1);
@@ -985,13 +1032,131 @@ void ReplaceFailure(){
  CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
  BeforeRelease(1,handle);AfterRelease(1,handle,NVSDK_NGX_Result_Success);CHECK(releases==3&&allocates==destroys);
 }
+// nrscale.1: a replacement with no room beside the live feature in the video memory
+// budget replaces it in place (one evaluation left out, said once); with room again
+// it goes beside. Each create takes 300 MB; the create log gives the memory.
+void ReplaceMemory(){
+ using namespace dlss5;Gpu gpu;testing::AllowSoftwareDevice();
+ auto output=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
+ auto color=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
+ auto depth=gpu.Texture(DXGI_FORMAT_R32G8X24_TYPELESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+ auto motion=gpu.Texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ Images images(gpu,output.Get());
+ images.Fill(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+ images.Fill(color.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ Params game;game.Set("Output",output.Get());game.Set("Color",color.Get());game.Set("Depth",depth.Get());game.Set("MotionVectors",motion.Get());
+ game.Set("Width",64u);game.Set("Height",64u);game.Set("OutWidth",64u);game.Set("OutHeight",64u);game.Set("DLSS.Feature.Create.Flags",3);
+ const auto keys=ReadCreate(&game);CHECK(keys.Complete());
+ Api api{GetModuleHandleW(nullptr),&Create,&Evaluate,&Release,&Allocate,&Destroy};
+ const auto* handle=reinterpret_cast<const NVSDK_NGX_Handle*>(0x600);
+ constexpr uint64_t MB=1ull<<20;
+ memoryUsage=1000*MB;memoryBudget=1500*MB;memoryPerCreate=300*MB;ReportMemory();
+ GameCreated(1,handle,keys);Configure(On());
+ auto run=[&]{AfterEvaluate(1,api,gpu.cmd.Get(),handle,&game,NVSDK_NGX_Result_Success);};
+ run();CHECK(creates==1&&evaluates==0);gpu.Submit();
+ CHECK(Logged(L"; video memory 1000 -> 1300 MB of a 1500 MB budget")==1);
+ run();CHECK(evaluates==1);gpu.Submit();
+ Settings model=On();model.model=1;Configure(model);
+ run();CHECK(creates==2&&releases==1&&evaluates==1);gpu.Submit();
+ CHECK(Logged(L"DLSS 5 replaces its feature in place: 1300 MB of video memory in use and about 300 MB for a create at 64x64 exceed the 1500 MB budget")==1);
+ run();CHECK(evaluates==2&&lastStyle==1&&lastReset==1);gpu.Submit();
+ CHECK(Logged(L"replaced without a gap")==0);
+ // Room again: the replacement goes beside, the live feature evaluating until it is ready.
+ memoryBudget=4000*MB;ReportMemory();
+ Settings scaled=model;scaled.scale=50;Configure(scaled);
+ run();CHECK(creates==3&&releases==1&&evaluates==3&&lastStyle==1);gpu.Submit();
+ run();CHECK(evaluates==4&&lastWidth==32);gpu.Submit();
+ CHECK(Logged(L"replaced without a gap")==1&&Logged(L"replaces its feature in place")==1);
+ CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+ BeforeRelease(1,handle);AfterRelease(1,handle,NVSDK_NGX_Result_Success);CHECK(releases==3&&allocates==destroys);
+ memoryBudget=0;testing::SetVideoMemory(0,0);
+}
+// autorect.1: Resolution Scale Auto creates its feature once, at the slider's level, and an Auto step moves the
+// network's rect within it: no create, the provider's Color and Output subrects at the level's extent, the history
+// restarted once, the status at the level. Half rate keeps its look model textures across steps. The slider stays
+// Auto's ceiling: lowering it is a new, smaller feature beside the live one.
+void AutoCapacity(){
+ using namespace dlss5;Gpu gpu;testing::AllowSoftwareDevice();
+ auto output=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
+ auto color=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
+ auto depth=gpu.Texture(DXGI_FORMAT_R32G8X24_TYPELESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+ auto motion=gpu.Texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ Images images(gpu,output.Get());
+ images.Fill(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+ images.Fill(color.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ Params game;game.Set("Output",output.Get());game.Set("Color",color.Get());game.Set("Depth",depth.Get());game.Set("MotionVectors",motion.Get());
+ game.Set("Width",64u);game.Set("Height",64u);game.Set("OutWidth",64u);game.Set("OutHeight",64u);game.Set("DLSS.Feature.Create.Flags",3);
+ const auto keys=ReadCreate(&game);CHECK(keys.Complete());
+ Api api{GetModuleHandleW(nullptr),&Create,&Evaluate,&Release,&Allocate,&Destroy};
+ const auto* handle=reinterpret_cast<const NVSDK_NGX_Handle*>(0x700);
+ Settings automatic=On(Stage::eAuto);automatic.scaleAuto=true;automatic.scale=100;automatic.adaptiveExposure=false;
+ testing::SetAutoLevel(0);
+ GameCreated(1,handle,keys);Configure(automatic);
+ auto run=[&]{AfterEvaluate(1,api,gpu.cmd.Get(),handle,&game,NVSDK_NGX_Result_Success);};
+ const auto rect=[](int width,int height){
+  return lastColorRectWidth==width&&lastColorRectHeight==height&&lastOutputRectWidth==width&&lastOutputRectHeight==height;
+ };
+ run();CHECK(creates==1&&evaluates==0&&lastWidth==64);gpu.Submit();
+ run();CHECK(evaluates==1&&rect(64,64)&&lastReset==1);gpu.Submit();
+ run();CHECK(evaluates==2&&lastReset==0);gpu.Submit();
+ testing::SetAutoLevel(2);
+ run();CHECK(creates==1&&evaluates==3&&rect(48,48)&&lastReset==1);gpu.Submit();
+ run();CHECK(evaluates==4&&rect(48,48)&&lastReset==0);gpu.Submit();
+ {const auto view=Read();
+  CHECK(view.scale==75.0f&&view.extentWidth==48&&view.extentHeight==48&&!view.pending&&view.live==1&&view.creates==1);}
+ CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+ testing::SetAutoLevel(1);
+ run();CHECK(creates==1&&rect(54,54)&&lastReset==1);gpu.Submit();
+ testing::SetAutoLevel(0);
+ run();CHECK(creates==1&&rect(64,64)&&lastReset==1&&Read().scale==100.0f&&Read().extentWidth==64);gpu.Submit();
+ CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+ CHECK(Logged(L"DLSS 5 feature created")==1&&Logged(L"replaced without a gap")==0&&releases==0);
+ // Half rate across a step: its textures hold every level's look model grid (64x64: 4x4 cells, 48x48: 3x3), so
+ // the step keeps them; the step runs the network on the new rect, and Carry follows on it.
+ automatic.boost=true;Configure(automatic);
+ const unsigned beforeBoost=evaluates;
+ run();CHECK(evaluates==beforeBoost+1);gpu.Submit();
+ run();CHECK(evaluates==beforeBoost+1);gpu.Submit();
+ testing::SetAutoLevel(2);
+ run();CHECK(evaluates==beforeBoost+2&&rect(48,48)&&lastReset==1);gpu.Submit();
+ run();CHECK(evaluates==beforeBoost+2);gpu.Submit();
+ CHECK(Logged(L"DLSS 5 Boost: the network runs on every other evaluation")==1&&Logged(L"DLSS 5 Boost unavailable")==0&&creates==1);
+ // autofps.1: a Dynamic frame generation target reaches Auto's budget (the status reports the one StepScale steps
+ // with): 120 FPS with 2 to 4 frames, as DLSS-G publishes it; once stopped, the 30 % rule again; XeMFG's report as
+ // well (dlss5-auto-policy checks the budget itself, e.g. none for a target out of reach).
+ {
+  frame_gen_target::Publish(frame_gen_target::Source::eDlssg,true,120.0f,2,4);
+  run();gpu.Submit();run();gpu.Submit();
+  const auto followed=Read();
+  CHECK(followed.budgetMs==auto_mode::DynamicBudgetMs(followed.frameMs,followed.gpuMs,120.0f,2,4));
+  CHECK(Logged(L"DLSS 5 Auto follows Dynamic frame generation's target: 120 FPS with 2 to 4 frames per rendered frame")==1);
+  frame_gen_target::Publish(frame_gen_target::Source::eDlssg,false,0.0f,0,0);
+  const auto plain=Read();
+  CHECK(plain.budgetMs==auto_mode::BudgetMs(plain.frameMs,plain.gpuMs));
+  frame_gen_target::Publish(frame_gen_target::Source::eXemfg,true,90.0f,1,3);
+  const auto xemfg=Read();
+  CHECK(xemfg.budgetMs==auto_mode::DynamicBudgetMs(xemfg.frameMs,xemfg.gpuMs,90.0f,1,3));
+  frame_gen_target::Publish(frame_gen_target::Source::eXemfg,false,0.0f,0,0);
+  run();gpu.Submit();
+  CHECK(Logged(L"DLSS 5 Auto no longer follows a Dynamic frame generation target")==1&&creates==1);
+ }
+ // The slider at 75 %: a 48x48 feature beside the live one, which runs at 75 % of its 64x64 until then.
+ testing::SetAutoLevel(SIZE_MAX);
+ automatic.boost=false;automatic.scale=75;Configure(automatic);
+ const unsigned beforeSlider=evaluates;
+ run();CHECK(creates==2&&lastWidth==48&&evaluates==beforeSlider+1&&rect(48,48));gpu.Submit();
+ run();CHECK(evaluates==beforeSlider+2&&rect(48,48)&&lastReset==1);gpu.Submit();
+ CHECK(Logged(L"replaced without a gap")==1&&!Read().pending&&Read().scale==75.0f);
+ BeforeRelease(1,handle);AfterRelease(1,handle,NVSDK_NGX_Result_Success);testing::Collect();
+ CHECK(releases==creates&&allocates==destroys);
+}
 // hdrbridge.1: the HDR bridge keeps hue. Unbounded color (an IsHDR DLSS feature
 // after upscaling) above the knee goes to the network scaled along its ray, and the
 // network's change comes back by the texel's own ratio k, one factor for R, G and B.
 // With a network that adds an even step to its signal, the decoded texel is the
 // stage texel plus k times the change the network made to the SDR color it saw, so
-// its hue moves as that SDR color's does. beta.4's per-channel shoulder turned the
-// same step into a red cast on lit skin (B4-27: R/G 1.47 -> 1.60 at +0.01).
+// its hue moves as that SDR color's does. A per-channel shoulder turns the same
+// step into a red cast on lit skin (R/G 1.47 -> 1.60 at +0.01).
 double SrgbDecode(double c){c=std::clamp(c,0.0,1.0);return c<=0.04045?c/12.92:std::pow((c+0.055)/1.055,2.4);}
 double OkHue(const double c[3],double* chroma){ // OkLab hue in degrees, linear BT.709
  const double m[3][3]{{0.4122214708,0.5363325363,0.0514459929},{0.2119034982,0.6806995451,0.1073969566},{0.0883024619,0.2817188376,0.6299787005}};
@@ -1081,6 +1246,78 @@ void HdrBridge(){
  }
  BeforeRelease(1,handle);AfterRelease(1,handle,NVSDK_NGX_Result_Success);CHECK(releases==1&&allocates==destroys);
 }
+// dx11nr.1: on the DirectX 11 route, native NGX's 0xBAD0000C (driver out of date) fails closed: Driver update
+// required, the direct provider is never tried (not after a settings change either). Route 1 keeps its fallback.
+void D3D11OutOfDate(){
+ using namespace dlss5;Gpu gpu;testing::AllowSoftwareDevice();
+ auto output=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
+ auto depth=gpu.Texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ auto motion=gpu.Texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ Images images(gpu,output.Get());images.Fill(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+ Params game;game.Set("Output",output.Get());game.Set("Depth",depth.Get());game.Set("MotionVectors",motion.Get());
+ game.Set("Width",64u);game.Set("Height",64u);game.Set("OutWidth",64u);game.Set("OutHeight",64u);game.Set("DLSS.Feature.Create.Flags",3);
+ const auto keys=ReadCreate(&game);CHECK(keys.Complete());
+ Api api{GetModuleHandleW(nullptr),&Create,&Evaluate,&Release,&Allocate,&Destroy};
+ // A provider beside the game: without the rule, the next evaluation would try it.
+ testing::SetProviderPath(L"C:\\RTXMFG-test-missing\\nvngx_dlssnr.dll");
+ failCreate=true;createFailure=NVSDK_NGX_Result_FAIL_OutOfDate;
+ const auto* handle=reinterpret_cast<const NVSDK_NGX_Handle*>(0x100);
+ GameCreated(kD3D11Route,handle,keys);Configure(On());
+ auto run=[&](const NVSDK_NGX_Handle* which,size_t route){AfterEvaluate(route,api,gpu.cmd.Get(),which,&game,NVSDK_NGX_Result_Success);gpu.Submit();};
+ run(handle,kD3D11Route);
+ CHECK(creates==1&&Read().state==State::eDriverUpdate&&Read().result==0xBAD0000Cu);
+ // The bridge asks before any cross-API work: nothing to do for these settings.
+ CHECK(!shared::CanEvaluate(kD3D11Route,handle,&game,Stage::eUpscaled)&&Read().state==State::eDriverUpdate);
+ CHECK(Logged(L"the driver is out of date, so the DirectX 11 bridge does not use the direct provider")==1);
+ CHECK(Logged(L"DLSS 5 direct provider")==0);
+ // A settings change retries the slot: refused again, without a create or the direct provider.
+ Settings retry=On();retry.intensity=0.71f;Configure(retry);
+ CHECK(shared::CanEvaluate(kD3D11Route,handle,&game,Stage::eUpscaled));
+ run(handle,kD3D11Route);run(handle,kD3D11Route);
+ CHECK(creates==1&&Read().state==State::eDriverUpdate&&Logged(L"DLSS 5 direct provider")==0);
+ CHECK(!shared::CanEvaluate(kD3D11Route,handle,&game,Stage::eUpscaled));
+ BeforeRelease(kD3D11Route,handle);AfterRelease(kD3D11Route,handle,NVSDK_NGX_Result_Success);testing::Collect();
+ CHECK(allocates==destroys);
+ // The same result on a D3D12 route keeps dlss5.cpp's fallback in this build.
+ const auto* other=reinterpret_cast<const NVSDK_NGX_Handle*>(0x200);
+ GameCreated(1,other,keys);Configure(On());run(other,1);
+ CHECK(creates==2&&Logged(L"the next evaluation uses the direct provider")==1);
+ BeforeRelease(1,other);AfterRelease(1,other,NVSDK_NGX_Result_Success);testing::Collect();CHECK(allocates==destroys);
+}
+// dx11nr.1: the bridge's stage calls carry the settings revision it resolved its stage for, so a switch to Present in
+// between records nothing on its list; CanEvaluate accepts a healthy slot and refuses missing inputs; ReleaseRoute
+// releases the route's feature (Present on DirectX 11) once its work completed.
+void D3D11Stage(){
+ using namespace dlss5;Gpu gpu;testing::AllowSoftwareDevice();
+ auto output=gpu.Texture(DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
+ auto depth=gpu.Texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ auto motion=gpu.Texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ Images images(gpu,output.Get());images.Fill(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+ Params game;game.Set("Output",output.Get());game.Set("Depth",depth.Get());game.Set("MotionVectors",motion.Get());
+ game.Set("Width",64u);game.Set("Height",64u);game.Set("OutWidth",64u);game.Set("OutHeight",64u);game.Set("DLSS.Feature.Create.Flags",3);
+ const auto keys=ReadCreate(&game);CHECK(keys.Complete());
+ Api api{GetModuleHandleW(nullptr),&Create,&Evaluate,&Release,&Allocate,&Destroy};
+ const auto* handle=reinterpret_cast<const NVSDK_NGX_Handle*>(0x100);
+ GameCreated(kD3D11Route,handle,keys);Configure(On());
+ uint64_t revision=0;shared::Wanted(revision);
+ CHECK(shared::CanEvaluate(kD3D11Route,handle,&game,Stage::eUpscaled)&&shared::CanEvaluate(kD3D11Route,handle,nullptr,Stage::eUpscaled));
+ CHECK(!shared::CanEvaluate(kD3D11Route,reinterpret_cast<const NVSDK_NGX_Handle*>(0x999),&game,Stage::eUpscaled));
+ Params missing=game;missing.values.erase("Depth");
+ CHECK(!shared::CanEvaluate(kD3D11Route,handle,&missing,Stage::eUpscaled)&&Read().state==State::eMissingInputs);
+ // Present chosen after the bridge read its settings: neither stage call records.
+ Configure(On(Stage::ePresent));
+ AfterEvaluate(kD3D11Route,api,gpu.cmd.Get(),handle,&game,NVSDK_NGX_Result_Success,Substitution{},revision);
+ CHECK(BeforeEvaluate(kD3D11Route,api,gpu.cmd.Get(),handle,&game,revision).slot==SIZE_MAX);
+ CHECK(creates==0&&evaluates==0);gpu.Submit();
+ // Back at After upscaling, at its own revision: the feature is created, then evaluates.
+ Configure(On());shared::Wanted(revision);
+ auto run=[&]{AfterEvaluate(kD3D11Route,api,gpu.cmd.Get(),handle,&game,NVSDK_NGX_Result_Success,Substitution{},revision);gpu.Submit();};
+ run();CHECK(creates==1);run();CHECK(evaluates==1&&Read().d3d11);
+ // Present on DirectX 11: the bridge releases the route's feature as Off does.
+ Configure(On(Stage::ePresent));shared::ReleaseRoute(kD3D11Route);
+ CHECK(releases==1&&Read().live==0&&Logged(L"DLSS 5: a feature its Hook Method does not run on was released")==1);
+ BeforeRelease(kD3D11Route,handle);AfterRelease(kD3D11Route,handle,NVSDK_NGX_Result_Success);testing::Collect();CHECK(allocates==destroys);
+}
 void Slots(){
  using namespace dlss5;
  dlss_sr::CreateKeys keys{};keys.present=dlss_sr::CreateKeys::eRequired|dlss_sr::CreateKeys::eCreateFlags;
@@ -1094,6 +1331,11 @@ void Slots(){
  GameCreated(1,handle(11),keys);CHECK(Logged(L"slots are in use")==1);
  GameCreated(1,handle(12),keys);CHECK(Logged(L"slots are in use")==2);
  for(uintptr_t n=2;n<=11;++n){BeforeRelease(1,handle(n));AfterRelease(1,handle(n),NVSDK_NGX_Result_Success);}
+ // nrouter.1: a slot belongs to its route; OptiScaler's calls own theirs until the release begins.
+ GameCreated(kOptiScalerRoute,handle(20),keys);
+ CHECK(Owns(kOptiScalerRoute,handle(20)) && !Owns(1,handle(20)) && !Owns(kOptiScalerRoute,handle(21)));
+ BeforeRelease(kOptiScalerRoute,handle(20));CHECK(!Owns(kOptiScalerRoute,handle(20)));
+ AfterRelease(kOptiScalerRoute,handle(20),NVSDK_NGX_Result_Success);CHECK(!Owns(kOptiScalerRoute,handle(20)));
 }
 int main(int argc,char**argv){
  dlss5::SetLogCallback(&Capture);
@@ -1103,7 +1345,11 @@ int main(int argc,char**argv){
  else if(mode=="slots")Slots();
  else if(mode=="own-queue-layer")OwnQueueLayer();
  else if(mode=="replace-failure")ReplaceFailure();
+ else if(mode=="replace-memory")ReplaceMemory();
+ else if(mode=="auto-capacity")AutoCapacity();
  else if(mode=="hdr-bridge")HdrBridge();
+ else if(mode=="d3d11-out-of-date")D3D11OutOfDate();
+ else if(mode=="d3d11-stage")D3D11Stage();
  else Runtime(mode);
  std::printf("DLSS5 checks=%u PASS\n",checks);
 }

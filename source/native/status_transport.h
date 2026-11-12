@@ -30,8 +30,9 @@ inline std::wstring MemoryName(const std::wstring& primary) {
 struct MutexLock {
     HANDLE mutex=nullptr;
     bool held=false;
-    explicit MutexLock(HANDLE value):mutex(value) {
-        if(mutex){const auto result=WaitForSingleObject(mutex,0);held=result==WAIT_OBJECT_0||result==WAIT_ABANDONED;}
+    // Readers (the menu, on the render thread) never wait; the writer waits out a reader's copy.
+    explicit MutexLock(HANDLE value,DWORD wait=0):mutex(value) {
+        if(mutex){const auto result=WaitForSingleObject(mutex,wait);held=result==WAIT_OBJECT_0||result==WAIT_ABANDONED;}
     }
     ~MutexLock(){if(held)ReleaseMutex(mutex);}
 };
@@ -76,7 +77,7 @@ inline DWORD WriteMemory(Writer& writer,const std::string& text) {
     const auto name=MemoryName(writer.path);
     if(name.empty())return ERROR_INVALID_NAME;
     if(!writer.memoryMutex)writer.memoryMutex=CreateMutexW(nullptr,FALSE,(name+L"-Lock").c_str());
-    MutexLock lock(writer.memoryMutex);
+    MutexLock lock(writer.memoryMutex,10);
     if(!lock.held)return ERROR_BUSY;
     bool created=false;
     if(!writer.mapping) {
@@ -132,29 +133,39 @@ inline DWORD AtomicWrite(const std::wstring& path,const std::string& text) {
     if(error)DeleteFileW(temporary.c_str());
     return error;
 }
-struct Result {bool published=false;bool fallback=false;DWORD primaryError=0;DWORD fallbackError=0;};
-inline Result Publish(const std::wstring& primary,const std::string& text) {
+// fallbackError is the process-memory write's result; fallback means the file could not be replaced and the
+// memory copy alone carries this publication. disk says whether the file write was attempted: disk=false skips
+// it while the memory copy is written, and writes the file anyway when the memory copy fails.
+struct Result {bool published=false;bool fallback=false;bool disk=false;DWORD primaryError=0;DWORD fallbackError=0;};
+inline Result Publish(const std::wstring& primary,const std::string& text,bool disk=true) {
     Result result;
     if(primary.empty()||text.empty()||text.size()>kCapacity){result.primaryError=ERROR_INVALID_PARAMETER;return result;}
     std::lock_guard lock(writersMutex);
     auto* writer=FindWriter(primary);
     if(!writer){result.primaryError=ERROR_NOT_ENOUGH_MEMORY;return result;}
+    // GitHub issue 122: every publication refreshes this process's memory copy first, so in-process readers
+    // (the menu) read it instead of the file and the file can be written less often.
+    result.fallbackError=WriteMemory(*writer,text);
+    if(!disk&&result.fallbackError==ERROR_SUCCESS){result.published=true;return result;}
+    result.disk=true;
     result.primaryError=OwnsDisk(*writer)?AtomicWrite(primary,text):ERROR_BUSY;
     if(!result.primaryError){result.published=true;return result;}
     if(result.primaryError!=ERROR_SHARING_VIOLATION&&result.primaryError!=ERROR_LOCK_VIOLATION
         &&result.primaryError!=ERROR_ACCESS_DENIED&&result.primaryError!=ERROR_BUSY)return result;
-    result.fallbackError=WriteMemory(*writer,text);
     result.published=result.fallbackError==ERROR_SUCCESS;
     result.fallback=result.published;
     return result;
 }
+// Source::Fallback is this process's memory copy. It is read first: every publication refreshes it before the
+// file (a writer that cannot take its lock within 10 ms leaves it one publication behind). The file serves
+// readers before the first publication or without the memory copy.
 enum class Source {None,Primary,Fallback};
 template<class Reader,class Validator>
 Source Read(const std::wstring& primary,std::string& output,Reader reader,Validator valid) {
     std::string trial;
-    if(reader(primary,trial)&&valid(trial)){output=std::move(trial);return Source::Primary;}
-    trial.clear();
     if(ReadMemory(primary,trial)&&valid(trial)){output=std::move(trial);return Source::Fallback;}
+    trial.clear();
+    if(reader(primary,trial)&&valid(trial)){output=std::move(trial);return Source::Primary;}
     return Source::None;
 }
 }

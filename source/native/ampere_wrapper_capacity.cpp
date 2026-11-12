@@ -20,6 +20,9 @@ constexpr Fields kPacerFields{0x10d00, 0x3538, 0x60, 0x48};
 constexpr Fields kLegacyCompactFields{0x45a4, 0x4120, 0x58, 0x40};
 constexpr Fields kLegacySmallFields{0x39f8, 0x3538, 0x60, 0x48};
 constexpr Fields kLegacyLargeFields{0x45c8, 0x4138, 0x60, 0x48};
+// Streamline 2.12.0 and OTA 2.12.129 ("direct"; GitHub issue 153): an MFG ring on the context, with the compact
+// profile's swap-chain, count and buffer fields. Startup caches min(DLSSG.MultiFrameCountMax, 5) at +45e4 (1 when
+// NGX has no value); swap-chain setup makes that +1 (at most 6) the BufferCount and resizes the +42c0 vector to it.
 constexpr Fields kLegacyDirectFields{0x45e4, 0x4150, 0x4158, 0x42c0};
 bool UsesPacer(const Layout& layout) noexcept
 {
@@ -209,7 +212,7 @@ bool ReadUnchecked(const Layout& layout, Capacity& value) noexcept
     value.context = Field<uintptr_t>(layout.contextSlot, 0);
     if (!value.context || (layout.maximumGeneratedFrames != 1
             && layout.maximumGeneratedFrames != ampere_mfg::kMaximumGeneratedFrames)) return false;
-    // ringcap.1: an MFG wrapper sizes its ring from the maximum its startup
+    // An MFG wrapper sizes its ring from the maximum its startup
     // cached (min(DLSSG.MultiFrameCountMax, 5)), which can be below the layout's
     // five. That maximum N, with exactly N+1 buffers below, is the capacity.
     const uint32_t maximum = Field<uint32_t>(value.context, fields->maximum);
@@ -278,7 +281,12 @@ bool Discover(HMODULE module, Layout& layout) noexcept
             + direct != 1) return false;
         const bool pacerFields = pacer || otaPacer || latePacer;
         const bool legacy = pacerFields || legacyCompact || small || large;
-        const bool fixedTwoX = legacy || direct;
+        // The direct ring holds N+1 for the N its startup cached, as on the compact profile; Read()
+        // certifies N from the allocation. Only the pacer-ring profiles stay 2x.
+        const bool fixedTwoX = legacy;
+        // These Create contracts are windows inside the function, not its entry; the unwind entry
+        // that contains the window gives the caller range.
+        const bool interiorCreate = legacy || direct;
         const uintptr_t prologue = compact ? compactContext : extended || extendedOverride ? extendedContext
             : pacer ? pacerContext : otaPacer ? otaPacerContext : small || latePacer ? smallContext
             : large ? largeContext : direct ? compactContext : legacyCompactContext;
@@ -306,7 +314,7 @@ bool Discover(HMODULE module, Layout& layout) noexcept
         for (size_t i = 0; i < directory.Size / sizeof(RUNTIME_FUNCTION); ++i)
         {
             if (!(functions[i].BeginAddress <= create - image.base && create - image.base < functions[i].EndAddress)) continue;
-            if (!fixedTwoX && functions[i].BeginAddress != create - image.base) return false;
+            if (!interiorCreate && functions[i].BeginAddress != create - image.base) return false;
             if (end || functions[i].EndAddress <= functions[i].BeginAddress
                 || functions[i].EndAddress - functions[i].BeginAddress > 4096
                 || !image.Contains(image.base + functions[i].BeginAddress,

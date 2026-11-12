@@ -1,0 +1,23 @@
+#version 460
+// rtxhair-spirv fixture: SER hit objects asking for LSS endpoints (not converted yet). Expect: Neutral.
+#extension GL_EXT_ray_tracing : require
+#extension GL_NV_shader_invocation_reorder : require
+#extension GL_NV_linear_swept_spheres : require
+
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(binding = 1, std430) buffer Out { vec4 values[]; };
+layout(location = 0) rayPayloadEXT vec4 payload;
+
+void main()
+{
+    hitObjectNV hit;
+    hitObjectTraceRayNV(hit, scene, gl_RayFlagsOpaqueEXT, 0xFF, 0, 1, 0, vec3(0.0), 0.0, vec3(0.0, 0.0, 1.0), 100.0, 0);
+    vec4 r = vec4(0.0);
+    if (hitObjectIsLSSHitNV(hit))
+    {
+        vec3 positions[2];
+        hitObjectGetLSSPositionsNV(hit, positions);
+        r = vec4(positions[0], 1.0);
+    }
+    values[gl_LaunchIDEXT.x] = r;
+}

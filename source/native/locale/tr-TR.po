@@ -67,6 +67,84 @@ msgstr ""
 "Menü kapalıyken gerçek ve DLSS FPS değerlerini\n"
 "sol üst köşede gösterir. Ayar, sonraki açılışlar için kaydedilir."
 
+msgid ""
+"Shows the PC latency in the top-left corner\n"
+"while the menu is closed. Saved for the next launch."
+msgstr ""
+"Menü kapalıyken PC gecikmesini sol üst köşede gösterir.\n"
+"Sonraki açılış için kaydedilir."
+
+msgid "Latency"
+msgstr "Gecikme"
+
+msgid "%.1f ms, 1%% high %.1f ms"
+msgstr "%.1f ms, en kötü %%1 %.1f ms"
+
+msgid ""
+"PC latency: from the game starting a frame (its Reflex simulation start)\n"
+"to the first frame showing it reaching the screen."
+msgstr ""
+"PC gecikmesi: oyunun bir kareye başlamasından (Reflex simülasyon başlangıcı)\n"
+"onu gösteren ilk karenin ekrana ulaşmasına kadar."
+
+msgid "Game %.1f ms, frame generation %.1f ms, display %.1f ms."
+msgstr "Oyun %.1f ms, kare oluşturma %.1f ms, ekran %.1f ms."
+
+msgid "The real frame reaches the screen after %.1f ms."
+msgstr "Gerçek kare ekrana %.1f ms sonra ulaşır."
+
+msgid "Mouse and monitor delay are not included."
+msgstr "Fare ve monitör gecikmesi dahil değildir."
+
+msgid "Unavailable"
+msgstr "Kullanılamıyor"
+
+msgid "the game sends no Reflex markers"
+msgstr "oyun Reflex işaretçisi göndermiyor"
+
+msgid "no frames to time on this route"
+msgstr "bu yolda ölçülecek kare yok"
+
+msgid "Windows reports no flip times here"
+msgstr "Windows burada gösterim zamanlarını bildirmiyor"
+
+msgid "Measuring..."
+msgstr "Ölçülüyor..."
+
+msgid "Game / driver default"
+msgstr "Oyun / sürücü varsayılanı"
+
+msgid "Preset C (performance)"
+msgstr "Preset C (performans)"
+
+msgid ""
+"The DLSS frame generation model preset.\n"
+"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
+"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
+"A change made while frame generation runs restarts it once, with a short pause;\n"
+"some older DLSS-G versions apply it after a game restart."
+msgstr ""
+"DLSS kare oluşturma modelinin preset'i.\n"
+"Preset C, NVIDIA'nın daha hafif Kare Oluşturma modudur. DLSS-G 310.9.16 veya daha yenisi gerekir;\n"
+"bu sürüm NVIDIA App'teki DLSS Override ile gelir. Diğer sağlayıcılar oyun / sürücü preset'inde kalır.\n"
+"Kare oluşturma çalışırken yapılan değişiklik onu bir kez, kısa bir duraklamayla yeniden başlatır;\n"
+"bazı eski DLSS-G sürümlerinde değişiklik oyun yeniden başlatılınca uygulanır."
+
+msgid "Preset %s is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Preset %s kaydedildi. Kare oluşturma bir sonraki başladığında veya oyun yeniden başlatılınca uygulanır."
+
+msgid "The game / driver preset is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Oyun / sürücü preset'i kaydedildi. Kare oluşturma bir sonraki başladığında veya oyun yeniden başlatılınca uygulanır."
+
+msgid "Restarting frame generation with the new preset..."
+msgstr "Kare oluşturma yeni preset ile yeniden başlatılıyor..."
+
+msgid "The game / driver preset is saved. Restart the game to use it."
+msgstr "Oyun / sürücü preset'i kaydedildi. Uygulamak için oyunu yeniden başlatın."
+
+msgid "Preset %s is saved. Restart the game to use it."
+msgstr "Preset %s kaydedildi. Uygulamak için oyunu yeniden başlatın."
+
 msgid "DLSS-G preset"
 msgstr "DLSS-G preset'i"
 
@@ -103,42 +181,14 @@ msgstr "Bu DLSS-G sağlayıcısı yalnızca kendi varsayılan preset'ini destekl
 msgid "This DLSS-G provider supports its original preset only."
 msgstr "Bu DLSS-G sağlayıcısı yalnızca kendi varsayılan preset'ini destekler."
 
-msgid "Restarting frame generation with the new preset..."
-msgstr "Kare oluşturma yeni preset ile yeniden başlatılıyor..."
-
-msgid "The game / driver preset is saved. Restart the game to use it."
-msgstr "Oyun / sürücü preset'i kaydedildi. Uygulamak için oyunu yeniden başlatın."
-
-msgid "Preset %s is saved. Restart the game to use it."
-msgstr "Preset %s kaydedildi. Uygulamak için oyunu yeniden başlatın."
-
 msgid "Preset C needs DLSS-G 310.9.16 or newer (NVIDIA app). This game's frame generation keeps the game / driver preset."
 msgstr "Preset C için DLSS-G 310.9.16 veya daha yenisi gerekir (NVIDIA App üzerinden). Bu oyunda kare oluşturma, oyun / sürücü preset'ini kullanmaya devam eder."
 
 msgid "The preset selection could not be saved."
 msgstr "Preset seçimi kaydedilemedi."
 
-msgid "Game / driver default"
-msgstr "Oyun / sürücü varsayılanı"
-
-msgid "Preset C (performance)"
-msgstr "Preset C (performans)"
-
 msgid "Original preset"
 msgstr "Varsayılan preset"
-
-msgid ""
-"The DLSS frame generation model preset.\n"
-"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
-"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
-"A change made while frame generation runs restarts it once, with a short pause;\n"
-"some older DLSS-G versions apply it after a game restart."
-msgstr ""
-"DLSS kare oluşturma modelinin preset'i.\n"
-"Preset C, NVIDIA'nın daha hafif Kare Oluşturma modudur. DLSS-G 310.9.16 veya daha yenisi gerekir;\n"
-"bu sürüm NVIDIA App'teki DLSS Override ile gelir. Diğer sağlayıcılar oyun / sürücü preset'inde kalır.\n"
-"Kare oluşturma çalışırken yapılan değişiklik onu bir kez, kısa bir duraklamayla yeniden başlatır;\n"
-"bazı eski DLSS-G sürümlerinde değişiklik oyun yeniden başlatılınca uygulanır."
 
 msgid "Performance"
 msgstr "Performans"
@@ -293,6 +343,176 @@ msgstr "Bağlanma yöntemi kullanılamıyor"
 msgid "Waiting for DLSS"
 msgstr "DLSS bekleniyor"
 
+msgid "This game evaluates DLSS on a deferred DirectX 11 context. DLSS 5 needs the immediate context, so it leaves the frame as is."
+msgstr "Bu oyun DLSS'i ertelenmiş bir DirectX 11 bağlamında çalıştırıyor. DLSS 5 anlık bağlama ihtiyaç duyduğundan kareyi olduğu gibi bırakır."
+
+msgid "DLSS 5 on DirectX 11 needs shared fences (Windows 10 version 1703 or later and a current driver). It leaves the frame as is."
+msgstr "DirectX 11'de DLSS 5 paylaşılan fence'lere ihtiyaç duyar (Windows 10 sürüm 1703 veya üstü ve güncel bir sürücü). Kareyi olduğu gibi bırakır."
+
+msgid "DLSS 5 could not create its DirectX 12 device for this DirectX 11 game; the log names the reason."
+msgstr "DLSS 5, bu DirectX 11 oyunu için kendi DirectX 12 aygıtını oluşturamadı; nedeni log dosyasında yazar."
+
+msgid "DLSS 5 could not share textures between this DirectX 11 game and its DirectX 12 device; the log names the reason."
+msgstr "DLSS 5, bu DirectX 11 oyunu ile kendi DirectX 12 aygıtı arasında doku paylaşamadı; nedeni log dosyasında yazar."
+
+msgid "DLSS 5 cannot attach to this game's DirectX 11 DLSS: MFG Unlocker did not see it being created (it came before the hook, or another hook covers NVIDIA's entries). The log names the reason."
+msgstr "DLSS 5 bu oyunun DirectX 11 DLSS'ine bağlanamıyor: MFG Unlocker oluşturulduğunu görmedi (bağlantıdan önce geldi ya da başka bir bağlantı NVIDIA'nın giriş noktalarını kapatıyor). Nedeni log dosyasında yazar."
+
+msgid ""
+"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
+"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
+"After upscaling processes the DLSS output after reconstruction.\n"
+"Present processes the final image, game UI included, before presentation and frame generation."
+msgstr ""
+"Otomatik, DLSS çıktısını yeniden yapılandırmadan sonra işler; Çözünürlük ölçeği Otomatik maliyetini sınırlar.\n"
+"Ölçeklemeden önce, DLSS girdisini işleme çözünürlüğünde, DLSS SR, DLAA veya Ray Reconstruction'dan önce işler.\n"
+"Ölçeklemeden sonra, DLSS çıktısını yeniden yapılandırmadan sonra işler.\n"
+"Sunum, oyunun UI'ı dahil son görüntüyü gösterilmeden ve kare oluşturmadan önce işler."
+
+msgid ""
+"Subtle, Balanced and Strong set Intensity, Style, Structure, Tone and Faces & skin together.\n"
+"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
+"Pass Count under Advanced strengthens any look further, at extra GPU cost.\n"
+"Your saved presets are listed below them. Each loads its look, Hook Method and every other setting; Compare and Debug view stay as they are.\n"
+"Loading a saved preset turns DLSS 5 on. Delete removes the saved preset shown."
+msgstr ""
+"Hafif, Dengeli ve Güçlü; Yoğunluk, Stil, Yapı, Ton ve Yüz ve cilt ayarlarını birlikte belirler.\n"
+"Dengeli sağlayıcının kendi varsayılanıdır, Hafif etkisini yarıya indirir ve Güçlü daha ileri gider.\n"
+"Gelişmiş altındaki Geçiş sayısı her görünümü daha da güçlendirir, ancak ek GPU maliyeti getirir.\n"
+"Kayıtlı preset'leriniz bunların altında listelenir. Her biri görünümünü, bağlanma yöntemini ve diğer tüm ayarları yükler; Karşılaştır ve hata ayıklama görünümü olduğu gibi kalır.\n"
+"Kayıtlı bir preset yüklemek DLSS 5'i açar. Sil, gösterilen kayıtlı preset'i kaldırır."
+
+msgid ""
+"How the network draws its look. All three cost the same.\n"
+"Neutral changes the game's image the least.\n"
+"Rich keeps skin warm and colourful, and deepens bright areas such as sky.\n"
+"Soft gives a flatter, softer image."
+msgstr ""
+"Ağın görünümü nasıl çizdiği. Üçünün maliyeti aynıdır.\n"
+"Nötr, oyunun görüntüsünü en az değiştirir.\n"
+"Zengin cildi sıcak ve canlı tutar, gökyüzü gibi parlak alanları derinleştirir.\n"
+"Yumuşak daha düz ve yumuşak bir görüntü verir."
+
+msgid ""
+"Which of the provider's two networks runs.\n"
+"Default lets the provider choose: DLSS 5 310.9.16 runs Fast.\n"
+"Quality is the larger network: stronger changes and a little more fine detail, at about 1.7x the GPU time.\n"
+"Fast is the smaller network."
+msgstr ""
+"Sağlayıcının iki ağından hangisinin çalışacağı.\n"
+"Varsayılan seçimi sağlayıcıya bırakır: DLSS 5 310.9.16 Hızlı'yı çalıştırır.\n"
+"Kalite daha büyük ağdır: daha belirgin değişiklikler ve biraz daha fazla ince ayrıntı, yaklaşık 1,7 kat GPU süresiyle.\n"
+"Hızlı daha küçük ağdır."
+
+msgid "Off while Character Mask is off."
+msgstr "Karakter maskesi kapalıyken devre dışı."
+
+msgid ""
+"Structure enhancement on detected skin and faces.\n"
+"Same as Structure takes the Structure strength, the provider's own default."
+msgstr ""
+"Algılanan cilt ve yüzlerde yapı iyileştirmesi.\n"
+"Yapıyla aynı, sağlayıcının kendi varsayılanı olan yapı yoğunluğunu kullanır."
+
+msgid ""
+"Share of the hook method's resolution that the network processes.\n"
+"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
+"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
+msgstr ""
+"Ağın işlediği bağlanma yöntemi çözünürlüğünün payı.\n"
+"100 yereldir, daha düşük daha hızlıdır, 200'e kadar süper örnekleme yapar. 25'in altındaki değerler 25 olarak kullanılır.\n"
+"Otomatik, DLSS 5 her işlenen karenin yaklaşık üçte birinden fazlasını aldığında onu düşürür (75'in altına inmez) ve pay olduğunda yeniden yükseltir; asla kaydırıcının üstüne çıkmaz."
+
+msgid "Half rate is not available on Vulkan or with the Present hook method yet."
+msgstr "Yarı hız henüz Vulkan'da veya Sunum bağlanma yöntemiyle kullanılamıyor."
+
+msgid ""
+"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
+"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
+msgstr ""
+"Ağı her iki karede bir çalıştırır. Aradaki kareler onun son görünümünü kendi görüntülerine uygular; böylece hareketli ve animasyonlu yüzeyler bu görünümü iz bırakmadan korur.\n"
+"GPU maliyetinin yaklaşık yarısı. İnce ayrıntılar, bir yüzeyin yalnızca yer değiştirdiği yerlerde oyunun hareket vektörlerini izler."
+
+msgid "%s (changed)"
+msgstr "%s (değiştirildi)"
+
+msgid "Preset %u"
+msgstr "Preset %u"
+
+msgid "Imported preset"
+msgstr "İçe aktarılan preset"
+
+msgid "Saved \"%s\"."
+msgstr "\"%s\" kaydedildi."
+
+msgid "Deleted \"%s\"."
+msgstr "\"%s\" silindi."
+
+msgid "Imported \"%s\"."
+msgstr "\"%s\" içe aktarıldı."
+
+msgid "Copied the preset code to the clipboard."
+msgstr "Preset kodu panoya kopyalandı."
+
+msgid "The clipboard is unavailable. The code is in the field to copy by hand."
+msgstr "Pano kullanılamıyor. Kod, elle kopyalamanız için alanda."
+
+msgid "No preset code found. Codes start with DLSS5-."
+msgstr "Preset kodu bulunamadı. Kodlar DLSS5- ile başlar."
+
+msgid "This preset code is damaged or incomplete. Copy it again in full."
+msgstr "Bu preset kodu bozuk veya eksik. Kodun tamamını yeniden kopyalayın."
+
+msgid "This preset code needs a newer MFG Unlocker."
+msgstr "Bu preset kodu daha yeni bir MFG Unlocker gerektiriyor."
+
+msgid "%u presets is the most. Delete one to save another."
+msgstr "En fazla %u preset. Başka birini kaydetmek için birini silin."
+
+msgid "The presets file could not be read or written."
+msgstr "Preset dosyası okunamadı veya yazılamadı."
+
+msgid "Some settings in this code need a newer MFG Unlocker and were left out."
+msgstr "Bu koddaki bazı ayarlar daha yeni bir MFG Unlocker gerektirdiği için atlandı."
+
+msgid ""
+"Saves the current DLSS 5 settings as a preset under this name; a preset with the same name is replaced.\n"
+"Presets are kept beside the game."
+msgstr ""
+"Geçerli DLSS 5 ayarlarını bu adla preset olarak kaydeder; aynı adlı bir preset'in yerine geçer.\n"
+"Preset'ler oyunun yanında saklanır."
+
+msgid ""
+"Export copies the current settings to the clipboard as a code starting with DLSS5-, to share with other players.\n"
+"Import applies a pasted code and saves it as a preset. With the field empty, Import reads the clipboard."
+msgstr ""
+"Dışa aktar, geçerli ayarları diğer oyuncularla paylaşmak için DLSS5- ile başlayan bir kod olarak panoya kopyalar.\n"
+"İçe aktar, yapıştırılan bir kodu uygular ve preset olarak kaydeder. Alan boşken İçe aktar panoyu okur."
+
+msgid "Delete"
+msgstr "Sil"
+
+msgid "Save as"
+msgstr "Farklı kaydet"
+
+msgid "Save"
+msgstr "Kaydet"
+
+msgid "Name"
+msgstr "Ad"
+
+msgid "Share"
+msgstr "Paylaş"
+
+msgid "Import"
+msgstr "İçe aktar"
+
+msgid "Export"
+msgstr "Dışa aktar"
+
+msgid "Paste a code"
+msgstr "Bir kod yapıştırın"
+
 msgid "Neural Rendering"
 msgstr "Nöral işleme"
 
@@ -311,17 +531,6 @@ msgstr "Otomatik: %s"
 msgid "Hook Method"
 msgstr "Bağlanma yöntemi"
 
-msgid ""
-"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
-"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-"After upscaling processes the DLSS output after reconstruction.\n"
-"Present processes the final image, game UI included, before presentation and frame generation."
-msgstr ""
-"Otomatik, DLSS çıktısını yeniden yapılandırmadan sonra işler; Çözünürlük ölçeği Otomatik maliyetini sınırlar.\n"
-"Ölçeklemeden önce, DLSS girdisini işleme çözünürlüğünde, DLSS SR, DLAA veya Ray Reconstruction'dan önce işler.\n"
-"Ölçeklemeden sonra, DLSS çıktısını yeniden yapılandırmadan sonra işler.\n"
-"Sunum, oyunun UI'ı dahil son görüntüyü gösterilmeden ve kare oluşturmadan önce işler."
-
 msgid "Subtle"
 msgstr "Hafif"
 
@@ -334,45 +543,26 @@ msgstr "Özel"
 msgid "Look"
 msgstr "Görünüm"
 
-msgid ""
-"Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
-"Pass Count under Advanced strengthens any look further, at extra GPU cost."
-msgstr ""
-"Yoğunluk, Model, Yapı, Ton ve Yüz ve cilt ayarlarını birlikte belirler.\n"
-"Dengeli sağlayıcının kendi varsayılanıdır, Hafif etkisini yarıya indirir ve Güçlü daha ileri gider.\n"
-"Gelişmiş altındaki Geçiş sayısı her görünümü daha da güçlendirir, ancak ek GPU maliyeti getirir."
-
 msgid "Intensity"
 msgstr "Yoğunluk"
 
 msgid "Strength of the whole neural rendering effect."
 msgstr "Tüm nöral işleme efektinin gücü."
 
-msgid "Model A"
-msgstr "Model A"
+msgid "Neutral"
+msgstr "Nötr"
 
-msgid "Model B"
-msgstr "Model B"
+msgid "Rich"
+msgstr "Zengin"
 
-msgid "Model C"
-msgstr "Model C"
+msgid "Soft"
+msgstr "Yumuşak"
 
-msgid "Model"
-msgstr "Model"
+msgid "Style"
+msgstr "Stil"
 
 msgid "Faces & skin"
 msgstr "Yüz ve cilt"
-
-msgid "Off while Character Mask is off. Turn it on under Advanced."
-msgstr "Karakter maskesi kapalıyken devre dışı. Gelişmiş altında açın."
-
-msgid ""
-"Structure enhancement on detected skin and faces.\n"
-"Same as Structure takes the Structure strength, the provider's own default."
-msgstr ""
-"Algılanan cilt ve yüzlerde yapı iyileştirmesi.\n"
-"Yapıyla aynı, sağlayıcının kendi varsayılanı olan yapı yoğunluğunu kullanır."
 
 msgid "Resolution Scale"
 msgstr "Çözünürlük ölçeği"
@@ -383,27 +573,8 @@ msgstr "Otomatik"
 msgid "up to %.0f%%"
 msgstr "en fazla %.0f%%"
 
-msgid ""
-"Share of the hook method's resolution that the network processes.\n"
-"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
-msgstr ""
-"Ağın işlediği bağlanma yöntemi çözünürlüğünün payı.\n"
-"100 yereldir, daha düşük daha hızlıdır, 200'e kadar süper örnekleme yapar. 25'in altındaki değerler 25 olarak kullanılır.\n"
-"Otomatik, DLSS 5 her işlenen karenin yaklaşık üçte birinden fazlasını aldığında onu düşürür (75'in altına inmez) ve pay olduğunda yeniden yükseltir; asla kaydırıcının üstüne çıkmaz."
-
 msgid "Half rate"
 msgstr "Yarı hız"
-
-msgid "Half rate is not available on Vulkan or with the Present hook method yet."
-msgstr "Yarı hız henüz Vulkan'da veya Sunum bağlanma yöntemiyle kullanılamıyor."
-
-msgid ""
-"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
-"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
-msgstr ""
-"Ağı her iki karede bir çalıştırır. Aradaki kareler onun son görünümünü kendi görüntülerine uygular; böylece hareketli ve animasyonlu yüzeyler bu görünümü iz bırakmadan korur.\n"
-"GPU maliyetinin yaklaşık yarısı. İnce ayrıntılar, bir yüzeyin yalnızca yer değiştirdiği yerlerde oyunun hareket vektörlerini izler."
 
 msgid "DLSS 5 settings could not be saved."
 msgstr "DLSS 5 ayarları kaydedilemedi."
@@ -411,11 +582,11 @@ msgstr "DLSS 5 ayarları kaydedilemedi."
 msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
 msgstr "Ölçeklemeden önce ve Sunum henüz Vulkan'da çalışmıyor. Otomatik'i veya Ölçeklemeden sonra seçeneğini seçin."
 
+msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
+msgstr "Sunum henüz DirectX 11'de çalışmıyor. Otomatik, Ölçeklemeden önce veya Ölçeklemeden sonra seçeneklerinden birini seçin."
+
 msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
 msgstr "Bu oyunun swapchain'i Sunum bağlanma yöntemini kullanamıyor; nedeni log dosyasında yazar. Ölçeklemeden önce ve sonra yine çalışır."
-
-msgid "Debug view is on (Advanced, Inspect)."
-msgstr "Hata ayıklama görünümü açık (Gelişmiş, İnceleme)."
 
 msgid "Compare"
 msgstr "Karşılaştır"
@@ -442,6 +613,9 @@ msgid ""
 msgstr ""
 "Bu tuş basılı tutulduğu sürece oyun özgün görüntüsünü gösterir; böylece DLSS 5 hareket halinde karşılaştırılabilir.\n"
 "DLSS 5 çalışmaya devam eder, bu yüzden GPU maliyeti değişmez ve tuş oyuna da ulaşır."
+
+msgid "Presets"
+msgstr "Preset'ler"
 
 msgid "Status"
 msgstr "Durum"
@@ -481,6 +655,9 @@ msgstr "Doğrudan sağlayıcı"
 
 msgid "Native NGX"
 msgstr "Yerel NGX"
+
+msgid "DirectX 11 to DirectX 12"
+msgstr "DirectX 11'den DirectX 12'ye"
 
 msgid "Waiting for DLSS 5 GPU work to complete before applying settings."
 msgstr "Ayarları uygulamadan önce DLSS 5 GPU işleminin tamamlanması bekleniyor."
@@ -526,8 +703,8 @@ msgstr "Karakter maskesi"
 msgid "Detects skin and faces so that Faces & skin applies to them."
 msgstr "Cilt ve yüzleri algılar; böylece Yüz ve cilt ayarı onlara uygulanır."
 
-msgid "Passes"
-msgstr "Geçişler"
+msgid "Look & passes"
+msgstr "Görünüm ve geçişler"
 
 msgid "Pass Count"
 msgstr "Geçiş sayısı"
@@ -542,10 +719,10 @@ msgid "Later passes"
 msgstr "Sonraki geçişler"
 
 msgid ""
-"Passes 2 and later refine the previous pass's output. Custom gives them their own Model and strengths.\n"
+"Passes 2 and later refine the previous pass's output. Custom gives them their own Style and strengths.\n"
 "Tone adds up from pass to pass, so later passes usually want less of it."
 msgstr ""
-"2. ve sonraki geçişler önceki geçişin çıktısını iyileştirir. Özel, onlara kendi modelini ve yoğunluklarını verir.\n"
+"2. ve sonraki geçişler önceki geçişin çıktısını iyileştirir. Özel, onlara kendi stilini ve yoğunluklarını verir.\n"
 "Ton geçişten geçişe birikir, bu yüzden sonraki geçişlerde genellikle daha azı gerekir."
 
 msgid "Later-pass settings apply when Pass Count is 2 or more."
@@ -644,23 +821,18 @@ msgstr "RGB artığı"
 msgid "Processed image"
 msgstr "İşlenmiş görüntü"
 
-msgid "Ratio"
-msgstr "Oran"
-
 msgid "Scale Reconstruction"
 msgstr "Ölçek yeniden yapılandırma"
 
 msgid ""
 "RGB residual adds the network's change to the full-resolution image.\n"
-"Processed image uses the upscaled network output directly.\n"
-"Ratio multiplies the full-resolution image by the network's change, so black stays black."
+"Processed image uses the upscaled network output directly."
 msgstr ""
 "RGB artığı, ağın değişikliğini tam çözünürlüklü görüntüye ekler.\n"
-"İşlenmiş görüntü, ağın ölçeklenmiş çıktısını doğrudan kullanır.\n"
-"Oran, tam çözünürlüklü görüntüyü ağın değişikliğiyle çarpar; böylece siyah siyah kalır."
+"İşlenmiş görüntü, ağın ölçeklenmiş çıktısını doğrudan kullanır."
 
-msgid "HDR and signal"
-msgstr "HDR ve sinyal"
+msgid "HDR"
+msgstr "HDR"
 
 msgid "Linear BT.709"
 msgstr "Doğrusal BT.709"
@@ -742,17 +914,11 @@ msgstr "Sağlayıcı"
 msgid "Default"
 msgstr "Varsayılan"
 
-msgid "Preset A"
-msgstr "Preset A"
+msgid "Fast"
+msgstr "Hızlı"
 
-msgid "Preset B"
-msgstr "Preset B"
-
-msgid "Preset"
-msgstr "Preset"
-
-msgid "The provider's render preset hint."
-msgstr "Sağlayıcının işleme preset ipucu."
+msgid "Network"
+msgstr "Ağ"
 
 msgid "UI Correction"
 msgstr "UI düzeltmesi"
@@ -808,8 +974,8 @@ msgstr "HUD'suz görüntüyü engelle"
 msgid "Present only: keeps the game's HUD-less image from DLSS frame generation, so generated frames match processed ones."
 msgstr "Yalnızca Sunum: oyunun HUD'suz görüntüsünü DLSS kare oluşturmadan uzak tutar; böylece oluşturulan kareler işlenenlerle eşleşir."
 
-msgid "Inspect"
-msgstr "İnceleme"
+msgid "Mask"
+msgstr "Maske"
 
 msgid "Network input"
 msgstr "Ağ girdisi"
@@ -971,6 +1137,42 @@ msgstr "Reflex durumu geçici olarak kullanılamıyor."
 msgid "Path traced hair"
 msgstr "Yol izlemeli saç"
 
+msgid "Preparing"
+msgstr "Hazırlanıyor"
+
+msgid "Active"
+msgstr "Etkin"
+
+msgid "universal: game RTX hair converted"
+msgstr "evrensel: oyunun RTX saçı dönüştürüldü"
+
+msgid "no hair built in the last 2 s"
+msgstr "son 2 sn içinde saç oluşturulmadı"
+
+msgid "Ready"
+msgstr "Hazır"
+
+msgid "waiting for game hair"
+msgstr "oyundan saç verisi bekleniyor"
+
+msgid "Universal hair runs the game's own RTX 50 hair on this GPU. It is on by default; set Universal=0 under [RtxHair] in RTXMFG.RtxHair.ini beside the game to turn it off."
+msgstr "Evrensel saç, oyunun kendi RTX 50 saçını bu GPU'da çalıştırır. Varsayılan olarak açıktır; kapatmak için oyunun yanındaki RTXMFG.RtxHair.ini dosyasında [RtxHair] altına Universal=0 yazın."
+
+msgid "%s updates"
+msgstr "%s güncelleme"
+
+msgid "Builds"
+msgstr "Oluşturma"
+
+msgid "%s not converted"
+msgstr "%s dönüştürülmedi"
+
+msgid "Hair shaders"
+msgstr "Saç gölgelendiricileri"
+
+msgid "Hair diagnostics"
+msgstr "Saç tanılaması"
+
 msgid "Unknown"
 msgstr "Bilinmiyor"
 
@@ -979,9 +1181,6 @@ msgstr "Devre dışı"
 
 msgid "Waiting for early device"
 msgstr "Grafik cihazı bekleniyor"
-
-msgid "Preparing"
-msgstr "Hazırlanıyor"
 
 msgid "Unsupported game build"
 msgstr "Desteklenmeyen oyun sürümü"
@@ -992,17 +1191,11 @@ msgstr "Desteklenmeyen GPU"
 msgid "Native LSS"
 msgstr "Yerel LSS"
 
-msgid "Unavailable"
-msgstr "Kullanılamıyor"
-
 msgid "Unsupported driver"
 msgstr "Desteklenmeyen sürücü"
 
 msgid "game Path Traced Hair setting"
 msgstr "oyunun Path Traced Hair ayarı"
-
-msgid "Active"
-msgstr "Etkin"
 
 msgid "tracing converted hair"
 msgstr "dönüştürülen saç yol izlemeyle işleniyor"
@@ -1010,26 +1203,11 @@ msgstr "dönüştürülen saç yol izlemeyle işleniyor"
 msgid "no hair traced in the last 2 s"
 msgstr "son 2 sn içinde saç işlenmedi"
 
-msgid "Ready"
-msgstr "Hazır"
-
-msgid "waiting for game hair"
-msgstr "oyundan saç verisi bekleniyor"
-
 msgid "Turn it on or off with HairWorks and Path Traced Hair in the game's graphics settings."
 msgstr "Oyunun grafik ayarlarındaki HairWorks ve Path Traced Hair seçenekleriyle açıp kapatın."
 
 msgid "Traced hair"
 msgstr "İşlenen saç"
-
-msgid "%s updates"
-msgstr "%s güncelleme"
-
-msgid "Builds"
-msgstr "Oluşturma"
-
-msgid "Hair diagnostics"
-msgstr "Saç tanılaması"
 
 msgid "Turn on frame generation in the game's settings (DLSS or XeSS)."
 msgstr "Oyunun ayarlarından kare oluşturmayı açın (DLSS veya XeSS)."
@@ -1090,15 +1268,37 @@ msgstr "Bu oturumda oyun, GPU'yu NVIDIA GeForce RTX 4090 olarak görüyor."
 msgid "This GPU is not an RTX 30 card; the game sees its real name."
 msgstr "Bu GPU bir RTX 30 kartı değil; oyun kartın gerçek adını görür."
 
+msgid ""
+"Writes the MFG Unlocker log beside the game. Bug reports need it.\n"
+"Turn it off to stop writing the log. Applies after a game restart."
+msgstr ""
+"MFG Unlocker log dosyasını oyunun yanına yazar. Hata raporları için gereklidir.\n"
+"Log dosyasının yazılmasını durdurmak için kapatın. Oyunu yeniden başlattıktan sonra geçerli olur."
+
+msgid "The log setting could not be saved."
+msgstr "Log ayarı kaydedilemedi."
+
+msgid "Restart the game to write the log again."
+msgstr "Log dosyasını yeniden yazmak için oyunu yeniden başlatın."
+
+msgid "Restart the game to stop writing the log."
+msgstr "Log dosyasının yazılmasını durdurmak için oyunu yeniden başlatın."
+
+msgid "Write log file"
+msgstr "Log dosyası yaz"
+
+msgid "Diagnostics"
+msgstr "Tanılama"
+
 msgid "XeMFG standalone"
 msgstr "Bağımsız XeMFG"
 
 msgid ""
 "MFG Unlocker runs XeSS multi-frame generation itself, without OptiScaler, from the inputs of the game's DLSS frame generation or of its DLSS, XeSS or FSR 3.1 upscaling. It replaces the game's own frame generation.\n"
-"Switching it on or off applies after a restart."
+"Switching it on or off applies at once: MFG Unlocker briefly resizes the game's window so the game hands its swap chain over. If the game ignores that, it applies at the game's next resolution or window-mode change, or after a restart."
 msgstr ""
 "MFG Unlocker, XeSS çoklu kare oluşturmayı OptiScaler olmadan kendisi çalıştırır; oyunun DLSS kare oluşturmasının ya da DLSS, XeSS veya FSR 3.1 ölçeklendirmesinin girdilerini kullanır. Oyunun kendi kare oluşturmasının yerini alır.\n"
-"Açıp kapatmak, oyun yeniden başlatıldıktan sonra geçerli olur."
+"Açıp kapatmak hemen uygulanır: MFG Unlocker, oyunun swap chain'ini devretmesi için oyun penceresini kısa süreliğine yeniden boyutlandırır. Oyun bunu yok sayarsa, oyunun bir sonraki çözünürlük veya pencere modu değişikliğinde ya da yeniden başlatmadan sonra uygulanır."
 
 msgid "Dynamic"
 msgstr "Dinamik"
@@ -1172,11 +1372,41 @@ msgstr "İki dosya farklı klasörlerde."
 msgid "Found %s, not %s: check the file's name and extension."
 msgstr "%s bulundu, %s değil: dosyanın adını ve uzantısını kontrol edin."
 
-msgid "The XeMFG setting could not be saved."
-msgstr "XeMFG ayarı kaydedilemedi."
+msgid "The %s in %s is version %s, which is too old for XeMFG."
+msgstr "%s dosyası (%s içinde) %s sürümünde ve XeMFG için çok eski."
+
+msgid "The %s in %s is too old for XeMFG."
+msgstr "%s dosyası (%s içinde) XeMFG için çok eski."
+
+msgid "Put libxess_fg.dll and libxell.dll from Intel's XeSS SDK %s in %s, then restart the game."
+msgstr "Intel XeSS SDK %s içindeki libxess_fg.dll ve libxell.dll dosyalarını %s içine koyun, ardından oyunu yeniden başlatın."
 
 msgid "Restart the game to start XeMFG."
 msgstr "XeMFG'yi başlatmak için oyunu yeniden başlatın."
+
+msgid "This game ignores window size changes, so XeMFG starts after a restart. From then on, XeMFG switches on and off in this game without a restart."
+msgstr "Bu oyun pencere boyutu değişikliklerini yok sayıyor, bu yüzden XeMFG yeniden başlatmadan sonra başlar. Bundan sonra XeMFG bu oyunda yeniden başlatma olmadan açılıp kapanır."
+
+msgid "The game did not resize its swap chain, so XeMFG has not started yet. It starts at the game's next resolution or window-mode change, or after a restart."
+msgstr "Oyun swap chain'ini yeniden boyutlandırmadı, bu yüzden XeMFG henüz başlamadı. Oyunun bir sonraki çözünürlük veya pencere modu değişikliğinde ya da yeniden başlatmadan sonra başlar."
+
+msgid "XeMFG cannot take over a swap chain in exclusive fullscreen. Switch the game to borderless or windowed, or restart the game."
+msgstr "XeMFG, özel tam ekrandaki bir swap chain'i devralamaz. Oyunu kenarlıksız veya pencereli moda alın ya da oyunu yeniden başlatın."
+
+msgid "XeMFG could not take over the running game's swap chain (%s). Restart the game to start XeMFG."
+msgstr "XeMFG, çalışan oyunun swap chain'ini devralamadı (%s). XeMFG'yi başlatmak için oyunu yeniden başlatın."
+
+msgid "The XeMFG setting could not be saved."
+msgstr "XeMFG ayarı kaydedilemedi."
+
+msgid "XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or window-mode change, or a restart."
+msgstr "XeMFG kapalı, ancak XeFG oyunun bir sonraki çözünürlük veya pencere modu değişikliğine ya da yeniden başlatmaya kadar oyunun swap chain'ini tutar."
+
+msgid "XeMFG is off. The game's DLSS frame generation comes back after a restart: it cannot start again in this session once XeMFG has taken over its swap chain."
+msgstr "XeMFG kapalı. Oyunun DLSS kare oluşturma özelliği yeniden başlatmadan sonra geri gelir: XeMFG swap chain'ini devraldıktan sonra bu oturumda yeniden başlayamaz."
+
+msgid "Moving the game's swap chain to XeMFG..."
+msgstr "Oyunun swap chain'i XeMFG'ye taşınıyor..."
 
 msgid "XeMFG could not start: %s"
 msgstr "XeMFG başlatılamadı: %s"
@@ -1199,6 +1429,12 @@ msgstr "Dinamik, %ux"
 msgid "held as cap"
 msgstr "sınır olarak tutulur"
 
+msgid "Starting"
+msgstr "Başlatılıyor"
+
+msgid "Waiting for a resize"
+msgstr "Yeniden boyutlandırma bekleniyor"
+
 msgid "Restart needed"
 msgstr "Yeniden başlatma gerekli"
 
@@ -1218,17 +1454,47 @@ msgstr ""
 msgid "%.1f real, %.1f XeMFG"
 msgstr "%.1f gerçek, %.1f XeMFG"
 
-msgid "Measuring..."
-msgstr "Ölçülüyor..."
-
 msgid "XeMFG off"
 msgstr "XeMFG kapalı"
+
+msgid "Low-latency pacing"
+msgstr "Düşük gecikmeli tempo"
+
+msgid "XeMFG holds the game inside Present until the display has room for its next frames, after the game has read your input. This moves that wait to before the game reads its input, so your actions show sooner. The frame rate stays the same. Auto turns it on. Applies at once."
+msgstr "XeMFG, oyun girdinizi okuduktan sonra, ekranda sonraki kareler için yer açılana kadar oyunu Present içinde bekletir. Bu ayar o beklemeyi oyunun girdiyi okumasından önceye taşır, böylece hareketleriniz daha erken görünür. Kare hızı aynı kalır. Otomatik bunu açar. Hemen uygulanır."
+
+msgid "The low-latency pacing setting could not be saved."
+msgstr "Düşük gecikmeli tempo ayarı kaydedilemedi."
+
+msgid "for XeMFG's frames"
+msgstr "XeMFG kareleri için"
+
+msgid "No sleep point"
+msgstr "Bekleme noktası yok"
+
+msgid "the game's frames reach no sleep before their input"
+msgstr "oyunun kareleri girdiden önce hiçbir beklemeye ulaşmıyor"
+
+msgid "the game is not held in Present"
+msgstr "oyun Present içinde bekletilmiyor"
+
+msgid "%.1f ms sooner"
+msgstr "%.1f ms daha erken"
+
+msgid "of %.1f ms the game waited in Present"
+msgstr "oyunun Present içinde beklediği %.1f ms içinden"
 
 msgid "MFG Unlocker multi-frame port"
 msgstr "MFG Unlocker çoklu kare portu"
 
 msgid "Intel 2x model"
 msgstr "Intel 2x modeli"
+
+msgid "No generated frames"
+msgstr "Üretilen kare yok"
+
+msgid "the provider is failing; see the RTXMFG log"
+msgstr "sağlayıcı başarısız oluyor; RTXMFG günlüğüne bakın"
 
 msgid "Frame generation"
 msgstr "Kare oluşturma"
@@ -1275,6 +1541,9 @@ msgstr "Uygulanan"
 msgid "Not verified"
 msgstr "Doğrulanmadı"
 
+msgid "Model"
+msgstr "Model"
+
 msgid "Tensor cores"
 msgstr "Tensör çekirdekleri"
 
@@ -1302,11 +1571,137 @@ msgstr "Kare oluşturma OptiScaler menüsünden ayarlanır. Bu menü DLSS preset
 msgid "DLSS 5"
 msgstr "DLSS 5"
 
-msgid "Waiting for status"
-msgstr "Durum bekleniyor"
+msgid "Present does not run from OptiScaler's menu. Choose Auto, Before upscaling or After upscaling."
+msgstr "Sunum OptiScaler menüsünden çalışmaz. Otomatik, Ölçeklemeden önce veya Ölçeklemeden sonra seçeneklerinden birini seçin."
+
+msgid "XeFG"
+msgstr "XeFG"
+
+msgid "CUDA port"
+msgstr "CUDA portu"
+
+msgid "int8 layers on the tensor cores"
+msgstr "int8 katmanları tensör çekirdeklerinde"
+
+msgid "XMX port"
+msgstr "XMX portu"
+
+msgid "on the shader cores"
+msgstr "shader çekirdeklerinde"
+
+msgid "XMX port: MFG Unlocker's port of Intel's multi-frame XMX model, run as DXIL shaders on any GPU. CUDA port: the same model with its int8 layers run as CUDA kernels on RTX tensor cores."
+msgstr "XMX portu: MFG Unlocker'ın Intel'in çoklu kare XMX modelinden yaptığı port; her GPU'da DXIL shader olarak çalışır. CUDA portu: aynı model, int8 katmanları RTX tensör çekirdeklerinde CUDA kernel olarak çalışır."
 
 msgid "Waiting for current backend status. Saved settings are preserved."
 msgstr "Güncel backend durumu bekleniyor. Kayıtlı ayarlar korunuyor."
+
+msgid "Status is temporarily unavailable; controls are paused."
+msgstr "Durum geçici olarak kullanılamıyor; kontroller duraklatıldı."
+
+msgid "Keybinds"
+msgstr "Tuş atamaları"
+
+msgid "FPS readout on"
+msgstr "FPS göstergesi açık"
+
+msgid "FPS readout off"
+msgstr "FPS göstergesi kapalı"
+
+msgid "Raise multiplier"
+msgstr "Çarpanı artır"
+
+msgid "Lower multiplier"
+msgstr "Çarpanı azalt"
+
+msgid "Dynamic on/off"
+msgstr "Dinamik aç/kapat"
+
+msgid "FPS readout on/off"
+msgstr "FPS göstergesi aç/kapat"
+
+msgid "Pin panel"
+msgstr "Paneli sabitle"
+
+msgid "Next preset"
+msgstr "Sonraki preset"
+
+msgid "Previous preset"
+msgstr "Önceki preset"
+
+msgid "Frame generation keys apply once frame generation is ready"
+msgstr "Kare oluşturma tuşları, kare oluşturma hazır olunca çalışır"
+
+msgid "Applying the last change..."
+msgstr "Son değişiklik uygulanıyor..."
+
+msgid "XeMFG: %s"
+msgstr "XeMFG: %s"
+
+msgid "Frame generation: %s"
+msgstr "Kare oluşturma: %s"
+
+msgid "%s is unavailable right now"
+msgstr "%s şu anda kullanılamıyor"
+
+msgid "Highest mode here: %s"
+msgstr "Buradaki en yüksek mod: %s"
+
+msgid "Lowest mode: %s"
+msgstr "En düşük mod: %s"
+
+msgid "The change could not be saved"
+msgstr "Değişiklik kaydedilemedi"
+
+msgid "DLSS preset keys apply while the game runs DLSS"
+msgstr "DLSS preset tuşları oyun DLSS kullanırken çalışır"
+
+msgid "RR preset: %s"
+msgstr "RR preset'i: %s"
+
+msgid "SR preset: %s"
+msgstr "SR preset'i: %s"
+
+msgid "the menu key"
+msgstr "menü tuşu"
+
+msgid "%s is already used by %s"
+msgstr "%s zaten şu tarafından kullanılıyor: %s"
+
+msgid "Moved from %s"
+msgstr "Şuradan taşındı: %s"
+
+msgid "The frame generation in use has no such mode."
+msgstr "Kullanılan kare oluşturmada böyle bir mod yok."
+
+msgid "Steps through the modes the Mode list offers."
+msgstr "Mod listesinin sunduğu modlar arasında birer birer geçer."
+
+msgid "Steps through the presets of the DLSS the game runs: Super Resolution's (J, K, L, M) or, while Ray Reconstruction runs, Ray Reconstruction's (D, E, F). After the last one it starts again."
+msgstr "Oyunun kullandığı DLSS'in preset'leri arasında geçer: Super Resolution'ınkiler (J, K, L, M) ya da Ray Reconstruction çalışırken Ray Reconstruction'ınkiler (D, E, F). Sonuncudan sonra baştan başlar."
+
+msgid "Also used by %s"
+msgstr "Ayrıca şu da kullanıyor: %s"
+
+msgid "Keys work with the menu open or closed, and still reach the game."
+msgstr "Tuşlar menü açıkken de kapalıyken de çalışır ve oyuna da ulaşır."
+
+msgid "To bind a combination, hold Ctrl, Shift or Alt and press the key. A combination avoids the game's own keys."
+msgstr "Bir kombinasyon atamak için Ctrl, Shift veya Alt tuşunu basılı tutup tuşa basın. Kombinasyon, oyunun kendi tuşlarıyla çakışmayı önler."
+
+msgid "Frame generation is set in OptiScaler's menu, so its keys are not offered here."
+msgstr "Kare oluşturma OptiScaler menüsünden ayarlanır, bu yüzden tuşları burada sunulmaz."
+
+msgid "Now applies to %s"
+msgstr "Şu an uygulandığı yer: %s"
+
+msgid "Show a note when a key changes a setting"
+msgstr "Bir tuş bir ayarı değiştirdiğinde not göster"
+
+msgid "The keybinds work for this session, but could not be saved."
+msgstr "Tuş atamaları bu oturumda çalışır ancak kaydedilemedi."
+
+msgid "Waiting for status"
+msgstr "Durum bekleniyor"
 
 msgid "Not connected"
 msgstr "Bağlı değil"
@@ -1319,9 +1714,6 @@ msgstr "Yerleşik çekirdek kullanılamıyor. Başlangıç log'unu kontrol edin 
 
 msgid "Paused"
 msgstr "Duraklatıldı"
-
-msgid "Live"
-msgstr "Canlı"
 
 msgid "The game changed graphics adapters. Restart the game to select a new GPU."
 msgstr "Oyun kullandığı GPU'yu değiştirdi. Yeni GPU'yu seçmek için oyunu yeniden başlatın."
@@ -1359,6 +1751,9 @@ msgid ""
 msgstr ""
 "\"Oyuna göre\" modu oyunun kendi kare oluşturma ayarını kullanır.\n"
 "\"Dinamik\" modu kare oluşturmayı bir hedef kare hızına göre ayarlar; kesin bir FPS sınırı koymaz."
+
+msgid "DLSS frame generation could not start on this GPU, so it stays off for this session. Restart the game to try again."
+msgstr "DLSS kare oluşturma bu GPU'da başlatılamadı, bu yüzden bu oturum boyunca kapalı kalacak. Yeniden denemek için oyunu yeniden başlatın."
 
 msgid "Frame generation stays under the game's control. This wrapper has no verified MFG override support."
 msgstr "Kare oluşturma oyunun kontrolünde kalır. Bu wrapper'ın doğrulanmış MFG override desteği yok."
@@ -1460,11 +1855,17 @@ msgstr "%.1f gerçek, DLSS kullanılamıyor"
 msgid "DLSS FG off"
 msgstr "DLSS FG kapalı"
 
-msgid "Diagnostics"
-msgstr "Tanılama"
+msgid "Latency unavailable"
+msgstr "Gecikme kullanılamıyor"
 
-msgid "Status is temporarily unavailable; controls are paused."
-msgstr "Durum geçici olarak kullanılamıyor; kontroller duraklatıldı."
+msgid "Latency %.1f ms | 1%% high %.1f"
+msgstr "Gecikme %.1f ms | en kötü %%1 %.1f"
+
+msgid "Latency: needs Reflex"
+msgstr "Gecikme: Reflex gerekli"
+
+msgid "Latency --"
+msgstr "Gecikme --"
 
 msgid "FPS status unavailable"
 msgstr "FPS verisi alınamıyor"
@@ -1489,163 +1890,3 @@ msgstr "Dinamik (kullanılamıyor)"
 
 msgid "Dynamic (checking...)"
 msgstr "Dinamik (denetleniyor...)"
-
-#~ msgid "DLSS 5 Neural Rendering"
-#~ msgstr "DLSS 5 Sinirsel İşleme"
-
-#~ msgid "Faster"
-#~ msgstr "Daha hızlı"
-
-#~ msgid "Full"
-#~ msgstr "Tam"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation (not available yet)."
-#~ msgstr ""
-#~ "İşleme, DLSS girdisini işleme çözünürlüğünde, DLSS SR, DLAA veya Ray Reconstruction'dan önce işler.\n"
-#~ "Ölçeklenmiş, DLSS çıktısını yeniden yapılandırmadan sonra işler.\n"
-#~ "Sunum, swapchain görüntüsünü gösterilmeden önce işler (henüz kullanılamıyor)."
-
-#~ msgid ""
-#~ "Auto treats the DLSS input and output as linear BT.709.\n"
-#~ "Other choices override the encoding of the processed image."
-#~ msgstr ""
-#~ "Otomatik, DLSS girdi ve çıktısını doğrusal BT.709 olarak ele alır.\n"
-#~ "Diğer seçenekler işlenen görüntünün kodlamasını geçersiz kılar."
-
-#~ msgid "Auto and Off leave the provider's UI correction off for DLSS input and output. On enables it."
-#~ msgstr "Otomatik ve Kapalı, DLSS girdi ve çıktısı için sağlayıcının UI düzeltmesini kapalı bırakır. Açık onu etkinleştirir."
-
-#~ msgid "Render"
-#~ msgstr "İşleme"
-
-#~ msgid "Upscaled"
-#~ msgstr "Ölçeklenmiş"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation and frame generation."
-#~ msgstr ""
-#~ "İşleme, DLSS girdisini işleme çözünürlüğünde, DLSS SR, DLAA veya Ray Reconstruction'dan önce işler.\n"
-#~ "Ölçeklenmiş, DLSS çıktısını yeniden yapılandırmadan sonra işler.\n"
-#~ "Sunum, swapchain görüntüsünü gösterilmeden ve kare oluşturmadan önce işler."
-
-#~ msgid "Overall Intensity"
-#~ msgstr "Genel yoğunluk"
-
-#~ msgid "Character Intensity"
-#~ msgstr "Karakter yoğunluğu"
-
-#~ msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Render or Upscaled still work."
-#~ msgstr "Bu oyunun swapchain'i Sunum bağlanma yöntemini kullanamıyor; nedeni log dosyasında yazar. İşleme ve Ölçeklenmiş yine çalışır."
-
-#~ msgid "Detects skin and faces so that Character Intensity applies to them."
-#~ msgstr "Karakter yoğunluğunun uygulanması için cildi ve yüzleri algılar."
-
-#~ msgid ""
-#~ "Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "After upscaling processes the DLSS output after reconstruction.\n"
-#~ "Present processes the final image, game UI included, before presentation and frame generation."
-#~ msgstr ""
-#~ "Ölçeklemeden önce, DLSS girdisini işleme çözünürlüğünde, DLSS SR, DLAA veya Ray Reconstruction'dan önce işler.\n"
-#~ "Ölçeklemeden sonra, DLSS çıktısını yeniden yapılandırmadan sonra işler.\n"
-#~ "Sunum, oyunun UI'ı dahil son görüntüyü gösterilmeden ve kare oluşturmadan önce işler."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25."
-#~ msgstr ""
-#~ "Ağın işlediği bağlanma yöntemi çözünürlüğünün payı.\n"
-#~ "100 yereldir, daha düşük daha hızlıdır, 200'e kadar süper örnekleme yapar. 25'in altındaki değerler 25 olarak kullanılır."
-
-#~ msgid "Active preset"
-#~ msgstr "Etkin preset"
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Edges of fast-moving objects can show the original image for one frame."
-#~ msgstr ""
-#~ "Ağı her iki karede bir çalıştırır ve sonucunu aradaki karelere oyunun hareket vektörleri boyunca taşır.\n"
-#~ "GPU maliyetinin yaklaşık yarısı. Hızlı hareket eden nesnelerin kenarları bir kare boyunca orijinal görüntüyü gösterebilir."
-
-#~ msgid "XeSS multi-frame generation needs OptiScaler, with XeFG as its frame generation output. Without it the game's XeSS frame generation runs at Intel's standard 2x."
-#~ msgstr "XeSS çoklu kare oluşturma için OptiScaler gerekir ve kare oluşturma çıkışı olarak XeFG seçilmelidir. Aksi halde oyunun XeSS kare oluşturması Intel'in standart 2x oranında çalışır."
-
-#~ msgid "Local detail and structure enhancement."
-#~ msgstr "Yerel ayrıntı ve yapı iyileştirmesi."
-
-#~ msgid "Local tone and contrast enhancement."
-#~ msgstr "Yerel ton ve kontrast iyileştirmesi."
-
-#~ msgid ""
-#~ "RGB residual adds the network's change to the full-resolution image.\n"
-#~ "Processed image uses the upscaled network output directly."
-#~ msgstr ""
-#~ "RGB artığı, ağın yaptığı değişikliği tam çözünürlüklü görüntüye ekler.\n"
-#~ "İşlenmiş görüntü, ölçeklenmiş ağ çıktısını doğrudan kullanır."
-
-#~ msgid "Boost"
-#~ msgstr "Boost"
-
-#~ msgid "Boost is not available on Vulkan or with the Present hook method yet."
-#~ msgstr "Boost henüz Vulkan'da veya Sunum bağlanma yöntemiyle kullanılamıyor."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Boost is on."
-#~ msgstr ""
-#~ "Ağı her iki karede bir çalıştırır ve sonucunu aradaki karelere oyunun hareket vektörleri boyunca taşır.\n"
-#~ "GPU maliyetinin yaklaşık yarısı. Su gibi hareketli yüzeyler ve parçacıklar, Boost açıkken oyunun kendi görüntüsünü korur."
-
-#~ msgid "Place a compatible nvngx_dlssnr.dll beside the game executable or MFGUnlocker."
-#~ msgstr "Uyumlu bir nvngx_dlssnr.dll dosyasını oyunun çalıştırılabilir dosyasının veya MFGUnlocker dosyasının yanına koyun."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Half rate is on."
-#~ msgstr ""
-#~ "Ağı her iki karede bir çalıştırır ve sonucunu aradaki karelere oyunun hareket vektörleri boyunca taşır.\n"
-#~ "GPU maliyetinin yaklaşık yarısı. Su gibi hareketli yüzeyler ve parçacıklar, Yarı hız açıkken oyunun kendi görüntüsünü korur."
-
-#~ msgid ""
-#~ "How much a surface may change between frames and still keep the carried result.\n"
-#~ "Strict shows the game's image on more moving surfaces (less smear); Loose carries more detail."
-#~ msgstr ""
-#~ "Bir yüzeyin kareler arasında ne kadar değişip taşınan sonucu yine de koruyabileceği.\n"
-#~ "Katı, daha fazla hareketli yüzeyde oyunun görüntüsünü gösterir (daha az bulaşma); Esnek daha fazla ayrıntı taşır."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-#~ "Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, and raises it again with headroom, never above the slider."
-#~ msgstr ""
-#~ "Ağın işlediği bağlanma yöntemi çözünürlüğünün payı.\n"
-#~ "100 yereldir, daha düşük daha hızlıdır, 200'e kadar süper örnekleme yapar. 25'in altındaki değerler 25 olarak kullanılır.\n"
-#~ "Otomatik, DLSS 5 her işlenen karenin yaklaşık üçte birinden fazlasını aldığında onu düşürür ve pay olduğunda yeniden yükseltir; asla kaydırıcının üstüne çıkmaz."
-
-#~ msgid ""
-#~ "Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-#~ "Subtle halves the change, Balanced is the default and Strong is clearly visible.\n"
-#~ "Pass Count under Advanced strengthens any look further, at extra GPU cost."
-#~ msgstr ""
-#~ "Yoğunluk, Model, Yapı, Ton ve Yüz ve cilt ayarlarını birlikte belirler.\n"
-#~ "Hafif etkiyi yarıya indirir, Dengeli varsayılandır ve Güçlü açıkça görülür.\n"
-#~ "Gelişmiş altındaki Geçiş sayısı her görünümü daha da güçlendirir, ancak ek GPU maliyeti getirir."
-
-#~ msgid "follows Structure"
-#~ msgstr "Yapıyı izler"
-
-#~ msgid "Follows Structure. Change it under Advanced."
-#~ msgstr "Yapıyı izler. Gelişmiş altında değiştirilir."
-
-#~ msgid "Structure enhancement on detected skin and faces."
-#~ msgstr "Algılanan cilt ve yüzlerde yapı iyileştirmesi."
-
-#~ msgid "Faces & skin follows Structure"
-#~ msgstr "Yüz ve cilt Yapıyı izler"
-
-#~ msgid "Faces & skin takes the Structure strength, the provider's own default."
-#~ msgstr "Yüz ve cilt, sağlayıcının kendi varsayılanı olan yapı yoğunluğunu kullanır."

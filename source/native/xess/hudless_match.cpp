@@ -19,7 +19,6 @@ constexpr uint32_t kMinimumCount = 8;
 // descriptor table (t0 HUD-less, t1 back buffer, u0 our texture) is fine; u1/u2 are root UAV buffers.
 constexpr uint32_t kStride = 4; // histogram samples every 4th pixel in x and y (STRIDE in the shader)
 static_assert(kCodes == 1024 && kBins == 256, "the median pass gives each of 256 threads 4 codes");
-constexpr float kOutlier = 32.0f/1023.0f; // OUTLIER in the shader
 constexpr char kShader[] = R"(
 #define STRIDE 4
 #define OUTLIER (32.0 / 1023.0)
@@ -219,69 +218,6 @@ DXGI_FORMAT ViewFormat(DXGI_FORMAT format) noexcept
 }
 
 const char* ModeName(Mode mode) noexcept { return mode == Mode::eMatch ? "match" : "game"; }
-
-uint32_t Bin(float value) noexcept
-{
-    if (!(value > 0.0f)) return 0;
-    const float f = (std::log2(value) - kLogMin) * kBinsPerOctave;
-    return uint32_t(std::clamp(f, 0.0f, float(kBins - 1)));
-}
-uint32_t Code(float unorm) noexcept { return uint32_t(std::clamp(unorm, 0.0f, 1.0f) * float(kCodes - 1) + 0.5f); }
-
-std::vector<float> BuildLut(const std::vector<uint32_t>& histogram, uint32_t minimumCount)
-{
-    std::vector<float> lut(3*kBins, -1.0f);
-    for (uint32_t c = 0; c < 3; ++c)
-    {
-        for (uint32_t b = 0; b < kBins; ++b)
-        {
-            const uint32_t* row = histogram.data() + size_t(c*kBins + b)*kCodes;
-            uint64_t total = 0;
-            for (uint32_t i = 0; i < kCodes; ++i) total += row[i];
-            if (total < minimumCount) continue;
-            const uint64_t half = (total+1)/2;
-            uint64_t seen = 0;
-            for (uint32_t i = 0; i < kCodes; ++i)
-                if ((seen += row[i]) >= half) { lut[c*kBins + b] = float(i)/float(kCodes-1); break; }
-        }
-        float* l = lut.data() + c*kBins;
-        // The shader's outlier replacement by the 5-bin running median of the filled bins.
-        const std::vector<float> raw(l, l+kBins);
-        for (int k = 0; k < int(kBins); ++k)
-        {
-            if (raw[k] < 0.0f) continue;
-            float w[5]; int n = 0;
-            for (int j = std::max(k-2, 0); j <= std::min(k+2, int(kBins)-1); ++j) if (raw[j] >= 0.0f) w[n++] = raw[j];
-            std::sort(w, w+n);
-            if (std::abs(raw[k] - w[n/2]) > kOutlier) l[k] = w[n/2];
-        }
-        int first = -1, last = -1;
-        for (uint32_t i = 0; i < kBins; ++i) if (l[i] >= 0.0f) { if (first < 0) first = int(i); last = int(i); }
-        if (first < 0) { std::fill(l, l+kBins, 0.0f); continue; }
-        int previous = first;
-        for (int b = first+1; b <= last; ++b)
-        {
-            if (l[b] < 0.0f) continue;
-            for (int g = previous+1; g < b; ++g) l[g] = l[previous] + (l[b]-l[previous])*float(g-previous)/float(b-previous);
-            previous = b;
-        }
-        const int span = std::min(4, last-first);
-        const float headSlope = span > 0 ? std::max((l[first+span]-l[first])/float(span), 0.0f) : 0.0f;
-        const float tailSlope = span > 0 ? std::max((l[last]-l[last-span])/float(span), 0.0f) : 0.0f;
-        for (int h = 0; h < first; ++h) l[h] = std::clamp(l[first] - headSlope*float(first-h), 0.0f, 1.0f);
-        for (int t = last+1; t < int(kBins); ++t) l[t] = std::clamp(l[last] + tailSlope*float(t-last), 0.0f, 1.0f);
-    }
-    return lut;
-}
-
-float Apply(const float* lut, float value) noexcept
-{
-    float f = value > 0.0f ? (std::log2(value) - kLogMin) * kBinsPerOctave - 0.5f : 0.0f;
-    f = std::clamp(f, 0.0f, float(kBins - 1));
-    const uint32_t i = std::min(uint32_t(f), kBins - 2);
-    const float t = std::clamp(f - float(i), 0.0f, 1.0f);
-    return lut[i] + (lut[i+1] - lut[i])*t;
-}
 
 Matcher::Matcher(ID3D12Device* device, ID3D12CommandQueue* queue) noexcept : device_(device), queue_(queue) {}
 

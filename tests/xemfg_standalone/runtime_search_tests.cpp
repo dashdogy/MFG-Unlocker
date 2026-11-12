@@ -1,4 +1,4 @@
-// alpha.15 (B4-12): CPU checks of XeMFG standalone's runtime search (source/native/xess/runtime_search.h), on folder
+// CPU checks of XeMFG standalone's runtime search (source/native/xess/runtime_search.h), on folder
 // fixtures beside the test (CTest's working folder; test children may not write %TEMP%).
 #include "xess/runtime_search.h"
 #include <cstdio>
@@ -197,6 +197,56 @@ void LogFields()
     CHECK(Json(unicode.Read(), unicode.Search()).find("json-\xc3\xa9") != std::string::npos);
     CHECK(Utf8(L"\u00e9") == "\xc3\xa9");
 }
+
+// oldruntime.1: a pair short of exports (Cyberpunk's own libxess_fg 1.1.0.19 beside its exe, no RTXMFG-XeSS folder).
+void OutdatedPair()
+{
+    // ASI in plugins\: a newer pair goes in plugins\RTXMFG-XeSS, which both orders search before the game's folder.
+    const Layout plugin(L"outdated-plugin", true);
+    Touch(plugin.game / kFg);
+    Touch(plugin.game / kLl);
+    auto result = plugin.Search();
+    CHECK(result.found == 3 && Is(NewerPairFolder(result), plugin.module / L"RTXMFG-XeSS"));
+    result = plugin.Search(Order::eVulkan);
+    CHECK(result.found == 3 && Is(NewerPairFolder(result), plugin.module / L"RTXMFG-XeSS"));
+    // Proxy beside the exe: D3D12 still reaches RTXMFG-XeSS first; Vulkan loads the exe folder's pair first, so the
+    // newer pair replaces it there.
+    const Layout proxy(L"outdated-proxy");
+    Touch(proxy.game / kFg);
+    Touch(proxy.game / kLl);
+    result = proxy.Search();
+    CHECK(result.found == 1 && Is(NewerPairFolder(result), proxy.game / L"RTXMFG-XeSS"));
+    result = proxy.Search(Order::eVulkan);
+    CHECK(result.found == 0 && Is(NewerPairFolder(result), proxy.game));
+    // An old pair in RTXMFG-XeSS itself is replaced there; nothing found names no folder.
+    const Layout own(L"outdated-own");
+    Touch(own.game / L"RTXMFG-XeSS" / kFg);
+    Touch(own.game / L"RTXMFG-XeSS" / kLl);
+    CHECK(Is(NewerPairFolder(own.Search()), own.game / L"RTXMFG-XeSS"));
+    const Layout none(L"outdated-none");
+    CHECK(NewerPairFolder(none.Search()).empty());
+
+    // The first file short of an export is kept with the first missing name; the log fields come before "searched".
+    Outdated outdated;
+    CHECK(!outdated.file && OutdatedJson(outdated).empty());
+    outdated.Miss(kFg, "xefgSwapChainSetNumInterpolatedFrames");
+    outdated.Miss(kLl, "xellAddMarkerData");
+    CHECK(outdated.file == kFg && std::string(outdated.first) == "xefgSwapChainSetNumInterpolatedFrames" && outdated.missing == 2);
+    outdated.version = "1.1.0.19";
+    CHECK(OutdatedJson(outdated) == ",\"outdated\":\"libxess_fg.dll\",\"outdated_version\":\"1.1.0.19\",\"missing\":2,"
+        "\"first_missing\":\"xefgSwapChainSetNumInterpolatedFrames\"");
+    Outdated ll;
+    ll.Miss(kLl, "xellAddMarkerData");
+    CHECK(ll.file == kLl && ll.missing == 1);
+
+    // A loaded module's version resource reads as four numbers; this test EXE has none; nullptr is never the EXE.
+    const std::string kernel = ModuleVersion(GetModuleHandleW(L"kernel32.dll"));
+    size_t dots = 0;
+    for (const char c : kernel) if (c == '.') ++dots;
+    CHECK(dots == 3 && !kernel.empty() && kernel.front() >= '1' && kernel.front() <= '9');
+    CHECK(ModuleVersion(GetModuleHandleW(nullptr)).empty());
+    CHECK(ModuleVersion(nullptr).empty());
+}
 }
 
 int main()
@@ -212,6 +262,7 @@ int main()
     TooLong();
     Reasons();
     LogFields();
+    OutdatedPair();
     fs::remove_all(gRoot, removed);
     std::printf("xemfg runtime search: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures ? 1 : 0;

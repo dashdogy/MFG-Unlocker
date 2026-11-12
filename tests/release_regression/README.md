@@ -99,6 +99,54 @@ on must arm all four adapter description detours from the worker before the
 startup status. Every adapter the executable queries must keep its real identity
 unless it is an RTX 30 card with the setting on, and a non-RTX 30 NVIDIA query
 must be logged as left unchanged.
+The DirectX 11 cases (dx11menu.1) run in `D3D11PresentHarness.exe`, which, like
+a DirectX 11 game, links no D3D12 creation: to the menu, an executable that links
+D3D12 or Vulkan creation and no D3D11 creation is a D3D12 or Vulkan game. Each
+case resolves `d3d11.dll`'s entries through the executable's `GetProcAddress`, so
+it reaches the menu's D3D11 gateways. It uses the D3D11 debug layer when the
+Graphics Tools are installed, and the runtime log must show
+`renderer registered api=d3d11`. The menu checks are the same in every case:
+- the menu key opens the menu with visible pixels;
+- the game's bound pipeline state is identical across a Present with the menu
+  drawn: viewport, scissor, rasterizer, blend, topology, the off-screen render
+  target and depth view, compute shader and UAV, stream output, predication, a
+  vertex shader resource, and constant buffers in slots 0 and 2;
+- a TEST Present draws nothing, keyboard messages are captured, and
+  `ResizeBuffers` works with the menu open;
+- the menu closes and every proxy retires.
+
+`d3d11-menu` takes the application's factory route, with `PinnedFps=1` saved.
+The startup hint must appear and no FPS readout after it. A Present without UI
+must keep the whole state (the control for the state check). The legacy
+`CreateSwapChain` path (blt-model `SEQUENTIAL`, one `R8G8B8A8_UNORM_SRGB`
+buffer) on the same window must draw the menu too. `d3d11-mt-menu` takes the
+same route with the game's `ID3D11Multithread` protection on: another thread
+holding that lock must never see the menu's context state.
+`d3d11-adapter-menu` creates a WARP device with `D3D11CreateDevice` and no
+adapter. The factory the executable then takes through `IDXGIDevice` ->
+`GetAdapter` -> `GetParent` must be the menu's proxy, and the log must show the
+adapter-parent entry armed from the D3D11 device adapter.
+`d3d11-chain-menu` uses `D3D11CreateDeviceAndSwapChain`, and the log must show
+`boundary=d3d11-swapchain-return`. The chain's parent factory must be the
+menu's proxy, and a chain created again from it keeps the menu. A call that asks
+for no device (blt-model sRGB) must be wrapped as well.
+
+Two cases cover D3D12 applications. `d3d11-after-d3d12` creates a D3D12 device
+first through `D3D12CreateDevice` (the default adapter, else WARP).
+`d3d12-with-d3d11-menu` runs in `WarpPresentHarness.exe`, which links D3D12, and
+adds a D3D11 device and window to the D3D12 game. In both, the D3D11 swap chain
+must get no DirectX 11 menu (`step=application_api` in the log), and no Present
+of it may be counted or drawn on. The D3D11 device's adapter must give the native
+factory, and the log must never show `api=d3d11` or arming from the D3D11 device
+adapter. In `d3d12-with-d3d11-menu`, the D3D12 menu must then pass the usual
+menu checks.
+
+Run them alone with
+`python tests/release_regression/run.py --dll <MFGUnlocker.dll> --harness-dir build/release-tests/Release --output <folder> --only d3d11-menu d3d11-mt-menu d3d11-adapter-menu d3d11-chain-menu d3d11-after-d3d12 d3d12-with-d3d11-menu`,
+or directly as `D3D11PresentHarness.exe <case> <folder>\winmm.dll` (or
+`WarpPresentHarness.exe d3d12-with-d3d11-menu ...`) from a folder holding
+`RTX40MFG-UI.ini` with `[Overlay] FirstLaunchMenuShown=1` (and, for
+`d3d11-menu`, `PinnedFps=1`).
 Run `FactoryRevisionTests.exe` directly from the Release harness directory for
 the source-level supported/unsupported revision, lazy-query and concurrent
 cache-lifetime cases. This target compiles the production proxy with isolated

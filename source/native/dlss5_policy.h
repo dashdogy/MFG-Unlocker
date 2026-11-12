@@ -9,7 +9,7 @@
 #include <cstdint>
 
 // DLSS 5 (NVIDIA's DLSS Neural Rendering, NGX feature "DLSSNR", provider
-// nvngx_dlssnr.dll) on the game's own DLSS (V1.7.0, standalone).
+// nvngx_dlssnr.dll) on the game's own DLSS (standalone).
 //
 // The installed NGX runtime names feature 18 DLSSNR. This module can use
 // its native feature route or a user-provided compatible provider directly.
@@ -100,30 +100,27 @@ enum class DownsampleFilter : uint32_t { eArea = 0, eBilinear = 1, eNearest = 2 
 // Edge-aware: bilinear taps weighted by how close each tap's network input is
 // to the full-resolution image there, so the change does not cross edges.
 enum class UpsampleFilter : uint32_t { eBilinear = 0, eBicubic = 1, eNearest = 2, eEdgeAware = 3 };
-// Ratio: the full-resolution image times the network's output / input.
-enum class Reconstruction : uint32_t { eResidual = 0, eProcessedImage = 1, eRatio = 2 };
+// dlss5noratio.1: a saved Ratio (2) falls back to RGB residual; the decode shader keeps its unreachable branch.
+enum class Reconstruction : uint32_t { eResidual = 0, eProcessedImage = 1 };
 enum class ExposureMode : uint32_t { eOff = 0, eOn = 1, eInverse = 2 };
 // Above 100 % Resolution Scale: how the network's extent comes back down.
 enum class SupersampleFilter : uint32_t { eBilinear = 0, eArea = 1 };
 // Boost's detail thresholds (BoostThresholds).
 enum class BoostTolerance : uint32_t { eStrict = 0, eNormal = 1, eLoose = 2 };
-// halfrateoff.1 (V1.7.0 alpha.13) took Half rate (Boost) out of the menu and
-// Sanitized kept it off while its carried change ghosted. halfgrid.1 offers it
-// again: the frames between network runs rebuild the look from their own image
-// (BoostGrid), so nothing but fine detail moves along the motion vectors.
+// Half rate (Boost): frames between network runs rebuild the look from their own
+// image (BoostGrid), so only fine detail moves along the motion vectors.
 inline constexpr bool kHalfRateOffered = true;
 // What the DLSS 5 side of the image shows instead of the result.
 enum class DebugView : uint32_t { eOff = 0, eNetworkInput = 1, eNetworkOutput = 2, eChange = 3 };
 
-// The defaults generation of saved settings (dlss5DefaultsVersion): 2 since
-// autoscale.2 (the provider's own look, Resolution Scale Auto off), 3 since
-// V1.7.0 alpha.15 (Adaptive exposure off); configs without the key were
-// written with generation 1 (MigrateDefaults).
+// The defaults generation of saved settings (dlss5DefaultsVersion): 2 brought
+// the provider's own look and Resolution Scale Auto off, 3 Adaptive exposure
+// off; configs without the key were written with generation 1 (MigrateDefaults).
 inline constexpr uint32_t kDefaultsVersion = 3;
 
 // Saved settings (dlss5* keys in the native control file, dlss5_settings.h).
 // Ranges follow the RenoDX DLSS add-on's Neural Rendering page; the look's
-// defaults are the provider's own (autoscale.2).
+// defaults are the provider's own.
 struct Settings
 {
     bool enabled = false;
@@ -145,14 +142,15 @@ struct Settings
     float character = -1.0f;
     // Percent of the stage's extent the network processes (Scaling). With
     // scaleAuto, the most Auto may use (dlss5_auto.h ScaleController); off by
-    // default since autoscale.2, so the network sees the whole stage.
+    // default, so the network sees the whole stage.
     float scale = 100.0f;
     bool scaleAuto = false;
     uint32_t domain = static_cast<uint32_t>(ScalingDomain::eScrgbNonlinear);
     uint32_t downsample = static_cast<uint32_t>(DownsampleFilter::eArea);
     uint32_t upsample = static_cast<uint32_t>(UpsampleFilter::eBilinear);
     uint32_t reconstruction = static_cast<uint32_t>(Reconstruction::eResidual);
-    // DLSSNR.Hint.Render.Preset: 0 the provider's default, 1 Preset A, 2 Preset B.
+    // DLSSNR.Hint.Render.Preset (menu: Network): 0 the provider's choice, 1 Quality (its larger network),
+    // 2 Fast (its smaller one; 310.9.16 runs it for 0, bit-identical). DLSSNR.Style is Model (menu: Style).
     uint32_t preset = 0;
     // Chained network passes, each its own feature.
     uint32_t passes = 1;
@@ -161,9 +159,8 @@ struct Settings
     float exposure = 1.0f;
     uint32_t exposureMode = static_cast<uint32_t>(ExposureMode::eOn);
     // Adaptive exposure (dlss5_auto.h ExposureController), HDR color only. Off
-    // by default since V1.7.0 alpha.15 (B4-25): it ran a second eye adaptation
-    // beside the game's (RDR2), so the network now sees the game's own
-    // exposure, as with SDR color.
+    // by default: it runs a second eye adaptation beside the game's; off, the
+    // network sees the game's own exposure, as with SDR color.
     bool adaptiveExposure = false;
     // Boost: the network runs on every other evaluation; the evaluations
     // between carry its last change along the motion vectors (D3D12 Before and
@@ -175,7 +172,7 @@ struct Settings
     bool compare = false;
     float compareSplit = 50.0f;
     uint32_t compareKey = 0;
-    // dlss5adv.1, Advanced. Passes 2 and later: with laterCustom their own
+    // Advanced. Passes 2 and later: with laterCustom their own
     // Model, Intensity, Structure, Tone and Faces & skin (PassSettings).
     bool laterCustom = false;
     uint32_t laterModel = 0;
@@ -231,52 +228,113 @@ inline float Clamped(float value, float minimum, float maximum, float fallback) 
     return std::isfinite(value) ? std::clamp(value, minimum, maximum) : fallback;
 }
 
+// The dlss5* keys of the native control file and the status protocol
+// (dlss5_settings.h), shared by every reader and writer and by Sanitized.
+namespace settings_json
+{
+enum class Kind : uint8_t { eBool, eUnsigned, eFloat };
+
+struct Field
+{
+    const char* key;
+    Kind kind;
+    float minimum, maximum;
+    bool Settings::* flag;
+    uint32_t Settings::* integer;
+    float Settings::* real;
+};
+
+inline constexpr Field Flag(const char* key, bool Settings::* member) { return {key, Kind::eBool, 0, 1, member, nullptr, nullptr}; }
+inline constexpr Field Choice(const char* key, uint32_t minimum, uint32_t maximum, uint32_t Settings::* member)
+{ return {key, Kind::eUnsigned, static_cast<float>(minimum), static_cast<float>(maximum), nullptr, member, nullptr}; }
+inline constexpr Field Real(const char* key, float minimum, float maximum, float Settings::* member)
+{ return {key, Kind::eFloat, minimum, maximum, nullptr, nullptr, member}; }
+
+inline constexpr Field kFields[] = {
+    Flag("dlss5", &Settings::enabled),
+    Choice("dlss5HookStage", 0, 3, &Settings::stage),
+    Choice("dlss5UseDlssResources", 0, 2, &Settings::resources),
+    Choice("dlss5UiCorrection", 0, 2, &Settings::uiCorrection),
+    Choice("dlss5Encoding", 0, 5, &Settings::encoding),
+    Real("dlss5DiffuseWhite", kMinDiffuseWhite, kMaxDiffuseWhite, &Settings::diffuseWhite),
+    Flag("dlss5DiffuseWhiteOverride", &Settings::diffuseWhiteOverride),
+    Real("dlss5OverallIntensity", 0.0f, 1.0f, &Settings::intensity),
+    Choice("dlss5Model", 0, 2, &Settings::model),
+    Real("dlss5StructureIntensity", 0.0f, kMaxStrength, &Settings::structure),
+    Real("dlss5ToneIntensity", 0.0f, kMaxStrength, &Settings::tone),
+    Flag("dlss5CharacterMask", &Settings::characterMask),
+    Real("dlss5CharacterIntensity", kMinCharacter, kMaxStrength, &Settings::character),
+    // 0 % selects the minimum processing extent.
+    Real("dlss5ResolutionScale", 0.0f, kMaxScale, &Settings::scale),
+    Flag("dlss5ResolutionScaleAuto", &Settings::scaleAuto),
+    Choice("dlss5ScalingDomain", 0, 2, &Settings::domain),
+    Choice("dlss5DownsampleFilter", 0, 2, &Settings::downsample),
+    Choice("dlss5UpsampleFilter", 0, 3, &Settings::upsample),
+    // 2 was Ratio (V1.7.0): still read so an older saved file loads; Sanitized makes it RGB residual.
+    Choice("dlss5ScaleReconstruction", 0, 2, &Settings::reconstruction),
+    Choice("dlss5Preset", 0, 2, &Settings::preset),
+    Choice("dlss5PassCount", 1, kMaxPasses, &Settings::passes),
+    Choice("dlss5SignalEncoding", 0, 2, &Settings::signal),
+    Flag("dlss5BlockHudless", &Settings::blockHudless),
+    Real("dlss5Exposure", 0.0f, kMaxExposure, &Settings::exposure),
+    Choice("dlss5UseExposureValue", 0, 2, &Settings::exposureMode),
+    Flag("dlss5AdaptiveExposure", &Settings::adaptiveExposure),
+    Flag("dlss5Boost", &Settings::boost),
+    Flag("dlss5CompareSplitView", &Settings::compare),
+    Real("dlss5CompareSplit", kMinCompareSplit, kMaxCompareSplit, &Settings::compareSplit),
+    Choice("dlss5CompareKey", 0, 254, &Settings::compareKey),
+    // Advanced.
+    Flag("dlss5LaterPassesCustom", &Settings::laterCustom),
+    Choice("dlss5LaterModel", 0, 2, &Settings::laterModel),
+    Real("dlss5LaterIntensity", 0.0f, 1.0f, &Settings::laterIntensity),
+    Real("dlss5LaterStructure", 0.0f, kMaxStrength, &Settings::laterStructure),
+    Real("dlss5LaterTone", 0.0f, kMaxStrength, &Settings::laterTone),
+    Real("dlss5LaterCharacter", kMinCharacter, kMaxStrength, &Settings::laterCharacter),
+    Real("dlss5BlendStrength", 0.0f, kMaxBlend, &Settings::blend),
+    Real("dlss5ColorStrength", 0.0f, kMaxColor, &Settings::color),
+    Flag("dlss5HighlightGuard", &Settings::highlightGuard),
+    Real("dlss5HighlightLimit", kMinHighlightLimit, kMaxHighlightLimit, &Settings::highlightLimit),
+    Real("dlss5HaloDark", 0.0f, 1.0f, &Settings::haloDark),
+    Real("dlss5HaloBright", 0.0f, 1.0f, &Settings::haloBright),
+    Choice("dlss5HaloRadius", kMinHaloRadius, kMaxHaloRadius, &Settings::haloRadius),
+    Choice("dlss5SupersampleFilter", 0, 1, &Settings::supersample),
+    Real("dlss5HdrKnee", kMinKnee, kMaxKnee, &Settings::knee),
+    Real("dlss5AdaptiveTarget", kMinAdaptiveTarget, kMaxAdaptiveTarget, &Settings::adaptiveTarget),
+    Choice("dlss5BoostTolerance", 0, 2, &Settings::boostTolerance),
+    Choice("dlss5DebugView", 0, 3, &Settings::debugView),
+    Flag("dlss5CompareSwap", &Settings::compareSwap),
+    // The defaults generation (MigrateDefaults, kDefaultsVersion). Any later value parses and is not migrated.
+    Choice("dlss5DefaultsVersion", 0, 65535, &Settings::defaultsVersion),
+};
+}
+
+// Every number back in its kFields range: a non-finite value or a choice
+// outside it takes the default, a finite value is clamped into it.
 inline Settings Sanitized(Settings settings) noexcept
 {
     const Settings defaults{};
-    if (settings.stage > 3) settings.stage = defaults.stage;
-    if (settings.resources > 2) settings.resources = defaults.resources;
-    if (settings.uiCorrection > 2) settings.uiCorrection = defaults.uiCorrection;
-    if (settings.encoding > 5) settings.encoding = defaults.encoding;
-    settings.diffuseWhite = Clamped(settings.diffuseWhite, kMinDiffuseWhite, kMaxDiffuseWhite, defaults.diffuseWhite);
-    settings.intensity = Clamped(settings.intensity, 0.0f, 1.0f, defaults.intensity);
-    if (settings.model > 2) settings.model = defaults.model;
-    settings.structure = Clamped(settings.structure, 0.0f, kMaxStrength, defaults.structure);
-    settings.tone = Clamped(settings.tone, 0.0f, kMaxStrength, defaults.tone);
-    settings.character = Clamped(settings.character, kMinCharacter, kMaxStrength, defaults.character);
+    for (const settings_json::Field& field : settings_json::kFields)
+    {
+        // Pass Count, the compare key and Halo radius follow their own rules
+        // below; the defaults generation is left as it is.
+        if (field.integer == &Settings::passes || field.integer == &Settings::compareKey
+            || field.integer == &Settings::haloRadius || field.integer == &Settings::defaultsVersion)
+            continue;
+        if (field.kind == settings_json::Kind::eFloat)
+            settings.*field.real = Clamped(settings.*field.real, field.minimum, field.maximum, defaults.*field.real);
+        else if (field.kind == settings_json::Kind::eUnsigned
+            && (settings.*field.integer < static_cast<uint32_t>(field.minimum)
+                || settings.*field.integer > static_cast<uint32_t>(field.maximum)))
+            settings.*field.integer = defaults.*field.integer;
+    }
     // Faces & skin is -1 (follows Structure) or 0 and above.
     if (settings.character < 0.0f) settings.character = kMinCharacter;
-    // 0 % selects the minimum processing extent.
-    settings.scale = Clamped(settings.scale, 0.0f, kMaxScale, defaults.scale);
-    if (settings.domain > 2) settings.domain = defaults.domain;
-    if (settings.downsample > 2) settings.downsample = defaults.downsample;
-    if (settings.upsample > 3) settings.upsample = defaults.upsample;
-    if (settings.reconstruction > 2) settings.reconstruction = defaults.reconstruction;
-    if (settings.preset > 2) settings.preset = defaults.preset;
-    settings.passes = std::clamp(settings.passes, 1u, kMaxPasses);
-    if (settings.signal > 2) settings.signal = defaults.signal;
-    settings.exposure = Clamped(settings.exposure, 0.0f, kMaxExposure, defaults.exposure);
-    if (settings.exposureMode > 2) settings.exposureMode = defaults.exposureMode;
-    settings.compareSplit = Clamped(settings.compareSplit, kMinCompareSplit, kMaxCompareSplit, defaults.compareSplit);
-    if (!CompareKeyAllowed(settings.compareKey)) settings.compareKey = defaults.compareKey;
-    if (settings.laterModel > 2) settings.laterModel = defaults.laterModel;
-    settings.laterIntensity = Clamped(settings.laterIntensity, 0.0f, 1.0f, defaults.laterIntensity);
-    settings.laterStructure = Clamped(settings.laterStructure, 0.0f, kMaxStrength, defaults.laterStructure);
-    settings.laterTone = Clamped(settings.laterTone, 0.0f, kMaxStrength, defaults.laterTone);
-    settings.laterCharacter = Clamped(settings.laterCharacter, kMinCharacter, kMaxStrength, defaults.laterCharacter);
     if (settings.laterCharacter < 0.0f) settings.laterCharacter = kMinCharacter;
-    settings.blend = Clamped(settings.blend, 0.0f, kMaxBlend, defaults.blend);
-    settings.color = Clamped(settings.color, 0.0f, kMaxColor, defaults.color);
-    settings.highlightLimit = Clamped(settings.highlightLimit, kMinHighlightLimit, kMaxHighlightLimit, defaults.highlightLimit);
-    settings.haloDark = Clamped(settings.haloDark, 0.0f, 1.0f, defaults.haloDark);
-    settings.haloBright = Clamped(settings.haloBright, 0.0f, 1.0f, defaults.haloBright);
+    if (settings.reconstruction > 1) settings.reconstruction = defaults.reconstruction;
+    settings.passes = std::clamp(settings.passes, 1u, kMaxPasses);
+    if (!CompareKeyAllowed(settings.compareKey)) settings.compareKey = defaults.compareKey;
     settings.haloRadius = std::clamp(settings.haloRadius, kMinHaloRadius, kMaxHaloRadius);
-    if (settings.supersample > 1) settings.supersample = defaults.supersample;
-    settings.knee = Clamped(settings.knee, kMinKnee, kMaxKnee, defaults.knee);
-    settings.adaptiveTarget = Clamped(settings.adaptiveTarget, kMinAdaptiveTarget, kMaxAdaptiveTarget, defaults.adaptiveTarget);
-    if (settings.boostTolerance > 2) settings.boostTolerance = defaults.boostTolerance;
     if (!kHalfRateOffered) settings.boost = false;
-    if (settings.debugView > 3) settings.debugView = defaults.debugView;
     return settings;
 }
 
@@ -314,14 +372,10 @@ inline BoostThreshold BoostThresholds(uint32_t tolerance) noexcept
     }
 }
 
-// halfgrid.1, Boost's look model: on each network run, an affine map from the
-// network input to its output per cell of cell x cell texels and per
-// luminance bin, fitted by least squares (bilateral guided upsampling, Chen et
-// al. 2016) and applied to the next evaluation's own input. The cell grows
-// with the extent (16 texels up to about 1080 lines), so the grid keeps about
-// the same size; it is a multiple of 16, the fit's thread group. lambda pulls
-// each map toward the identity plus its mean change, so flat or empty cells
-// keep the tone change without inventing contrast.
+// Boost's look model: on each network run, a least-squares affine map from the network input to its output per cell
+// and luminance bin (bilateral guided upsampling, Chen et al. 2016), applied to the next evaluation's own input. The
+// cell grows with the extent (16 texels up to about 1080 lines; a multiple of 16, the fit's thread group). lambda
+// pulls each map toward the identity plus its mean change, so flat or empty cells invent no contrast.
 inline constexpr uint32_t kBoostBins = 8;
 inline constexpr float kBoostLambda = 0.005f;
 struct BoostGrid { uint32_t cell, bins, cellsX, cellsY; };
@@ -337,11 +391,9 @@ inline bool BoostGridFor(uint32_t width, uint32_t height, BoostGrid& grid) noexc
 }
 
 // Looks: Intensity, Model, Structure, Tone and Faces & skin together.
-// Balanced is the default, the provider's own look (autoscale.2); Subtle
-// halves its change (Intensity scales it linearly); Strong goes further than
-// Balanced, chosen in autoscale.2's provider A/B on a Cyberpunk face frame.
-// Faces & skin -1 follows Structure. Pass Count and Resolution Scale stay as
-// set: they change the GPU cost.
+// Balanced is the default, the provider's own look; Subtle halves its change;
+// Strong goes further. Faces & skin -1 follows Structure. Pass Count and
+// Resolution Scale stay as set: they change the GPU cost.
 struct Look
 {
     float intensity;
@@ -354,7 +406,7 @@ inline constexpr Look kLooks[] = {
     {1.0f, 1, 1.5f, 1.5f, -1.0f}, // Strong
 };
 inline constexpr size_t kLookCount = std::size(kLooks);
-// The looks before autoscale.2 (the RenoDX add-on's defaults), in kLooks order.
+// The looks of defaults generation 1 (the RenoDX add-on's defaults), in kLooks order.
 inline constexpr Look kOldLooks[] = {
     {0.5f, 0, 0.7f, 0.3f, 0.5f},
     {1.0f, 0, 0.7f, 0.3f, 0.5f},
@@ -388,13 +440,10 @@ inline void ApplyLook(Settings& settings, size_t index) noexcept
 }
 
 // Settings saved with an older defaults generation (`from`) on the new
-// defaults. Before generation 2 (autoscale.2): an untouched old look (Subtle,
-// Balanced, Strong) becomes its new one, later-pass strengths still at their
-// old defaults take the new ones, and Resolution Scale Auto at its old default
-// (on, up to 100 %) goes off. Before generation 3 (alpha.15): Adaptive
-// exposure goes off; generations 1 and 2 could only hold its old default
-// "on", and a deliberate "on" from then costs one click to restore. Anything
-// else the user set stays.
+// defaults. Before generation 2: an untouched old look becomes its new one,
+// later-pass strengths at their old defaults take the new ones, and Resolution
+// Scale Auto at its old default goes off. Before generation 3: Adaptive exposure
+// goes off. Anything else the user set stays.
 inline void MigrateDefaults(Settings& settings, uint32_t from) noexcept
 {
     const auto same = [](float left, float right) noexcept { return std::abs(left - right) < 0.005f; };
@@ -432,9 +481,28 @@ inline bool SameFeature(const Settings& left, const Settings& right) noexcept
         && LaterModel(left) == LaterModel(right);
 }
 
+// nrscale.1: the video memory a create at `width` x `height` takes, from a
+// measured create (`bytes` at `measuredWidth` x `measuredHeight`): grown with
+// the extent's area, never shrunk. 0 while nothing was measured.
+inline uint64_t ReplacementBytes(uint64_t bytes, uint32_t measuredWidth, uint32_t measuredHeight, uint32_t width,
+    uint32_t height) noexcept
+{
+    if (!measuredWidth || !measuredHeight) return bytes;
+    const double growth = std::max(1.0, static_cast<double>(width) * height / (static_cast<double>(measuredWidth) * measuredHeight));
+    return static_cast<uint64_t>(static_cast<double>(bytes) * growth);
+}
+
+// nrscale.1: whether a replacement of `bytes` fits beside the live feature in
+// the process's video memory budget (unknown memory: yes). Over budget, Windows
+// pages and the game stalls for seconds.
+inline bool RoomBeside(uint64_t usage, uint64_t budget, uint64_t bytes) noexcept
+{
+    return !budget || !bytes || (usage <= budget && bytes <= budget - usage);
+}
+
 // `run` with what its feature was created with (`applied`): the settings a
-// live feature evaluates with while its replacement for `run` is created
-// (autoscale.1). Everything else, such as strengths, applies at once.
+// live feature evaluates with while its replacement for `run` is created.
+// Everything else, such as strengths, applies at once.
 inline Settings Keeping(Settings run, const Settings& applied) noexcept
 {
     run.stage = applied.stage; run.scale = applied.scale; run.passes = applied.passes;
@@ -609,6 +677,28 @@ constexpr State CreateFailureState(uint32_t result) noexcept
     }
 }
 
+namespace d3d11
+{
+// dx11nr.1: why the DirectX 11 bridge (dlss5_d3d11.h) leaves the game's evaluations as they are. Values are part
+// of the status protocol (dlss5D3D11Refusal).
+enum class Refusal : uint32_t
+{
+    eNone = 0,
+    // DLSS is evaluated on a deferred context; the bridge records on the immediate context only.
+    eDeferredContext = 1,
+    // No ID3D11Device5/ID3D11DeviceContext4 (D3D11.4 shared fences).
+    eNoSharedFence = 2,
+    // The bridge's DirectX 12 device (or NGX's D3D12 entries for it) is unavailable, or on another adapter.
+    eDevice = 3,
+    // A shared texture or the shared fence could not be created or opened.
+    eSharing = 4,
+    // The game's DLSS feature was created before the D3D11 route was hooked: DLSS 5 does not attach to it.
+    eUntracked = 5,
+};
+// A refusal that keeps DLSS 5 off the game (the state shows Unsupported while DLSS 5 is on).
+constexpr bool Blocking(Refusal refusal) noexcept { return refusal != Refusal::eNone && refusal != Refusal::eUntracked; }
+}
+
 // The game's DLSS evaluation, as read from its parameter object and the
 // feature's Create keys (dlss_sr::CreateKeys).
 struct Source
@@ -667,8 +757,8 @@ enum class InputGap : uint32_t
     eSubrectKey,
     // DLSS.Render.Subrect.Dimensions beyond the Create Width/Height. DLSS SR
     // 310.9.16 reads such a subrect whole (it does not clamp to the Create
-    // size; build\v1.7.0-mhwdlss5-20261022\probe-sr-subrect), so the region it
-    // used is not the Create-size one this stage would assume.
+    // size), so the region it used is not the Create-size one this stage would
+    // assume.
     eRenderSize,
     // A size or offset beyond INT_MAX.
     eRange,
@@ -704,8 +794,10 @@ inline bool Build(const Source& source, const dlss_sr::CreateKeys& create, Stage
     uint32_t renderHeight = source.renderHeight ? source.renderHeight : create.height;
     if (!outWidth || !outHeight || !renderWidth || !renderHeight)
         return refuse(InputGap::eCreateKeys, "Width/Height/OutWidth/OutHeight");
-    // Dynamic resolution never renders beyond the Create size.
-    if (renderWidth>create.width || renderHeight>create.height)
+    // Dynamic resolution never renders beyond the Create size, but a game may round its render size up where DLSS SR's
+    // Create rounded down; DLSS SR reads such a subrect whole, so one pixel over is taken as it is (ValidateResources
+    // still bounds it by the textures). More than that (e.g. empty tag extents passing the whole resource) is refused.
+    if (renderWidth>create.width+1 || renderHeight>create.height+1)
         return refuse(InputGap::eRenderSize, "DLSS.Render.Subrect.Dimensions");
     const bool lowResMotion = (create.createFlags & kMotionLowResFlag) != 0;
     const uint32_t motionWidth = lowResMotion ? renderWidth : outWidth;

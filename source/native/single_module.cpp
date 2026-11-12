@@ -5,13 +5,15 @@
 #include "single_overlay.h"
 #include "overlay_dxgi_proxy.h"
 #include "optiscaler_host.h"
+#include "optiscaler_menu_tab.h"
+#include "host_process_policy.h"
 #include "session_diagnostics.h"
 #include "proxy_generated/proxy_export_names.h"
 #include "proxy_generated/renamable_names.h"
-#if MFG_UNLOCK_XESS
 #include "xess/xess_mod.h"
+#include "xess/ngx_provider_registration.h"
 #include "xess/cuda/cuda_route.h"
-#endif
+#include "embedded_payload.h"
 
 #include <delayimp.h>
 #include <intrin.h>
@@ -223,6 +225,15 @@ bool HostedByCrashReporter() noexcept
     return false;
 }
 
+// pluginprov.2: a Chromium-family helper (CEF, Electron) started with --type= (host_process_policy.h). A game may start
+// its own executable as such helpers, and OptiScaler loads this module in each; the backend there can crash a renderer
+// and writes extra logs and status files. Such a host gets proxy forwarding only.
+bool HostedByChromiumHelper() noexcept
+{
+    const wchar_t* commandLine = GetCommandLineW();
+    return commandLine && host_process_policy::HasChromiumHelperSwitch(commandLine);
+}
+
 bool SelectProxyExports(HMODULE module, uint32_t family) noexcept
 {
     // Customize only this loaded copy's own export-address table before any
@@ -241,8 +252,8 @@ bool SelectProxyExports(HMODULE module, uint32_t family) noexcept
     if (directory.VirtualAddress >= size || directory.Size < sizeof(IMAGE_EXPORT_DIRECTORY)
         || directory.Size > size - directory.VirtualAddress) return false;
     const auto exports = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(base + directory.VirtualAddress);
-    // Public exports are ordinals 4096.. (generate_build_inputs.py); 4100 = XeFGModelName.
-    constexpr uint32_t kLegacyLimit = 427, kNamedBase = 1024, kPublicLast = 4100;
+    // Public exports are ordinals 4096.. (generate_build_inputs.py); 4100 = XeFGModelName, 4101 = OptiPluginInit.
+    constexpr uint32_t kLegacyLimit = 427, kNamedBase = 1024, kPublicLast = 4101;
     if (exports->Base != 1 || exports->NumberOfFunctions != kPublicLast
         || exports->AddressOfFunctions >= size
         || exports->NumberOfFunctions > (size - exports->AddressOfFunctions) / sizeof(DWORD)
@@ -486,9 +497,8 @@ HMODULE LoadSystemModule(const wchar_t* basename) noexcept
 
 namespace {
 // A ring the existing backend worker drains every 100 ms into the log file
-// (lines from before the file opens, and from Witcher DOTS). It was a
-// 64-line array that was never reused: every later line of a session was
-// lost. A full ring drops the newest lines and the drain reports how many.
+// (lines from before the file opens, and from Witcher DOTS). A full ring drops
+// the newest lines and the drain reports how many.
 constexpr size_t kUiLogChars = 768;
 struct UiLogLine { wchar_t text[kUiLogChars]{}; };
 UiLogLine gUiLog[192];
@@ -533,7 +543,7 @@ void DrainLog(void (*sink)(const wchar_t*)) noexcept
         sink(line);
     }
 }
-// diag.1: the crash and exit records flush the queue without waiting; a lock held by a stopped or crashed thread
+// The crash and exit records flush the queue without waiting; a lock held by a stopped or crashed thread
 // leaves the rest queued.
 bool TryDrainLog(void (*sink)(const wchar_t*)) noexcept
 {
@@ -672,7 +682,7 @@ MfgUnlockSingleModuleQuery(MfgSingleModuleStatus* status)
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
 #if MFG_UNLOCK_SESSION_DIAGNOSTICS
-    // diag.1: the module is pinned, so this is the process exit (reserved is non-null) recorded as the session end.
+    // The module is pinned, so this is the process exit (reserved is non-null) recorded as the session end.
     if (reason == DLL_PROCESS_DETACH && gOwnsBackend)
         session_diagnostics::OnProcessDetach(reserved != nullptr);
 #endif
@@ -695,8 +705,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         }
     if (!SelectProxyExports(instance, gSelectedProxyFamily)) return FALSE;
     DisableThreadLibraryCalls(instance);
-    // hostgate.1, crashhost.1: no claim, hooks, worker, log, status file or write probe.
-    if (HostedFromWindowsDirectory() || HostedByCrashReporter()) return TRUE;
+    // No claim, hooks, worker, log, status file or write probe.
+    if (HostedFromWindowsDirectory() || HostedByCrashReporter() || HostedByChromiumHelper()) return TRUE;
 
     wchar_t claim[96]{};
     swprintf_s(claim, L"Local\\RTX40MFG-SingleModule-%lu", GetCurrentProcessId());
@@ -723,13 +733,15 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         return TRUE;
     }
     gOwnsBackend = true;
+    // slim.1: a packed payload group that fails to decode is logged once, then its route stays off.
+    embedded_payload::SetLog(&single_module::Log);
     // Decide OptiScaler cooperation before any hook is armed. As a plugin,
     // RTXMFG is loaded from OptiScaler's DllMain, so its image is mapped here
     // (not necessarily initialized: only its resources are read).
     optiscaler_host::ObserveProcessStart(instance);
     if (optiscaler_host::Detected())
     {
-        single_module::Log(L"OptiScaler detected at startup; its menu owns the frame-generation controls unless optiScalerUi is \"rtxmfg\" (RTXMFG's menu offers the DLSS presets and DLSS 5 while one runs unless it is \"optiscaler\").");
+        single_module::Log(L"OptiScaler detected at startup; its menu owns the frame-generation controls unless optiScalerUi is \"rtxmfg\" (without the key, RTXMFG's tab in OptiScaler's menu offers the DLSS presets and DLSS 5 once OptiScaler hands its plugin API, else RTXMFG's menu while one runs; \"shared\" keeps RTXMFG's menu, \"optiscaler\" only the tab).");
         if (optiscaler_host::DefaultUiMode() == optiscaler_host::UiMode::Hidden)
             single_module::Log(L"ForzaTech executable: RTXMFG's menu stays hidden beside OptiScaler (no factory, swapchain or input wrapping) unless optiScalerUi is \"shared\".");
     }
@@ -761,19 +773,41 @@ extern "C" __declspec(dllexport) __declspec(noinline) void InitializeASI()
         : L"InitializeASI caller is not OptiScaler; ignored.");
 }
 
-// Optional ASI plugin export OptiScaler's XeFG card shows as "XeFG Model" (OptiScaler fork, xefgmodelname.1).
+// menutab.2: OptiScaler's plugin API (optiscaler_plugin.h). OptiScaler calls it right after InitializeASI, from
+// its DllMain under the loader lock; optiscaler_menu_tab keeps the API only from the identified OptiScaler image
+// and registers RTXMFG's tab in its menu while the UI mode is hidden.
+extern "C" __declspec(dllexport) __declspec(noinline) bool OptiPluginInit(const OptiPluginApi* api, OptiPlugin* plugin)
+{
+    if (gDuplicate || !gOwnsBackend) return false;
+    const bool accepted = optiscaler_menu_tab::AcceptApi(api, plugin);
+    single_module::Log(accepted ? L"OptiScaler plugin API accepted (OptiPluginInit)."
+        : L"OptiPluginInit refused: the API table is not the identified OptiScaler's; ignored.");
+    if (accepted)
+        single_module::Log(optiscaler_menu_tab::Fork2Layout()
+            ? L"OptiScaler plugin API layout: MFG Unlocker fork version 2 (before the upstream merge), adapted."
+            : L"OptiScaler plugin API layout: upstream.");
+    // pluginprov.1: registering only stores the entry, so it's fine under the loader lock. It lists the provider in
+    // OptiScaler's menu; nothing runs unless FGNvngxReplacement selects it.
+    if (accepted && optiscaler_menu_tab::RegisterProvider(ngx_provider_registration::kName, OptiProvider_Dlssg,
+        &ngx_provider_registration::GetProc, nullptr))
+    {
+        ngx_provider_registration::NoteRegistered();
+        single_module::Log(L"OptiScaler plugin API: XeMFG registered as the FG Nvngx provider (no shim file needed).");
+    }
+    return accepted;
+}
+
+// Optional ASI plugin export OptiScaler's XeFG card shows as "XeFG Model" (OptiScaler fork).
 // "2X": XeFG's own 2x model (XeFGModel = default; OptiScaler's stock label for it); "port": our ported MFG model;
 // "CUDA-port": the ported model with its int8 layers run on tensor cores. Empty until XeFG has been created
 // (OptiScaler then shows its stock label). Called from OptiScaler's menu every frame it is open: reads published
 // state only.
 extern "C" __declspec(dllexport) __declspec(noinline) const char* XeFGModelName()
 {
-#if MFG_UNLOCK_XESS
     if (gDuplicate || !gOwnsBackend) return "";
     const auto snapshot = xess_mod::ReadSnapshot();
     const uint32_t model = snapshot ? snapshot->modelActive : 0;
     if (model == 2) return "2X";
     if (model == 1) return xefg_cuda::Launched() ? "CUDA-port" : "port";
-#endif
     return "";
 }

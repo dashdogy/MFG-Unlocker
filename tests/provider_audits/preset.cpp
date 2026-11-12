@@ -121,7 +121,7 @@ int wmain(int argc, wchar_t** argv)
         Require(ReadSnapshot(newProvider).presetCAvailable && !ReadSnapshot(oldProvider).presetCAvailable,
             "status reports Preset C availability per provider");
 
-        // V1.6.0 live preset switching. Both builds are inspected per-Create readers: every call of their cached
+        // Live preset switching. Both builds are inspected per-Create readers: every call of their cached
         // reader (it serves several DRS keys) sits in the two EndpointCore::Create helpers (310.9.0 0x34100/0x37B20,
         // 310.9.16 0x344F0/0x38020), and no jump reaches it.
         const auto oldConfig = config::Discover(oldProvider, oldReader);

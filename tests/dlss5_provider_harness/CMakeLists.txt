@@ -9,12 +9,13 @@ if(NOT EXISTS "${STREAMLINE_ROOT}/external/ngx-sdk/include/nvsdk_ngx.h")
     message(FATAL_ERROR "Set STREAMLINE_ROOT to the Streamline SDK with external/ngx-sdk")
 endif()
 set(NATIVE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../source/native")
-add_executable(Dlss5ProviderHarness main.cpp "${NATIVE_SOURCE}/dlss5_provider.cpp" "${NATIVE_SOURCE}/dlss5.cpp"
+# dx11nr.1: --d3d11 runs the same frames through the DirectX 11 bridge (dlss5_d3d11.cpp) on a D3D11 device.
+add_executable(Dlss5ProviderHarness main.cpp "${NATIVE_SOURCE}/dlss5_provider.cpp" "${NATIVE_SOURCE}/dlss5.cpp" "${NATIVE_SOURCE}/dlss5_d3d11.cpp"
  "${NATIVE_SOURCE}/third_party/minhook/src/buffer.c" "${NATIVE_SOURCE}/third_party/minhook/src/hook.c"
  "${NATIVE_SOURCE}/third_party/minhook/src/trampoline.c" "${NATIVE_SOURCE}/third_party/minhook/src/hde/hde64.c")
 target_compile_features(Dlss5ProviderHarness PRIVATE cxx_std_20)
 target_include_directories(Dlss5ProviderHarness PRIVATE "${NATIVE_SOURCE}" "${NATIVE_SOURCE}/third_party/minhook/include" "${STREAMLINE_ROOT}/external/ngx-sdk/include")
 target_compile_definitions(Dlss5ProviderHarness PRIVATE MFG_DLSS5_TESTING=1 UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(Dlss5ProviderHarness PRIVATE d3d12 dxgi d3dcompiler
+target_link_libraries(Dlss5ProviderHarness PRIVATE d3d11 d3d12 dxgi d3dcompiler
     "${STREAMLINE_ROOT}/external/ngx-sdk/lib/Windows_x86_64/nvsdk_ngx_d.lib")
 set_target_properties(Dlss5ProviderHarness PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")

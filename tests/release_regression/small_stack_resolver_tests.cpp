@@ -1,6 +1,8 @@
 #include "common.h"
 #include <fstream>
 using namespace harness;
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 using Lookup=FARPROC(WINAPI*)(HMODULE,LPCSTR);
 struct Probe {
     HMODULE kernel=nullptr,dxgi=nullptr;

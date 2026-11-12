@@ -15,12 +15,12 @@
 #include "dlssg_preset.h"
 #include "dlss_sr.h"
 #include "dlss5.h"
+#include "dlss5_d3d11.h"
 #include "dlss5_vulkan.h"
+#include "ngx_initialization.h"
 #include "fg_lifetime_tracker.h"
-#if MFG_UNLOCK_XESS
 #include "xess/vulkan/vk_host.h"
 #include "xess/d3d12_host.h"
-#endif
 #if MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY
 #include "midpoint_fix.h"
 #endif
@@ -109,7 +109,7 @@ bool DeviceConfirmed() noexcept { return gD3D12Confirmed.load() || gVulkanConfir
 std::atomic<uint32_t> gFailure{100};
 std::atomic<uint32_t> gFatalFailure{0};
 std::atomic<uint64_t> gPresetQueries{0}, gEvaluations{0}, gRejections{0};
-// V1.6.2 alpha.11: the prepared (pinned) provider whose preset read this route
+// The prepared (pinned) provider whose preset read this route
 // recorded last, for the status preset fields (PresetProvider).
 std::atomic<uintptr_t> gPresetProvider{0};
 struct LegacyPresetRouteProof
@@ -122,7 +122,7 @@ std::atomic<uint32_t> gNativeMaximum{0};
 std::atomic<uint32_t> gNativeMaximumResult{static_cast<uint32_t>(NVSDK_NGX_Result_FAIL_NotInitialized)};
 std::atomic<uint32_t> gStartupMaximum{0}, gPresentationBuffers{0};
 std::atomic<uint32_t> gCertifiedMaximum{0};
-// ringcap.1: the ring (generated frames) the last accepted Create certified on
+// The ring (generated frames) the last accepted Create certified on
 // the active wrapper generation; it outlives a refused evaluation, not the wrapper.
 std::atomic<uint32_t> gRingMaximum{0};
 std::atomic<uint64_t> gRingWrapperGeneration{0};
@@ -137,9 +137,9 @@ std::atomic<uint64_t> gBufferRefreshes{0};
 std::atomic<uint64_t> gCreateAttempts{0}, gCreateBlockedBeforeProvider{0}, gEvaluateAttempts{0};
 std::atomic<bool> gPipelineCreateObserved{false};
 std::atomic<uint64_t> gCandidateProviderVersion{0};
-// V1.6.0 live preset switching: FG lifetime on the runtime route.
+// Live preset switching: FG lifetime on the runtime route.
 fg_lifetime::Tracker<> gFgLifetime;
-// V1.6.2 vkpreset.1: the runtime Vulkan entry the patcher's gate diverted on
+// The runtime Vulkan entry the patcher's gate diverted on
 // this thread (DivertNativeVulkanCall). Its route thunk consumes it on entry;
 // the relay jumps there directly, with no other call in between.
 thread_local entry_detour::Handle gNativeVulkanDivert{};
@@ -358,6 +358,8 @@ struct Route
     // patcher's forwarding entries (its pre-calls are kept for the RTX 30 thunks).
     entry_detour::Handle vkCreate{}, vkCreate1{}, vkEvaluate{}, vkRelease{}, vkRequirements{}, vkParameters{};
     entry_detour::ForwardPreCall vkBeforeCreate{}, vkBeforeCreate1{}, vkBeforeEvaluate{};
+    // dx11nr.1: the runtime's D3D11 Create, Evaluate and Release (DLSS 5 on DirectX 11 games, dlss5_d3d11.h).
+    entry_detour::Handle d3d11Create{}, d3d11Evaluate{}, d3d11Release{};
     Patch availability{};
     std::array<ampere_policy::Feature, 16> features{};
     uint64_t nextFeatureLifetime = 0;
@@ -676,12 +678,12 @@ template<class F> F RouteOriginal(const Route& route, entry_detour::Handle handl
         ? reinterpret_cast<F>(state.original) : nullptr;
 }
 
-// ngxforward.1 (GitHub issue 115: STALKER 2 on an RTX 4090 had no DLSS): another
-// hook installed over one of our runtime entries leaves it not current, while the
-// calls still reach us through that hook. Off the translated (RTX 30/20) program,
-// NVIDIA's own call then continues through this entry's trampoline when
-// entry_detour proves the other hook replaced only our entry jump. Otherwise, and
-// always for the translated program, the entry fails closed as before.
+// Another hook installed over one of our runtime entries (GitHub issue 115)
+// leaves it not current, while the calls still reach us through that hook. Off
+// the translated (RTX 30/20) program, NVIDIA's own call then continues through
+// this entry's trampoline when entry_detour proves the other hook replaced only
+// our entry jump. Otherwise, and always for the translated program, the entry
+// fails closed.
 template<class F> F NativeOriginal(const Route& route, entry_detour::Handle handle) noexcept
 {
     if (const auto original = RouteOriginal<F>(route, handle)) return original;
@@ -865,7 +867,7 @@ Route* ActiveWrapper() noexcept
         if (route.module == module && route.generation == generation && route.wrapperLayout.module == module) return &route;
     return nullptr;
 }
-// diag171.1: evidence for failure 171. The first refusal and every change in
+// Evidence for failure 171. The first refusal and every change in
 // the wrapper's allocation view get a full line; unchanged repeats are counted
 // and summarised at most every 10 s. Reporting only; the gate is unchanged.
 struct AllocationRejection
@@ -969,7 +971,7 @@ void ReportAllocationRejection(const wchar_t* api, const Route* wrapper, uint32_
     gAllocationRejectionChangesUnlogged = 0;
     gAllocationRejectionLastLine = now;
 }
-// ringcap.1: a Create certified the ring the wrapper allocated. Log a ring
+// A Create certified the ring the wrapper allocated. Log a ring
 // below the startup maximum once per wrapper generation and value; the patcher
 // offers and submits no more than it holds (RingMaximumGeneratedFrames).
 const wchar_t* CertifiedMode(uint32_t generated, uint32_t startupMaximum) noexcept
@@ -1316,13 +1318,26 @@ void ObserveCreateDevice(ID3D12GraphicsCommandList* command) noexcept
     if (device) device->Release();
 }
 
+// nrouter.1: set while a game call into OptiScaler's own D3D12 NGX exports owns DLSS 5 on this thread
+// (InstallOptiScalerNgxRoute); the runtime route under it then skips DLSS 5.
+thread_local uint32_t tOptiScalerDlss5 = 0;
+
+struct OptiScalerDlss5Scope
+{
+    const bool held;
+    explicit OptiScalerDlss5Scope(bool hold) noexcept : held(hold) { if (held) ++tOptiScalerDlss5; }
+    ~OptiScalerDlss5Scope() { if (held) --tOptiScalerDlss5; }
+    OptiScalerDlss5Scope(const OptiScalerDlss5Scope&) = delete;
+    OptiScalerDlss5Scope& operator=(const OptiScalerDlss5Scope&) = delete;
+};
+
 NVSDK_NGX_Result CreateDlssSource(size_t route,CreateFn original,ID3D12GraphicsCommandList* command,
     NVSDK_NGX_Feature feature,const NVSDK_NGX_Parameter* parameters,NVSDK_NGX_Handle** output) noexcept
 {
     const auto keys=dlss5::ReadCreate(parameters);
     const auto result=dlss_sr::Create(route,original,command,feature,parameters,output);
     const auto handle=CreatedHandle(result,output);
-    if(handle)dlss5::GameCreated(route,reinterpret_cast<const NVSDK_NGX_Handle*>(handle),keys);
+    if(handle && !tOptiScalerDlss5)dlss5::GameCreated(route,reinterpret_cast<const NVSDK_NGX_Handle*>(handle),keys);
     return result;
 }
 dlss5::Api Dlss5Api(const Route& route,CreateFn create,EvaluateFn evaluate,ReleaseFn release) noexcept
@@ -1339,7 +1354,7 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Create(ID3D12GraphicsCommandList*
     std::unique_lock lock(gCalls);
     const bool frameGeneration = feature == NVSDK_NGX_Feature_FrameGeneration;
     const bool runtimeRoute=gRoutes[I].runtime;
-    const HMODULE routeModule=gRoutes[I].module; // alpha.15 (B4-18): for ForeignCreated's log
+    const HMODULE routeModule=gRoutes[I].module; // for ForeignCreated's log
     const bool trackedRoute = frameGeneration && runtimeRoute;
     const bool runtimeOther = !frameGeneration && gRoutes[I].runtime && dlss_sr::Handles(feature);
     fg_lifetime::CreateScope inFlight(gFgLifetime, trackedRoute);
@@ -1555,6 +1570,193 @@ ReleaseFn RouteRelease(const Route& route, entry_detour::Handle entry) noexcept
     return original;
 }
 
+// nrouter.1: OptiScaler's own D3D12 NGX exports, which take the game's DLSS calls. Written under gInstall before
+// any entry goes live; installed entries pin OptiScaler for the process lifetime.
+struct OptiScalerNgx
+{
+    HMODULE module{};
+    entry_detour::Handle create{}, evaluate{}, release{};
+};
+OptiScalerNgx gOptiScalerNgx{};
+std::atomic<bool> gOptiScalerNgxReported{false};
+
+// The entry's trampoline. A running hook was reached through its entry, so this holds even when another hook
+// replaced only our jump; a missing original would drop the game's call into OptiScaler.
+template<class F> F OptiScalerOriginal(entry_detour::Handle handle) noexcept
+{
+    const auto state = entry_detour::ReadSnapshot(handle);
+    return state.installed && state.original && state.owner == gOptiScalerNgx.module
+        ? reinterpret_cast<F>(state.original) : nullptr;
+}
+
+// DLSS 5 takes an OptiScaler handle only while Create, Evaluate and Release are all ours.
+bool OptiScalerNgxCurrent() noexcept
+{
+    for (const auto handle : {gOptiScalerNgx.create, gOptiScalerNgx.evaluate, gOptiScalerNgx.release})
+        if (!entry_detour::ReadSnapshot(handle).current) return false;
+    return true;
+}
+
+// The D3D12 runtime route's entries for DLSS 5's own NGX calls: their trampolines, as that route passes them, so
+// DLSS 5's feature never enters our runtime hooks.
+bool RuntimeDlss5Api(dlss5::Api& api) noexcept
+{
+    std::lock_guard lock(gCalls);
+    const bool translated = gpu_dispatch::UsesTranslatedProgram();
+    for (const Route& route : gRoutes)
+    {
+        if (!route.runtime || !route.module) continue;
+        const auto create = RouteOriginal<CreateFn>(route, route.create);
+        const auto evaluate = translated ? RouteOriginal<EvaluateFn>(route, route.evaluate)
+            : NativeOriginal<EvaluateFn>(route, route.evaluate);
+        const auto release = RouteRelease(route, route.release);
+        if (!create || !evaluate || !release) continue;
+        api = Dlss5Api(route, create, evaluate, release);
+        if (api.Complete()) return true;
+    }
+    return false;
+}
+
+// The game's SR/RR Create into OptiScaler. OptiScaler may create its own upscaler inside; DLSS 5 belongs to the
+// game's handle instead.
+NVSDK_NGX_Result NVSDK_CONV OptiScalerCreate(ID3D12GraphicsCommandList* command, NVSDK_NGX_Feature feature,
+    const NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** output)
+{
+    const auto original = OptiScalerOriginal<CreateFn>(gOptiScalerNgx.create);
+    if (!original) return NVSDK_NGX_Result_FAIL_NotInitialized;
+    if (!dlss_sr::Handles(feature) || !OptiScalerNgxCurrent()) return original(command, feature, parameters, output);
+    const auto keys = dlss5::ReadCreate(parameters);
+    NVSDK_NGX_Result result = NVSDK_NGX_Result_Fail;
+    {
+        OptiScalerDlss5Scope scope(true);
+        result = original(command, feature, parameters, output);
+    }
+    if (const auto handle = CreatedHandle(result, output))
+        dlss5::GameCreated(dlss5::kOptiScalerRoute, reinterpret_cast<const NVSDK_NGX_Handle*>(handle), keys);
+    return result;
+}
+
+// The game's Evaluate into OptiScaler: DLSS 5 around OptiScaler's whole upscaling call, so after OptiScaler's own
+// upscaler timer and its sharpening and output scaling. A handle DLSS 5 does not own passes through unchanged.
+NVSDK_NGX_Result NVSDK_CONV OptiScalerEvaluate(ID3D12GraphicsCommandList* command, const NVSDK_NGX_Handle* handle,
+    const NVSDK_NGX_Parameter* parameters, PFN_NVSDK_NGX_ProgressCallback callback)
+{
+    const auto original = OptiScalerOriginal<EvaluateFn>(gOptiScalerNgx.evaluate);
+    if (!original) return NVSDK_NGX_Result_FAIL_NotInitialized;
+    dlss5::Api api{};
+    if (!handle || !dlss5::Owns(dlss5::kOptiScalerRoute, handle) || !RuntimeDlss5Api(api))
+        return original(command, handle, parameters, callback);
+    if (!gOptiScalerNgxReported.exchange(true, std::memory_order_relaxed))
+        Report(L"DLSS 5 runs on the game's DLSS call into OptiScaler, after OptiScaler's upscaling "
+            L"(outside OptiScaler's Upscaler GPU time)");
+    OptiScalerDlss5Scope scope(true);
+    const auto input = dlss5::BeforeEvaluate(dlss5::kOptiScalerRoute, api, command, handle, parameters);
+    const auto result = original(command, handle, parameters, callback);
+    dlss5::AfterEvaluate(dlss5::kOptiScalerRoute, api, command, handle, parameters, result, input);
+    return result;
+}
+
+NVSDK_NGX_Result NVSDK_CONV OptiScalerRelease(NVSDK_NGX_Handle* handle)
+{
+    const auto original = OptiScalerOriginal<ReleaseFn>(gOptiScalerNgx.release);
+    if (!original) return NVSDK_NGX_Result_FAIL_NotInitialized;
+    dlss5::BeforeRelease(dlss5::kOptiScalerRoute, handle);
+    const auto result = original(handle);
+    dlss5::AfterRelease(dlss5::kOptiScalerRoute, handle, result);
+    return result;
+}
+
+// dx11nr.1: the runtime route's D3D11 entries, for DLSS 5 on DirectX 11 games (dlss5_d3d11.h). NVIDIA's calls always
+// continue natively (no frame generation or SR override on D3D11), through the trampoline as in OptiScalerOriginal.
+template<class F> F D3D11Original(const Route& route, entry_detour::Handle handle) noexcept
+{
+    const auto state = entry_detour::ReadSnapshot(handle);
+    return state.installed && state.original && route.module && state.owner == route.module
+        && state.generation == route.generation ? reinterpret_cast<F>(state.original) : nullptr;
+}
+
+// DLSS 5 takes a D3D11 handle only while Create, Evaluate and Release are all ours.
+bool D3D11RouteCurrent(const Route& route) noexcept
+{
+    return RouteEntryCurrent(route, route.d3d11Create) && RouteEntryCurrent(route, route.d3d11Evaluate)
+        && RouteEntryCurrent(route, route.d3d11Release);
+}
+
+// The runtime's D3D12 Init_Ext for the bridge's own device: past the NGX initialization observer (its trampoline),
+// so that device is never prepared as the game's (ngx_initialization.h, PrepareNgxInitialization).
+dlss5::d3d11::InitFn D3D12InitEntry(HMODULE runtime) noexcept
+{
+    void* target = runtime ? reinterpret_cast<void*>(GetProcAddress(runtime, "NVSDK_NGX_D3D12_Init_Ext")) : nullptr;
+    if (!target) return nullptr;
+    std::lock_guard lock(ngx_initialization::gInstall);
+    for (const auto& owner : ngx_initialization::gOwners)
+    {
+        if (owner.module != runtime) continue;
+        for (const auto entry : owner.entries)
+        {
+            if (!entry) continue;
+            const auto state = entry_detour::ReadSnapshot(entry);
+            if (state.installed && state.target == target && state.original)
+                return reinterpret_cast<dlss5::d3d11::InitFn>(state.original);
+        }
+    }
+    return reinterpret_cast<dlss5::d3d11::InitFn>(target);
+}
+
+template<size_t I> NVSDK_NGX_Result NVSDK_CONV D3D11Create(ID3D11DeviceContext* context, NVSDK_NGX_Feature feature,
+    const NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** output)
+{
+    std::unique_lock lock(gCalls);
+    const auto original = D3D11Original<dlss5::d3d11::CreateFn>(gRoutes[I], gRoutes[I].d3d11Create);
+    const HMODULE routeModule = gRoutes[I].module; // for ForeignCreated's log
+    const bool covered = D3D11RouteCurrent(gRoutes[I]);
+    lock.unlock();
+    if (!original) return NVSDK_NGX_Result_FAIL_NotInitialized;
+    // Keys read before NVIDIA's call, as on D3D12 (CreateDlssSource).
+    const bool reconstruction = covered && dlss_sr::Handles(feature);
+    const auto keys = reconstruction ? dlss5::ReadCreate(parameters) : dlss_sr::CreateKeys{};
+    const auto result = original(context, feature, parameters, output);
+    const uintptr_t created = CreatedHandle(result, output);
+    // Another caller's DLSSNR stops DLSS 5, as on the D3D12 route.
+    if (static_cast<uint32_t>(feature) == dlss5::kFeature && created) dlss5::ForeignCreated(_ReturnAddress(), routeModule);
+    else if (reconstruction && created)
+        dlss5::d3d11::GameCreated(reinterpret_cast<const NVSDK_NGX_Handle*>(created), keys);
+    // Another hook over one of the D3D11 entries: the handle's evaluation or release could pass DLSS 5 by.
+    else if (!covered && dlss_sr::Handles(feature) && created) dlss5::d3d11::UntrackedCreate();
+    return result;
+}
+
+template<size_t I> NVSDK_NGX_Result NVSDK_CONV D3D11Evaluate(ID3D11DeviceContext* context, const NVSDK_NGX_Handle* handle,
+    const NVSDK_NGX_Parameter* parameters, PFN_NVSDK_NGX_ProgressCallback callback)
+{
+    std::unique_lock lock(gCalls);
+    const Route& route = gRoutes[I];
+    dlss5::d3d11::Api api{};
+    api.runtime = route.module;
+    api.evaluate = D3D11Original<dlss5::d3d11::EvaluateFn>(route, route.d3d11Evaluate);
+    api.init = &D3D12InitEntry;
+    const auto create = RouteOriginal<CreateFn>(route, route.create);
+    const auto evaluate = gpu_dispatch::UsesTranslatedProgram() ? RouteOriginal<EvaluateFn>(route, route.evaluate)
+        : NativeOriginal<EvaluateFn>(route, route.evaluate);
+    const auto release = RouteRelease(route, route.release);
+    if (create && evaluate && release) api.d3d12 = Dlss5Api(route, create, evaluate, release);
+    lock.unlock();
+    if (!api.evaluate) return NVSDK_NGX_Result_FAIL_NotInitialized;
+    return dlss5::d3d11::Evaluate(api, context, handle, parameters, callback);
+}
+
+template<size_t I> NVSDK_NGX_Result NVSDK_CONV D3D11Release(NVSDK_NGX_Handle* handle)
+{
+    std::unique_lock lock(gCalls);
+    const auto original = D3D11Original<ReleaseFn>(gRoutes[I], gRoutes[I].d3d11Release);
+    lock.unlock();
+    if (!original) return NVSDK_NGX_Result_FAIL_NotInitialized;
+    const bool owned = dlss5::d3d11::BeforeRelease(handle);
+    const auto result = original(handle);
+    dlss5::d3d11::AfterRelease(handle, result, owned);
+    return result;
+}
+
 template<size_t I> NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandList* command,
     const NVSDK_NGX_Handle* handle, const NVSDK_NGX_Parameter* parameters, PFN_NVSDK_NGX_ProgressCallback callback)
 {
@@ -1578,16 +1780,16 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandLis
         // A DLSS SR feature of the game may be evaluated through our replacement.
         const NVSDK_NGX_Handle* target = runtime
             ? dlss_sr::Evaluate(I, create, release, command, handle, parameters) : handle;
-#if MFG_UNLOCK_XESS
-        // xemfgsa.1: XeMFG standalone's DLSS inputs, tagged on this list before DLSS reads them.
+        // XeMFG standalone's DLSS inputs, tagged on this list before DLSS reads them.
         if (gRoutes[I].runtime) xess_d3d12::CaptureDlssEvaluate(command, parameters);
-#endif
         // DLSS 5 Render stage: our processed copy is the input for this call only.
-        const auto nrInput = runtime ? dlss5::BeforeEvaluate(I,nrApi,command,handle,parameters) : dlss5::Substitution{};
+        // Under an OptiScaler call that owns DLSS 5, that call runs it instead (nrouter.1).
+        const bool nr = runtime && !tOptiScalerDlss5;
+        const auto nrInput = nr ? dlss5::BeforeEvaluate(I,nrApi,command,handle,parameters) : dlss5::Substitution{};
         fault_capture::NgxCall call(entry, _ReturnAddress(), command,
             reinterpret_cast<uintptr_t>(handle), parameters);
         const auto result = original(command, target, parameters, callback);
-        if(runtime)dlss5::AfterEvaluate(I,nrApi,command,handle,parameters,result,nrInput);
+        if(nr)dlss5::AfterEvaluate(I,nrApi,command,handle,parameters,result,nrInput);
         call.Complete(static_cast<uint32_t>(result));
         return result;
     }
@@ -1620,12 +1822,11 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandLis
             const auto nrApi=Dlss5Api(gRoutes[I],create,original,release);
             lock.unlock();
             const NVSDK_NGX_Handle* target = dlss_sr::Evaluate(I, create, release, command, handle, parameters);
-#if MFG_UNLOCK_XESS
-            xess_d3d12::CaptureDlssEvaluate(command, parameters);   // xemfgsa.1, as above
-#endif
-            const auto nrInput = dlss5::BeforeEvaluate(I,nrApi,command,handle,parameters);
+            xess_d3d12::CaptureDlssEvaluate(command, parameters);   // as above
+            const bool nr = !tOptiScalerDlss5;   // as above
+            const auto nrInput = nr ? dlss5::BeforeEvaluate(I,nrApi,command,handle,parameters) : dlss5::Substitution{};
             const auto result = original(command, target, parameters, callback);
-            dlss5::AfterEvaluate(I,nrApi,command,handle,parameters,result,nrInput);
+            if (nr) dlss5::AfterEvaluate(I,nrApi,command,handle,parameters,result,nrInput);
             lock.lock();
             if (auto* current = CurrentOtherFeature(lease);
                 current && current->Active(lease.handle) && current->activeCalls)
@@ -2127,7 +2328,12 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Requirements(IDXGIAdapter* adapte
 
 bool PublishStartupCapabilities(Route& route, NVSDK_NGX_Parameter* parameters) noexcept
 {
-    if (!parameters || gStartupComplete.load() || gCreatedFeatures.load()) return Reject(170);
+    if (!parameters || gCreatedFeatures.load()) return Reject(170);
+    // Each Streamline instance caches the maximum at its own plug-in startup.
+    // A second instance (OptiScaler's private DLSS-G output beside the game's)
+    // runs a later bracket; before the first FG Create it publishes the same
+    // bootstrap, after one it still refuses.
+    if (gStartupComplete.load() && !BeforeFirstFeatureCreate()) return Reject(170);
     // This is an early capability bootstrap, not permission to create FG.
     // A recognized wrapper must still be before swap-chain allocation; the
     // actual caller, generation and allocated buffers are checked at Create.
@@ -2273,7 +2479,7 @@ void ReportVulkanEvaluationSubmissionFailure(const Route& route, const ampere_po
     Report(message);
 }
 
-// vkpreset.1: SR/RR through the game's own Vulkan entry and recording.
+// SR/RR through the game's own Vulkan entry and recording.
 dlss_sr::CreateCall SrCreateCall(const VulkanCreateCall& call) noexcept
 {
     dlss_sr::CreateCall sr{};
@@ -2297,7 +2503,7 @@ dlss_sr::CreateCall SrEvaluateCall(const Route& route, void* command) noexcept
     return sr;
 }
 
-// vkdlss5.1: the route's Vulkan entries for the DLSS 5 Vulkan stage (originals
+// The route's Vulkan entries for the DLSS 5 Vulkan stage (originals
 // behind our hooks; gCalls is held).
 dlss5::vulkan::Api Dlss5VulkanApi(const Route& route, VkEvaluateFn evaluate, ReleaseFn release) noexcept
 {
@@ -2320,7 +2526,7 @@ NVSDK_NGX_Result VulkanCreate(size_t I, VulkanCreateCall call, bool create1, con
     std::unique_lock lock(gCalls);
     Route& route = gRoutes[I];
     const bool frameGeneration = call.feature == NVSDK_NGX_Feature_FrameGeneration;
-    // vkpreset.1: Vulkan FG lifetime, as the D3D12 thunk's (spans every early rejection).
+    // Vulkan FG lifetime, as the D3D12 thunk's (spans every early rejection).
     fg_lifetime::CreateScope inFlight(gFgLifetime, frameGeneration && route.runtime);
     if (frameGeneration) gPipelineCreateObserved.store(true, std::memory_order_release);
     const entry_detour::Handle entry = create1 ? route.vkCreate1 : route.vkCreate;
@@ -2350,12 +2556,11 @@ NVSDK_NGX_Result VulkanCreate(size_t I, VulkanCreateCall call, bool create1, con
         lock.unlock();
         const bool reconstruction = dlss_sr::Handles(call.feature);
         const auto nrKeys = reconstruction ? dlss5::ReadCreate(call.parameters) : dlss_sr::CreateKeys{};
-        // vkpreset.1: DLSS SR/RR detection and the preset selection, as on D3D12.
+        // DLSS SR/RR detection and the preset selection, as on D3D12.
         const auto result = reconstruction
             ? dlss_sr::Create(I, SrCreateCall(call), call.feature, call.parameters, call.output)
             : call.Forward();
         const uintptr_t created = CreatedHandle(result, call.output);
-        // vkdlss5.1: the DLSS 5 Vulkan stage tracks the game's SR/RR feature.
         if (reconstruction && created)
             dlss5::vulkan::GameCreated(I, reinterpret_cast<const NVSDK_NGX_Handle*>(created), nrKeys, create1 ? call.device : nullptr);
         lock.lock();
@@ -2514,18 +2719,15 @@ NVSDK_NGX_Result VulkanEvaluate(size_t I, void* command, const NVSDK_NGX_Handle*
         }
         if (lease.slot != SIZE_MAX)
         {
-            // vkpreset.1: a game SR/RR feature may be evaluated through our replacement.
+            // A game SR/RR feature may be evaluated through our replacement.
             const auto create = SrEvaluateCall(gRoutes[I], command);
             const auto release = RouteRelease(gRoutes[I], gRoutes[I].vkRelease);
             const auto nrApi = Dlss5VulkanApi(gRoutes[I], original, release);
             lock.unlock();
             const NVSDK_NGX_Handle* target = dlss_sr::Evaluate(I, create, release, handle, parameters);
-#if MFG_UNLOCK_XESS
-            // vkxefg.1: the XeMFG Vulkan host's inputs, copied on this command buffer before DLSS reads them.
+            // The XeMFG Vulkan host's inputs, copied on this command buffer before DLSS reads them.
             xess_vulkan::CaptureDlssEvaluate(command, parameters);
-#endif
             const auto result = original(command, target, parameters, callback);
-            // vkdlss5.1: DLSS 5 after upscaling, on this command buffer.
             dlss5::vulkan::AfterEvaluate(I, nrApi, command, handle, parameters, result);
             lock.lock();
             if (auto* current = CurrentOtherFeature(lease);
@@ -2641,7 +2843,7 @@ NVSDK_NGX_Result VulkanEvaluate(size_t I, void* command, const NVSDK_NGX_Handle*
     return result;
 }
 
-// vkpreset.1, RTX 40/50: a runtime Vulkan Create the patcher's gate diverted
+// RTX 40/50: a runtime Vulkan Create the patcher's gate diverted
 // here (DivertNativeVulkanCall), forwarded natively in place of its relay: the
 // entry's pre-call, then NVIDIA's Create (SR/RR through dlss_sr), with FG
 // creates counted and recorded for live preset switching as on D3D12.
@@ -2683,14 +2885,13 @@ NVSDK_NGX_Result NativeVulkanCreate(size_t I, VulkanCreateCall call, bool create
         : call.Forward();
     ngx.Complete(static_cast<uint32_t>(result), reinterpret_cast<void* const*>(call.output));
     if (frameGeneration) gFgLifetime.Created(I, CreatedHandle(result, call.output));
-    // vkdlss5.1: the DLSS 5 Vulkan stage tracks the game's SR/RR feature.
     if (reconstruction)
         if (const uintptr_t created = CreatedHandle(result, call.output))
             dlss5::vulkan::GameCreated(I, reinterpret_cast<const NVSDK_NGX_Handle*>(created), nrKeys, create1 ? call.device : nullptr);
     return result;
 }
 
-// vkpreset.1, RTX 40/50: a diverted runtime Vulkan Evaluate (only while an
+// RTX 40/50: a diverted runtime Vulkan Evaluate (only while an
 // SR/RR feature is tracked): the pre-call, then NVIDIA's Evaluate of the game's
 // handle or of our replacement. FG evaluations pass unchanged, as on D3D12.
 NVSDK_NGX_Result NativeVulkanEvaluate(size_t I, void* command, const NVSDK_NGX_Handle* handle,
@@ -2711,14 +2912,10 @@ NVSDK_NGX_Result NativeVulkanEvaluate(size_t I, void* command, const NVSDK_NGX_H
     if (before) before(command, reinterpret_cast<uintptr_t>(handle), parameters,
         reinterpret_cast<void*>(callback), 0, 0, entry, caller);
     const NVSDK_NGX_Handle* target = dlss_sr::Evaluate(I, create, release, handle, parameters);
-#if MFG_UNLOCK_XESS
-    // vkxefg.1: the XeMFG Vulkan host's inputs, copied on this command buffer before DLSS reads them.
     xess_vulkan::CaptureDlssEvaluate(command, parameters);
-#endif
     fault_capture::NgxCall ngx(entry, caller, command, reinterpret_cast<uintptr_t>(handle), parameters);
     const auto result = original(command, target, parameters, callback);
     ngx.Complete(static_cast<uint32_t>(result));
-    // vkdlss5.1: DLSS 5 after upscaling, on this command buffer.
     dlss5::vulkan::AfterEvaluate(I, nrApi, command, handle, parameters, result);
     return result;
 }
@@ -2754,7 +2951,7 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV VkEvaluate(void* command, const N
 }
 
 // The runtime's Vulkan Release: RTX 30 systems, and RTX 40/50 for live preset
-// switching (vkpreset.1), where it forwards natively and records FG and SR/RR
+// switching, where it forwards natively and records FG and SR/RR
 // releases as the D3D12 Release does.
 template<size_t I> NVSDK_NGX_Result NVSDK_CONV VkRelease(NVSDK_NGX_Handle* handle)
 {
@@ -2827,6 +3024,9 @@ constexpr std::array<ReleaseFn, kRoutes> kReleases{AMPERE_THUNKS(Release)};
 constexpr std::array<RequirementsFn, kRoutes> kRequirements{AMPERE_THUNKS(Requirements)};
 constexpr std::array<ParametersFn, kRoutes> kParameters{AMPERE_THUNKS(Parameters)};
 constexpr std::array<PresetFn, kRoutes> kPresets{AMPERE_THUNKS(Preset)};
+constexpr std::array<dlss5::d3d11::CreateFn, kRoutes> kD3D11Creates{AMPERE_THUNKS(D3D11Create)};
+constexpr std::array<dlss5::d3d11::EvaluateFn, kRoutes> kD3D11Evaluates{AMPERE_THUNKS(D3D11Evaluate)};
+constexpr std::array<ReleaseFn, kRoutes> kD3D11Releases{AMPERE_THUNKS(D3D11Release)};
 #undef AMPERE_THUNKS
 
 Route* FindRoute(HMODULE module, uint64_t generation) noexcept
@@ -2880,6 +3080,29 @@ bool InstallVulkanProvider(Route& route) noexcept
     return !GetProcAddress(route.module, "NVSDK_NGX_VULKAN_ReleaseFeature")
         || InstallExport(route, "NVSDK_NGX_VULKAN_ReleaseFeature", entry_detour::Kind::eAmpereVulkanRelease,
             nullptr, route.vkRelease);
+}
+
+// dx11nr.1: the runtime's D3D11 entries (DLSS 5 on DirectX 11 games), on every GPU family. Release and Evaluate
+// first, so no handle DLSS 5 takes at Create escapes its evaluation or release. Optional: a runtime without them,
+// or a failed install, keeps its D3D12 route; DLSS 5 then does not run on DirectX 11.
+bool InstallD3D11Route(Route& route, size_t index) noexcept
+{
+    if (!GetProcAddress(route.module, "NVSDK_NGX_D3D11_CreateFeature") || !GetProcAddress(route.module, "NVSDK_NGX_D3D11_EvaluateFeature")
+        || !GetProcAddress(route.module, "NVSDK_NGX_D3D11_ReleaseFeature")) return false;
+    const bool installed = InstallExport(route, "NVSDK_NGX_D3D11_ReleaseFeature", entry_detour::Kind::eNgxRuntimeD3D11Release,
+            reinterpret_cast<void*>(kD3D11Releases[index]), route.d3d11Release)
+        && InstallExport(route, "NVSDK_NGX_D3D11_EvaluateFeature", entry_detour::Kind::eNgxRuntimeD3D11Evaluate,
+            reinterpret_cast<void*>(kD3D11Evaluates[index]), route.d3d11Evaluate)
+        && InstallExport(route, "NVSDK_NGX_D3D11_CreateFeature", entry_detour::Kind::eNgxRuntimeD3D11Create,
+            reinterpret_cast<void*>(kD3D11Creates[index]), route.d3d11Create);
+    static std::atomic<bool> reported{false};
+    if (!reported.exchange(true, std::memory_order_relaxed))
+    {
+        wchar_t detail[160]{};
+        swprintf_s(detail, L"DLSS 5 DirectX 11 route: NGX runtime D3D11 entries hooked=%d", installed ? 1 : 0);
+        Report(detail);
+    }
+    return installed;
 }
 
 bool ReadOnlyImageSpan(const Image& image, uintptr_t address, size_t bytes) noexcept
@@ -3086,7 +3309,7 @@ bool InstallPreset(Route& route, const Image& image) noexcept
     return true;
 }
 
-// V1.6.1: live DLSS-G preset switching on a prepared route. Its own reader hook
+// Live DLSS-G preset switching on a prepared route. Its own reader hook
 // stays the reader's only owner; dlssg_preset adds the endpoint gates and the
 // configuration reset. Legacy (sole preset 1) routes stay restart-only.
 void AdoptLivePresetReader(const Route& route) noexcept
@@ -3897,8 +4120,46 @@ bool InstallRoute(HMODULE module, const wchar_t* path, uint64_t generation, bool
             reinterpret_cast<void*>(kReleases[i]), route->release)
         || !InstallExport(*route, "NVSDK_NGX_D3D12_EvaluateFeature", runtime ? entry_detour::Kind::eNgxRuntimeD3D12EvaluateFeature : entry_detour::Kind::eNgxD3D12EvaluateFeature,
             reinterpret_cast<void*>(kEvaluates[i]), route->evaluate)) return false;
-    return InstallExport(*route, "NVSDK_NGX_D3D12_CreateFeature", runtime ? entry_detour::Kind::eNgxRuntimeD3D12CreateFeature : entry_detour::Kind::eNgxD3D12CreateFeature,
+    const bool created = InstallExport(*route, "NVSDK_NGX_D3D12_CreateFeature", runtime ? entry_detour::Kind::eNgxRuntimeD3D12CreateFeature : entry_detour::Kind::eNgxD3D12CreateFeature,
         reinterpret_cast<void*>(kCreates[i]), route->create);
+    // dx11nr.1: the D3D11 entries once the D3D12 ones are ours (the bridge runs DLSS 5 through their trampolines).
+    if (runtime && created) InstallD3D11Route(*route, i);
+    return created;
+}
+
+OptiScalerNgxRoute InstallOptiScalerNgxRoute(HMODULE optiscaler) noexcept
+{
+    std::lock_guard callLock(gCalls);
+    std::lock_guard lock(gInstall);
+    const bool runtime = std::any_of(gRoutes.begin(), gRoutes.end(), [](const Route& route) {
+        return route.runtime && RouteEntryCurrent(route, route.create) && RouteEntryCurrent(route, route.evaluate)
+            && RouteEntryCurrent(route, route.release); });
+    if (!runtime) return OptiScalerNgxRoute::eWaiting;
+    if (!optiscaler || (gOptiScalerNgx.module && gOptiScalerNgx.module != optiscaler))
+        return OptiScalerNgxRoute::eFailed;
+    gOptiScalerNgx.module = optiscaler;
+    const auto install = [optiscaler](const char* name, entry_detour::Kind kind, void* hook,
+        entry_detour::Handle& handle) noexcept
+    {
+        if (handle) return entry_detour::ReadSnapshot(handle).current;
+        void* target = reinterpret_cast<void*>(GetProcAddress(optiscaler, name));
+        // OptiScaler's own code only: a forwarded export is another module's entry.
+        HMODULE owner = nullptr;
+        if (!target || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(target), &owner)
+            || owner != optiscaler) return false;
+        void* trampoline = nullptr;
+        entry_detour::InstallOptions options{}; options.allowRelocated = true;
+        return entry_detour::Install(kind, optiscaler, target, hook, trampoline, options, &handle);
+    };
+    // Release and Evaluate first: a handle DLSS 5 takes at Create never escapes its evaluation or release.
+    const bool installed = install("NVSDK_NGX_D3D12_ReleaseFeature", entry_detour::Kind::eOptiScalerNgxD3D12Release,
+            reinterpret_cast<void*>(&OptiScalerRelease), gOptiScalerNgx.release)
+        && install("NVSDK_NGX_D3D12_EvaluateFeature", entry_detour::Kind::eOptiScalerNgxD3D12Evaluate,
+            reinterpret_cast<void*>(&OptiScalerEvaluate), gOptiScalerNgx.evaluate)
+        && install("NVSDK_NGX_D3D12_CreateFeature", entry_detour::Kind::eOptiScalerNgxD3D12Create,
+            reinterpret_cast<void*>(&OptiScalerCreate), gOptiScalerNgx.create);
+    return installed ? OptiScalerNgxRoute::eInstalled : OptiScalerNgxRoute::eFailed;
 }
 
 bool InstallVulkanEntry(HMODULE owner, uint64_t generation, bool runtime, entry_detour::Kind kind,
@@ -3943,7 +4204,7 @@ bool InstallVulkanRoute(HMODULE module, const wchar_t* path, uint64_t generation
     std::lock_guard callLock(gCalls);
     std::lock_guard lock(gInstall);
     if (!module || !generation) return false;
-    // vkpreset.1: RTX 40/50 take only the runtime's Vulkan Release, a native
+    // RTX 40/50 take only the runtime's Vulkan Release, a native
     // pass-through that needs no RTX 30 layout (as their D3D12 runtime route).
     if (gpu_dispatch::UsesNativeProgram())
     {

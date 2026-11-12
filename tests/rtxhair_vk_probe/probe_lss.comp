@@ -1,0 +1,44 @@
+#version 460
+// vkhair.1 phase 1a, pass 1: inline ray query with the committed LSS ops (is-LSS, positions, radii, hit
+// value), rewritten by rtx_hair/lss_spirv to triangle position fetch.
+#extension GL_EXT_ray_query : require
+#extension GL_NV_linear_swept_spheres : require
+#extension GL_GOOGLE_include_directive : require
+#include "probe_lss_common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= params.rayCount)
+        return;
+    uint index = params.rayOffset + i;
+    RayIn r = rays[index];
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, Scene, gl_RayFlagsOpaqueEXT | HairCull(r.mask), r.mask & 0xFFu, r.origin, 0.0, r.direction, r.tmax);
+    while (rayQueryProceedEXT(query))
+    {
+    }
+    LssOut o = EmptyLss();
+    if (rayQueryGetIntersectionTypeEXT(query, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        o.status = 1u;
+        o.isLss = rayQueryIsLSSHitNV(query, true) ? 1u : 0u;
+        o.primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(query, true));
+        o.instanceId = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+        o.bary = rayQueryGetIntersectionBarycentricsEXT(query, true);
+        o.t = rayQueryGetIntersectionTEXT(query, true);
+        if (o.isLss != 0u)
+        {
+            o.hitParam = rayQueryGetIntersectionLSSHitValueNV(query, true);
+            vec3 positions[2];
+            float radii[2];
+            rayQueryGetIntersectionLSSPositionsNV(query, true, positions);
+            rayQueryGetIntersectionLSSRadiiNV(query, true, radii);
+            o.p = vec4(positions[0], radii[0]);
+            o.q = vec4(positions[1], radii[1]);
+        }
+    }
+    results[index] = o;
+}

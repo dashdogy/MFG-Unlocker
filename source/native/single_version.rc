@@ -7,8 +7,8 @@
 103 RCDATA "proxy_generated/LICENSE-UAL.txt"
 104 RCDATA "xess/XEFG-PROGRAMS-NOTICE.txt"
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,7,0,1145
- PRODUCTVERSION 1,7,0,1145
+ FILEVERSION 1,7,1,177
+ PRODUCTVERSION 1,7,1,177
  FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
  FILEFLAGS VS_FF_DEBUG
@@ -25,11 +25,11 @@ BEGIN
   BEGIN
    VALUE "CompanyName", "dashdogy"
    VALUE "FileDescription", "MFG Unlocker: DLSS and XeSS multi frame generation"
-   VALUE "FileVersion", "1.7.0.1145"
+   VALUE "FileVersion", "1.7.1.177"
    VALUE "InternalName", MFG_SINGLE_FILENAME
    VALUE "OriginalFilename", MFG_SINGLE_FILENAME
    VALUE "ProductName", "MFG Unlocker"
-   VALUE "ProductVersion", "1.7.0"
+   VALUE "ProductVersion", "1.7.1"
   END
  END
  BLOCK "VarFileInfo"

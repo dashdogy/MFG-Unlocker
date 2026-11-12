@@ -1,0 +1,30 @@
+#version 460
+// rtxhair-spirv fixture: committed LSS ray-query ops in a compute shader, with the primitive, T and
+// barycentric reads around them. Expect: Rewritten, four LSS ops, three redirected reads.
+#extension GL_EXT_ray_query : require
+#extension GL_NV_linear_swept_spheres : require
+
+layout(local_size_x = 64) in;
+layout(binding = 0) uniform accelerationStructureEXT scene;
+layout(binding = 1, std430) buffer Out { vec4 values[]; };
+
+void main()
+{
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, scene, gl_RayFlagsOpaqueEXT, 0xFF, vec3(0.0), 0.0, vec3(0.0, 0.0, 1.0), 100.0);
+    while (rayQueryProceedEXT(q))
+    {
+    }
+    vec4 r = vec4(0.0);
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionTriangleEXT && rayQueryIsLSSHitNV(q, true))
+    {
+        vec3 positions[2];
+        float radii[2];
+        rayQueryGetIntersectionLSSPositionsNV(q, true, positions);
+        rayQueryGetIntersectionLSSRadiiNV(q, true, radii);
+        float u = rayQueryGetIntersectionLSSHitValueNV(q, true);
+        r = vec4(positions[0] + positions[1], radii[0] + radii[1] + u + rayQueryGetIntersectionTEXT(q, true)
+            + float(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) + rayQueryGetIntersectionBarycentricsEXT(q, true).x);
+    }
+    values[gl_GlobalInvocationID.x] = r;
+}

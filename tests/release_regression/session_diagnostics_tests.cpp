@@ -1,4 +1,4 @@
-// diag.1 (V1.6.2-alpha.3): the beta runtime log's stamps, environment header, first-chance and unhandled-exception
+// The beta runtime log's stamps, environment header, first-chance and unhandled-exception
 // records, minidump and session end. The parent never loads the DLL: it runs this executable twice as a child that
 // does (one crashes, one calls ExitProcess) and reads each child's runtime log.
 #include "diagnostic_paths.h"

@@ -74,7 +74,7 @@ struct Correction
 };
 
 // Keep the existing Cyberpunk nonnegative/finite/overflow policy for every
-// seconds source (exact executables and, since dev.33, detected units).
+// seconds source (exact executables and detected units).
 inline Correction ConvertSeconds(float source) noexcept
 {
     const bool validInput = std::isfinite(source) && source >= 0.0f;
@@ -85,22 +85,7 @@ inline Correction ConvertSeconds(float source) noexcept
     return {milliseconds, true, true};
 }
 
-inline Correction Normalize(float source, Profile profile) noexcept
-{
-    const bool validInput = std::isfinite(source) && source >= 0.0f;
-    if (!IsSecondsProfile(profile)) return {source, false, validInput};
-    return ConvertSeconds(source);
-}
-
-template<class Constants>
-Constants AdjustCopy(const Constants& source, Profile profile) noexcept
-{
-    auto adjusted = source;
-    adjusted.frameRenderTime = Normalize(source.frameRenderTime, profile).milliseconds;
-    return adjusted;
-}
-
-// dev.33 game-agnostic units. Both SDK headers want milliseconds; some engines
+// Game-agnostic units. Both SDK headers want milliseconds; some engines
 // pass seconds (Witcher 3 and Cyberpunk do, and a game update changes their
 // executable digest). Between 2 and 2000 fps a seconds value lies in 0.0005..0.5
 // and a milliseconds value in 0.5..500, so the magnitude separates them. When the

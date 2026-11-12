@@ -19,7 +19,8 @@ endforeach()
 include("${NATIVE}/ampere_native_cache.cmake")
 if(MFG_AMPERE_EMBEDDED_KERNELS)
     add_executable(Ampere310916Audit ampere.cpp "${NATIVE}/dlssg_provider_policy.cpp" "${NATIVE}/ampere_native_cache.cpp"
-        "${NATIVE}/ampere_cuda_program.cpp" "${NATIVE}/ampere_mask_transform.cpp" "${NATIVE}/third_party/minhook/src/hde/hde64.c" "${MFG_AMPERE_KERNEL_RESOURCE}")
+        "${NATIVE}/ampere_cuda_program.cpp" "${NATIVE}/ampere_mask_transform.cpp" "${NATIVE}/third_party/minhook/src/hde/hde64.c" "${MFG_AMPERE_KERNEL_RESOURCE}"
+        ${MFG_EMBEDDED_PAYLOAD_SOURCES})
     target_compile_features(Ampere310916Audit PRIVATE cxx_std_20)
     target_compile_definitions(Ampere310916Audit PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_include_directories(Ampere310916Audit PRIVATE "${NATIVE}")

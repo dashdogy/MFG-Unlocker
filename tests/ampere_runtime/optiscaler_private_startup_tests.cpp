@@ -17,7 +17,7 @@ int wmain()
 {
     using namespace optiscaler_private_streamline;
 
-    // GTA III DE (tester log, wmma.2): no game Streamline, private interposer
+    // The GTA III DE shape: no game Streamline, private interposer
     // hooked as it mapped with the declaration armed, RTX 30 device.
     Inputs tester{};
     tester.hookedAtLoad = tester.armedAtLoad = true;
@@ -26,11 +26,30 @@ int wmain()
     Check(Decide(tester) == Decision::eAdmit, "GTA III shape: the private slSetD3DDevice takes the RTX 30 startup");
     Check(RunsStartup(Decide(tester), true), "an admitted boundary runs the startup");
 
+    // The Crimson Desert shape: the game's own Streamline ran slInit, then
+    // OptiScaler's D3D12CreateDevice hook starts its private DLSS-G output
+    // before the game's slSetD3DDevice and before any FG Create.
     Inputs game = tester;
     game.gameStreamline = true;
-    Check(Decide(game) == Decision::eRefuseGameStreamline, "a game with its own Streamline keeps the RTX 30 startup there");
+    game.beforeFirstCreate = true;
     game.ampereDevice = false;
-    Check(!NeedsDevice(game), "the private call observes no device when the game's Streamline owns the startup");
+    Check(NeedsDevice(game), "beside the game's Streamline, before the first Create: the device is observed");
+    game.ampereDevice = true;
+    Check(Decide(game) == Decision::eAdmit && RunsStartup(Decide(game), true),
+        "Crimson Desert shape: the private slSetD3DDevice runs its own RTX 30 startup bracket");
+    game.ampereDevice = false;
+    Check(Decide(game) == Decision::eRefuseDevice, "beside the game's Streamline, another device runs no startup");
+    game.hookedAtLoad = false;
+    Check(Decide(game) == Decision::eRefuseLate && !NeedsDevice(game),
+        "beside the game's Streamline, a private interposer hooked late is still refused");
+
+    Inputs created = tester;
+    created.gameStreamline = true;
+    created.beforeFirstCreate = false;
+    Check(Decide(created) == Decision::eRefuseGameStreamline,
+        "after a Create on the game's Streamline the private call keeps the startup there");
+    created.ampereDevice = false;
+    Check(!NeedsDevice(created), "the private call observes no device once the game's Streamline created FG");
 
     Inputs late = tester;
     late.hookedAtLoad = false;
@@ -56,9 +75,9 @@ int wmain()
     repeat.ampereDevice = false;
     Check(!RunsStartup(Decide(repeat), false), "a repeated call on another device forwards only");
 
-    // Exhaustive: 32 combinations against the rule as written in the claim.
+    // Exhaustive: 64 combinations against the rule written out independently.
     unsigned admitted = 0;
-    for (unsigned bits = 0; bits < 32; ++bits)
+    for (unsigned bits = 0; bits < 64; ++bits)
     {
         Inputs in{};
         in.admittedBefore = (bits & 1) != 0;
@@ -66,7 +85,9 @@ int wmain()
         in.hookedAtLoad = (bits & 4) != 0;
         in.armedAtLoad = (bits & 8) != 0;
         in.ampereDevice = (bits & 16) != 0;
-        const bool admit = !in.admittedBefore && !in.gameStreamline && in.hookedAtLoad && in.armedAtLoad && in.ampereDevice;
+        in.beforeFirstCreate = (bits & 32) != 0;
+        const bool admit = !in.admittedBefore && (!in.gameStreamline || in.beforeFirstCreate)
+            && in.hookedAtLoad && in.armedAtLoad && in.ampereDevice;
         const bool startup = admit || (in.admittedBefore && in.ampereDevice);
         const Decision decision = Decide(in);
         admitted += decision == Decision::eAdmit;
@@ -80,7 +101,8 @@ int wmain()
             Check(Decide(flipped) == decision, "combination " + std::to_string(bits) + " does not depend on an unobserved device");
         }
     }
-    Check(admitted == 1, "exactly one combination admits a new startup");
+    // Without a game Streamline (either Create state) and beside one before the first Create.
+    Check(admitted == 3, "exactly three combinations admit a new startup");
     for (const Decision decision : {Decision::eAdmit, Decision::eRepeat, Decision::eRefuseGameStreamline,
              Decision::eRefuseLate, Decision::eRefuseDevice})
         Check(std::strcmp(DecisionName(decision), "unknown") != 0, std::string("decision is named ") + DecisionName(decision));

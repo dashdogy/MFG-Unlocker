@@ -10,7 +10,7 @@ struct Patch { uint32_t rva; std::array<uint8_t,8> before,after; };
 // the NVAPI pipeline-option requests (0x1ec4f8f, 0x1ed5d74) stay closed; the
 // rest open the hair features this fallback supports, together. A partial set
 // dispatched a never-registered raygen and an unbuilt RTAO-hair pipeline
-// (dev.21: SKEDCHECK16_CTA_THREAD_DIMENSION_ZERO, device hung).
+// (SKEDCHECK16_CTA_THREAD_DIMENSION_ZERO, device hung).
 struct Entry { uint32_t rva; std::array<uint8_t,16> before; };
 // A hair operation's call: the return address our hook accepts, and the
 // called entry it must decode to.

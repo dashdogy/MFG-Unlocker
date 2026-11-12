@@ -7,12 +7,15 @@ Press **Backspace** to open or close the menu. The hotkey can be changed there
 window is foreground and does not reopen automatically after it has been shown
 and saved.
 
-The menu has a **Frame generation** tab and, when NVIDIA's DLSS 5 dll is
-present, a [DLSS 5](#dlss-5) tab. Each tab has a **Status** section; check it
+The menu has a **Frame generation** tab, a [Keybinds](#keys) tab and, when
+NVIDIA's DLSS 5 dll is present, a [DLSS 5](#dlss-5) tab. Each tab has a **Status** section; check it
 for what is applied, pending changes or restart instructions.
 
-With OptiScaler, OptiScaler's menu owns the frame generation controls; see
-[OptiScaler](optiscaler.md#menus).
+With OptiScaler, OptiScaler's menu owns the frame generation controls, and
+the DLSS presets and DLSS 5 move to an **MFG Unlocker** tab in OptiScaler's
+menu; see [OptiScaler](optiscaler.md#menus).
+
+The menu also runs in DirectX 11 games.
 
 ## Frame generation
 
@@ -56,6 +59,11 @@ the game next creates its swap chain.
 **Reflex FPS limit** provides a separate cap where supported. The manual cap is
 unavailable while Dynamic is selected or active.
 
+### Latency
+
+**Latency** shows the game's latency and its 1% high while the game runs
+Reflex. **Pin** keeps it on screen next to the FPS readout.
+
 ## Game FG option (RTX 30 and RTX 20)
 
 Some games remove their DLSS Frame Generation option on RTX 30 and RTX 20 cards even
@@ -89,23 +97,33 @@ processes the DLSS input at render resolution, **After upscaling** processes
 the DLSS output, and **Present** processes the final image, game UI included.
 **Auto** picks one and shows which, and **Off** turns DLSS 5 off.
 
-**Look** sets Intensity, Model, Structure, Tone and Faces & skin together:
-**Balanced** is the provider's own default, **Subtle** halves its change and
-**Strong** goes further. The list shows **Custom** when you have changed those
-values yourself. **Intensity** is the strength of the whole effect, **Model**
-chooses Model A, B or C, and **Faces & skin** sets structure enhancement on
-detected skin and faces; its **Same as Structure** takes the Structure
-strength, the provider's own default.
+**Presets** starts with three looks that set Intensity, Model, Structure, Tone
+and Faces & skin together: **Balanced** is the provider's own default,
+**Subtle** halves its change and **Strong** goes further. The list shows
+**Custom** when you have changed those values yourself. **Intensity** is the
+strength of the whole effect, **Model** chooses Model A, B or C, and **Faces &
+skin** sets structure enhancement on detected skin and faces; its **Same as
+Structure** takes the Structure strength, the provider's own default.
+
+**Save as** keeps your DLSS 5 settings under a name to go back to; saved
+presets are listed in **Presets** below the looks (and kept in
+`RTXMFG-Dlss5Presets.txt` beside the game). **Export** copies them to the
+clipboard as a code starting with `DLSS5-` to share with other players, and
+**Import** applies a pasted code and saves it as a preset. A preset holds the
+look, the Hook Method and every other setting on the tab, not Compare or Debug
+view.
 
 **Resolution Scale** is the share of the hook method's resolution that the
 network processes. **Auto** lowers it when DLSS 5 takes more than about a
 third of each rendered frame, never below 75 %, and raises it again with
 headroom, never above the slider. **Half rate** runs the network on every
-other frame for about half the GPU cost (DirectX 12, Before or After
-upscaling).
+other frame for about half the GPU cost (DirectX 12 and DirectX 11, Before or
+After upscaling).
 
-In Vulkan games DLSS 5 runs After upscaling or Auto. With OptiScaler, the
-DLSS 5 tab is in MFG Unlocker's menu beside OptiScaler's; see
+In Vulkan games DLSS 5 runs After upscaling or Auto. In DirectX 11 games it
+runs Before upscaling, After upscaling or Auto on a DirectX 12 device of MFG
+Unlocker's, which needs Windows 10 version 1703 or later. With OptiScaler, the
+DLSS 5 settings are in the **MFG Unlocker** tab of OptiScaler's menu; see
 [OptiScaler](optiscaler.md#menus).
 
 ### Compare
@@ -127,6 +145,36 @@ The Status section shows whether DLSS 5 is running, its **GPU cost**, the
 Mask, Pass Count (running the network several times in a row, at extra GPU
 cost) and blending.
 
+## Keys
+
+The menu key is in the menu's footer (**Change key**). It is saved in
+`RTX40MFG-UI.ini` beside the game executable, so it can also be changed without
+the menu: close the game and set `ToggleKey` under `[Overlay]` to a
+[virtual-key code](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)
+in decimal, for example `ToggleKey=45` for Insert or `ToggleKey=119` for F8.
+
+The **Keybinds** tab binds keys to more actions, with or without Ctrl, Shift or
+Alt: **Raise multiplier** and **Lower multiplier** (one step through the modes
+the Mode list offers), **Dynamic on/off**, **Follow game**, **Off** (RTX 30 and
+RTX 20), **2x** to **6x**, **FPS readout on/off** and **Pin panel**. With XeMFG
+standalone the frame generation keys set XeMFG's mode. **Next preset**,
+**Previous preset** and **Game / driver default** change the preset of the DLSS
+the game runs, like the menu's preset row: Ray Reconstruction's (D, E, F) while
+it runs, otherwise Super Resolution's (J, K, L, M). Next and Previous start
+again after the last preset, and the tab shows which one the keys change. The
+DLSS 5 tab's **Hold to show original** key is listed there too. The keys work
+with the menu open or closed and still reach the game, so a combination avoids
+the game's own keys. A short note at the top of the screen shows what a key
+changed; the tab can turn it off. Every action starts unbound. The tab is part
+of MFG Unlocker's own menu, not the one in OptiScaler's.
+
+The keys are saved under `[Keybinds]` in the same file, one line per action:
+`RaiseMultiplier`, `LowerMultiplier`, `Dynamic`, `FollowGame`, `Off`, `Mode2x`
+to `Mode6x`, `FpsReadout`, `PinPanel`, `DlssPresetNext`, `DlssPresetPrevious`
+and `DlssPresetDefault`. A value is `Ctrl+`, `Shift+` and `Alt+` as needed,
+then the virtual-key code, for example `RaiseMultiplier=Ctrl+0x21` (Ctrl+Page
+Up). `ShowNote=0` turns the note off.
+
 ## Language
 
 The **language** list in the footer, beside the menu key, sets the menu
@@ -145,3 +193,5 @@ you want to retain them. `RTX40MFG-UI.ini` holds compatibility switches under
 ([Troubleshooting](troubleshooting.md#rtx-30-pacing)).
 `RTXMFG-<game>-<path-hash>.log` and `RTXMFG-Universal.status.json` are
 diagnostics; see [Reporting a bug](troubleshooting.md#reporting-a-bug).
+**Write log file** under **Diagnostics** turns the log off; see
+[Troubleshooting](troubleshooting.md#reporting-a-bug).

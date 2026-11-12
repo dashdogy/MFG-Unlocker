@@ -2,6 +2,8 @@
 
 #include <Windows.h>
 
+#include "first_sample_table.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -39,9 +41,12 @@ struct Snapshot
 
 // Initializes a fixed, lock-free event pool. Record() never opens or writes a
 // file; the patch worker drains the queue through Flush().
+// Enabled() keeps the counters (the FPS readout). The CSV file is written only
+// when RTXMFG_DIAGNOSTIC_INTERVAL_TRACE=1 was set before Initialize (FileEnabled()).
 void Initialize(const wchar_t* tempDirectory, const wchar_t* executablePath) noexcept;
 void SetEnabled(bool enabled) noexcept;
 bool Enabled() noexcept;
+bool FileEnabled() noexcept;
 void Record(const NVSDK_NGX_Handle* handle,
     const NVSDK_NGX_Parameter* parameters, bool descriptorReady) noexcept;
 // Shared NGX runtime Evaluate entries carry multiple feature types and have no

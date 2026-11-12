@@ -2,20 +2,24 @@
 #include "overlay_vulkan.h"
 #include "overlay_platform.h"
 #include "overlay_dx12.h"
+#include "overlay_graphics_api.h"
 #include "overlay_hook.h"
 #include "overlay_install.h"
 #include "overlay_color_spv.h"
 #include "present_counter.h"
+#include "rtx_hair/universal_hair.h"
 #include "ui_input_coherence.h"
 #include "vsync_control.h"
-#if MFG_UNLOCK_XESS
 #include "xess/vulkan/vk_host.h"
-#endif
+#include "xess/vulkan/vk_provider.h"
+#include "rtx_hair/vk_hair.h"
 #include <backends/imgui_impl_vulkan.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -25,6 +29,18 @@ namespace
 {
 std::atomic<PFN_vkGetInstanceProcAddr> gLoaderGipa{nullptr};
 PFN_vkVoidFunction Wrap(const char* name, PFN_vkVoidFunction original);
+
+// vkprov.2: the XeMFG DLSS-G provider's route beside OptiScaler's own menu (ResolveLifecycle) has resolved an entry.
+std::atomic<bool> gLifecycleOnly{false};
+std::atomic<bool> gLifecycleLogged{false};
+// What the provider needs: the instance and device it records into, their queues, and their destruction.
+bool LifecycleEntry(const char* name)
+{
+    for (const char* entry : {"vkGetInstanceProcAddr", "vkGetDeviceProcAddr", "vkCreateInstance", "vkDestroyInstance",
+            "vkEnumeratePhysicalDevices", "vkCreateDevice", "vkDestroyDevice", "vkGetDeviceQueue", "vkGetDeviceQueue2"})
+        if (strcmp(name, entry) == 0) return true;
+    return false;
+}
 
 struct Instance
 {
@@ -163,12 +179,10 @@ struct State
         else return false;
         queue = presentQueue;
         if (!vk.Load(*device)) return false;
-        // vkxefg.1: a chain the XeMFG Vulkan host took over has XeFG's back buffers as its images.
+        // A chain the XeMFG Vulkan host took over has XeFG's back buffers as its images.
         auto images_ = [&](uint32_t* count, VkImage* images) {
-#if MFG_UNLOCK_XESS
             VkResult hosted = VK_SUCCESS;
             if (xess_vulkan::GetSwapchainImages(device->handle, swapchain, count, images, hosted)) return hosted;
-#endif
             return vk.GetSwapchainImagesKHR(device->handle, swapchain, count, images);
         };
         uint32_t count = 0;
@@ -213,12 +227,10 @@ struct State
             auto& frame = frames[index];
             frame.image = images[index];
             VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-#if MFG_UNLOCK_XESS
-            // vkxefg.1: XeFG's back buffers also carry storage usage, which an sRGB view must not inherit.
+            // XeFG's back buffers also carry storage usage, which an sRGB view must not inherit.
             VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO, nullptr,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
             if (xess_vulkan::OwnsSwapchain(swapchain)) viewInfo.pNext = &viewUsage;
-#endif
             viewInfo.image = images[index];
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             viewInfo.format = format;
@@ -469,8 +481,7 @@ struct CreateInstanceTag
         const VkAllocationCallbacks* allocator, VkInstance* output)
     {
         const VkInstanceCreateInfo* used = info;
-#if MFG_UNLOCK_XESS
-        // vkxefg.1: the XeMFG Vulkan host's programs need Vulkan 1.3 (the game's own version, if lower, is
+        // The XeMFG Vulkan host's programs need Vulkan 1.3 (the game's own version, if lower, is
         // raised only when the host is enabled and the loader offers it; a refusal retries the game's own).
         xess_vulkan::InstanceEdit edit;
         if (!gInsideOverlay) used = xess_vulkan::PrepareInstance(info, gLoaderGipa.load(std::memory_order_acquire), edit);
@@ -480,19 +491,16 @@ struct CreateInstanceTag
             used = info;
             result = original(info, allocator, output);
         }
-#else
-        const VkResult result = original(info, allocator, output);
-#endif
         if (!gInsideOverlay && result == VK_SUCCESS && output && used)
         {
+            graphics_api::Note(graphics_api::kVulkan); // dx11menu.1: bookkeeping only
             auto instance = std::make_shared<Instance>();
             instance->handle = *output;
             instance->gipa = gLoaderGipa.load(std::memory_order_acquire);
             if (used->pApplicationInfo && used->pApplicationInfo->apiVersion)
                 instance->apiVersion = used->pApplicationInfo->apiVersion;
-#if MFG_UNLOCK_XESS
             xess_vulkan::InstanceCreated(*output, used, instance->gipa);
-#endif
+            rtx_hair::vk::InstanceCreated(*output, instance->gipa); // vkhair.4: universal hair's GPU admission
             std::lock_guard lock(gRegistryMutex);
             if (instance->gipa && gInstances.size() < 16) gInstances[*output] = std::move(instance);
         }
@@ -521,25 +529,36 @@ struct CreateDeviceTag
     static VkResult Call(PFN_vkCreateDevice original, VkPhysicalDevice physical,
         const VkDeviceCreateInfo* info, const VkAllocationCallbacks* allocator, VkDevice* output)
     {
-#if MFG_UNLOCK_XESS
-        // vkxefg.1: the XeMFG Vulkan host's queues, extensions and features join the game's device. A device
+        // The XeMFG Vulkan host's queues, extensions and features join the game's device. A device
         // that refuses them is created again exactly as the game asked, and stays native.
         auto edit = gInsideOverlay ? xess_vulkan::DeviceEditPtr() : xess_vulkan::PrepareDevice(physical, info);
-        VkResult result = original(physical, xess_vulkan::EditedInfo(edit.get(), info), allocator, output);
-        if (result != VK_SUCCESS && edit)
+        const VkDeviceCreateInfo* used = xess_vulkan::EditedInfo(edit.get(), info);
+        // vkhair.4: a game that enables LSS on an admitted GPU gets position fetch in its place (on top of
+        // the host's edit), and its device is converted for universal hair.
+        auto hair = gInsideOverlay ? rtx_hair::vk::DeviceEditPtr() : rtx_hair::vk::PrepareDevice(physical, used);
+        VkResult result = original(physical, rtx_hair::vk::EditedInfo(hair.get(), used), allocator, output);
+        if (result != VK_SUCCESS && (edit || hair))
         {
+            // apisetgpa.1: logged, since a device that refuses the edit is otherwise silent.
+            single_module::Log((L"MFG_PROXY_UI edited vkCreateDevice failed (" + std::to_wstring(static_cast<int>(result))
+                + L"); creating the game's own device, provider edit=" + (edit ? L"1" : L"0")
+                + L" hair edit=" + (hair ? L"1" : L"0")).c_str());
             edit.reset();
+            hair.reset();
             result = original(physical, info, allocator, output);
         }
+        // The first result and every failure, written directly so they are on disk if the game ends at once.
+        static std::atomic<bool> firstResultLogged{false};
+        if (!gInsideOverlay && (result != VK_SUCCESS || !firstResultLogged.exchange(true)))
+            single_module::Log((L"MFG_PROXY_UI vkCreateDevice returned " + std::to_wstring(static_cast<int>(result))).c_str());
         if (!gInsideOverlay && result == VK_SUCCESS && output)
         {
+            graphics_api::Note(graphics_api::kVulkan); // dx11menu.1: bookkeeping only
+            rtx_hair::universal::ObserveVulkanDevice(); // nulltoken.1: the hair panel's Vulkan reason
             RememberDevice(physical, *output);
             if (edit) xess_vulkan::DeviceCreated(std::move(edit), *output);
+            if (hair) rtx_hair::vk::DeviceCreated(std::move(hair), *output);
         }
-#else
-        const VkResult result = original(physical, info, allocator, output);
-        if (!gInsideOverlay && result == VK_SUCCESS && output) RememberDevice(physical, *output);
-#endif
         return result;
     }
 };
@@ -549,9 +568,7 @@ struct GetQueueTag
     {
         original(device, family, index, output);
         if (!gInsideOverlay && output) RememberQueue(device, family, false, *output);
-#if MFG_UNLOCK_XESS
         if (!gInsideOverlay && output && *output) xess_vulkan::QueueSeen(device, family, index, *output);
-#endif
     }
 };
 struct GetQueue2Tag
@@ -562,10 +579,8 @@ struct GetQueue2Tag
         original(device, info, output);
         if (!gInsideOverlay && output && info)
             RememberQueue(device, info->queueFamilyIndex, (info->flags & VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT) != 0, *output);
-#if MFG_UNLOCK_XESS
         if (!gInsideOverlay && output && *output && info && !info->flags)
             xess_vulkan::QueueSeen(device, info->queueFamilyIndex, info->queueIndex, *output);
-#endif
     }
 };
 struct CreateSemaphoreTag
@@ -620,9 +635,7 @@ struct CreateSurfaceTag
             std::lock_guard lock(gRegistryMutex);
             if (gSurfaces.size() < 64) gSurfaces[*output] = Surface{info->hwnd, instance};
         }
-#if MFG_UNLOCK_XESS
         if (!gInsideOverlay && result == VK_SUCCESS && output && info) xess_vulkan::SurfaceCreated(instance, *output, info->hwnd);
-#endif
         return result;
     }
 };
@@ -731,10 +744,8 @@ struct CreateSwapchainTag
             // Windows Vulkan drivers may build an internal DXGI swapchain.
             // It belongs to Vulkan WSI, not the application's D3D12 renderer.
             InternalScope internal;
-#if MFG_UNLOCK_XESS
-            // vkxefg.1: the XeMFG Vulkan host may take the chain over (the handle is then its own).
+            // The XeMFG Vulkan host may take the chain over (the handle is then its own).
             if (!device || !xess_vulkan::CreateSwapchain(handle, &adjusted, allocator, output, original, result))
-#endif
                 result = original(handle, &adjusted, allocator, output);
         }
         if (device)
@@ -813,7 +824,7 @@ struct PresentTag
             if (next->sType == VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR
                 || next->sType == VK_STRUCTURE_TYPE_DEVICE_GROUP_PRESENT_INFO_KHR)
                 supportedPresent = false;
-        // interopmenu.2: one menu per window. OptiScaler's XeFG-on-Vulkan interop presents this chain's image through
+        // One menu per window. OptiScaler's XeFG-on-Vulkan interop presents this chain's image through
         // XeFG's D3D12 output chain on the same window, whose output layer draws the menu after frame generation; a
         // menu drawn here would be in the game's frame that XeFG interpolates.
         if (selected && supportedPresent && nativeWaits && single_module::OverlayAllowed()
@@ -832,8 +843,7 @@ struct PresentTag
         // may consume or substitute this call's original semaphore set.
         InternalScope internal;
         VulkanPresentForwardingScope forwarding;
-#if MFG_UNLOCK_XESS
-        // vkxefg.1: a taken-over chain presents through XeFG (after the menu was drawn into the game's image).
+        // A taken-over chain presents through XeFG (after the menu was drawn into the game's image).
         VkResult hosted = VK_SUCCESS;
         if (xess_vulkan::QueuePresent(handle, info, hosted))
         {
@@ -841,15 +851,10 @@ struct PresentTag
                 frame_telemetry::SampleVulkanPresent();
             return hosted;
         }
-#endif
         const VkResult result = original(handle, info);
         if (selected && (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR))
             frame_telemetry::SampleVulkanPresent();
-#if MFG_UNLOCK_XESS
         return xess_vulkan::AfterNativePresent(handle, info, result);
-#else
-        return result;
-#endif
     }
 };
 
@@ -885,10 +890,8 @@ struct DestroySwapchainTag
         {
             ForgetSwapchain(device, swapchain);
             vsync_control::VulkanSwapchainDestroyed(reinterpret_cast<uint64_t>(swapchain));
-#if MFG_UNLOCK_XESS
             InternalScope internal;
             if (xess_vulkan::DestroySwapchain(device, swapchain)) return;
-#endif
         }
         original(device, swapchain, allocator);
     }
@@ -916,10 +919,9 @@ struct DestroyDeviceTag
                 std::erase_if(gNativeSemaphores, [&](const auto& row) { return row.second == device; });
                 gDevices.erase(device);
             }
-#if MFG_UNLOCK_XESS
             InternalScope internal;
             xess_vulkan::DeviceDestroying(device);
-#endif
+            rtx_hair::vk::DeviceDestroyed(device); // vkhair.4: its converter buffers and pipelines
         }
         original(device, allocator);
     }
@@ -934,9 +936,7 @@ struct DestroySurfaceTag
             std::lock_guard lock(gRegistryMutex);
             gSurfaces.erase(surface);
         }
-#if MFG_UNLOCK_XESS
         if (!gInsideOverlay) xess_vulkan::SurfaceDestroyed(surface);
-#endif
         original(instance, surface, allocator);
     }
 };
@@ -950,15 +950,13 @@ struct DestroyInstanceTag
             std::erase_if(gPhysicalDevices, [&](const auto& row) { return row.second->handle == instance; });
             gInstances.erase(instance);
         }
-#if MFG_UNLOCK_XESS
         if (!gInsideOverlay) xess_vulkan::InstanceDestroyed(instance);
-#endif
+        if (!gInsideOverlay) rtx_hair::vk::InstanceDestroyed(instance);
         original(instance, allocator);
     }
 };
 
-#if MFG_UNLOCK_XESS
-// vkxefg.1: vkDeviceWaitIdle synchronizes every queue of the device, the XeMFG host's layer queues included.
+// vkDeviceWaitIdle synchronizes every queue of the device, the XeMFG host's layer queues included.
 struct DeviceWaitIdleTag
 {
     static VkResult Call(PFN_vkDeviceWaitIdle original, VkDevice device)
@@ -968,7 +966,7 @@ struct DeviceWaitIdleTag
         return original(device);
     }
 };
-// vkxefg.1: the swap-chain entry points a taken-over chain's handle reaches. Native handles pass straight on.
+// The swap-chain entry points a taken-over chain's handle reaches. Native handles pass straight on.
 struct GetSwapchainImagesTag
 {
     static VkResult Call(PFN_vkGetSwapchainImagesKHR original, VkDevice device, VkSwapchainKHR swapchain,
@@ -1028,11 +1026,17 @@ struct SetHdrMetadataTag
         original(device, count, swapchains, metadata);
     }
 };
-#endif
 
 PFN_vkVoidFunction Wrap(const char* name, PFN_vkVoidFunction original)
 {
     if (!name || !original) return original;
+    // vkhair.4: universal hair's entries, whatever else the overlay wraps; each passes through on devices it
+    // does not convert.
+    if (const auto hair = rtx_hair::vk::Wrap(name, original); hair != original) return hair;
+    // vkprov.2: beside OptiScaler's own menu the provider's route wraps the instance and device lifecycle only;
+    // swapchain, present, surface and semaphore entries stay the game's, as without the provider.
+    if (gLifecycleOnly.load(std::memory_order_acquire) && !single_module::OverlayAllowed() && !LifecycleEntry(name))
+        return original;
     // A missed destroy/import could leave a stale or replaced payload marked
     // native. Disable this route if either callable cannot be intercepted.
 #define MFG_VK_SEMAPHORE_WRAP(nameLiteral, Tag, Result, ...) \
@@ -1051,13 +1055,10 @@ PFN_vkVoidFunction Wrap(const char* name, PFN_vkVoidFunction original)
             HookFamily<CreateSwapchainTag, VkResult, VkDevice, const VkSwapchainCreateInfoKHR*,
                 const VkAllocationCallbacks*, VkSwapchainKHR*>::Bind(reinterpret_cast<void*>(original), false));
         if (wrapped != original) vsync_control::VulkanSwapchainHookInstalled();
-#if MFG_UNLOCK_XESS
         if (wrapped != original) xess_vulkan::EntryWrapped("vkCreateSwapchainKHR");
-#endif
         return wrapped;
     }
-#if MFG_UNLOCK_XESS
-    // vkxefg.1: a taken-over chain needs every entry point its handle reaches to be ours.
+    // A taken-over chain needs every entry point its handle reaches to be ours.
     for (const char* hosted : {"vkQueuePresentKHR", "vkDestroySwapchainKHR"})
         if (strcmp(name, hosted) == 0)
         {
@@ -1069,7 +1070,6 @@ PFN_vkVoidFunction Wrap(const char* name, PFN_vkVoidFunction original)
             if (wrapped != original) xess_vulkan::EntryWrapped(hosted);
             return wrapped;
         }
-#endif
 #define MFG_VK_WRAP(nameLiteral, Tag, Result, ...) \
     if (strcmp(name, nameLiteral) == 0) return reinterpret_cast<PFN_vkVoidFunction>( \
         HookFamily<Tag, Result, __VA_ARGS__>::Bind(reinterpret_cast<void*>(original), false));
@@ -1087,7 +1087,6 @@ PFN_vkVoidFunction Wrap(const char* name, PFN_vkVoidFunction original)
     MFG_VK_WRAP("vkDestroyDevice", DestroyDeviceTag, void, VkDevice, const VkAllocationCallbacks*)
     MFG_VK_WRAP("vkDestroySurfaceKHR", DestroySurfaceTag, void, VkInstance, VkSurfaceKHR, const VkAllocationCallbacks*)
     MFG_VK_WRAP("vkDestroyInstance", DestroyInstanceTag, void, VkInstance, const VkAllocationCallbacks*)
-#if MFG_UNLOCK_XESS
 #define MFG_VK_HOST_WRAP(nameLiteral, Tag, Result, ...) \
     if (strcmp(name, nameLiteral) == 0) { \
         const auto wrapped = reinterpret_cast<PFN_vkVoidFunction>( \
@@ -1100,10 +1099,15 @@ PFN_vkVoidFunction Wrap(const char* name, PFN_vkVoidFunction original)
     MFG_VK_HOST_WRAP("vkSetHdrMetadataEXT", SetHdrMetadataTag, void, VkDevice, uint32_t, const VkSwapchainKHR*, const VkHdrMetadataEXT*)
     MFG_VK_HOST_WRAP("vkDeviceWaitIdle", DeviceWaitIdleTag, VkResult, VkDevice)
 #undef MFG_VK_HOST_WRAP
-#endif
 #undef MFG_VK_WRAP
     return original;
 }
+}
+
+bool AnySession() noexcept
+{
+    std::lock_guard lock(gRegistryMutex);
+    return !gSwapchains.empty();
 }
 
 FARPROC Resolve(HMODULE module, LPCSTR name, FARPROC original) noexcept
@@ -1132,6 +1136,18 @@ FARPROC Resolve(HMODULE module, LPCSTR name, FARPROC original) noexcept
         && expected != loader) return original; // Never mix loader ownership.
     const auto wrapped = reinterpret_cast<FARPROC>(Wrap(name, reinterpret_cast<PFN_vkVoidFunction>(original)));
     if (wrapped != original) gVulkanHooked.store(true, std::memory_order_release);
+    return wrapped;
+}
+
+FARPROC ResolveLifecycle(HMODULE module, LPCSTR name, FARPROC original) noexcept
+{
+    if (!name || reinterpret_cast<uintptr_t>(name) <= 0xFFFFu || !original || !LifecycleEntry(name)
+        || !xess_vulkan_provider::ShimInstalled()) return original;
+    gLifecycleOnly.store(true, std::memory_order_release);
+    const FARPROC wrapped = Resolve(module, name, original);
+    if (wrapped != original && !gLifecycleLogged.exchange(true, std::memory_order_acq_rel))
+        single_module::Log(L"MFG_PROXY_UI Vulkan instance and device entries wrapped for the XeMFG DLSS-G provider "
+                           L"beside OptiScaler's menu (no RTXMFG Vulkan overlay)");
     return wrapped;
 }
 }

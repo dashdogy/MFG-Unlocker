@@ -1,10 +1,11 @@
 #pragma once
+#include "dlss5_provider.h"
 #include "dlss_sr_policy.h"
 #include <Windows.h>
 #include <nvsdk_ngx.h>
 #include <cstddef>
 
-// V1.7.0 vkdlss5.1: DLSS 5 (DLSSNR) on the game's Vulkan DLSS SR/DLAA/RR
+// DLSS 5 (DLSSNR) on the game's Vulkan DLSS SR/DLAA/RR
 // evaluations, After upscaling (and Hook Method Auto). The stage reads the
 // evaluation's output, runs the D3D12 stage's encode/network/decode passes
 // (the same HLSL compiled to SPIR-V, dlss5_vk_spirv.h) and writes the result
@@ -27,9 +28,8 @@ using Create1Fn = NVSDK_NGX_Result(NVSDK_CONV*)(void* device, void* command, NVS
     const NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
 using EvaluateFn = NVSDK_NGX_Result(NVSDK_CONV*)(void* command, const NVSDK_NGX_Handle*, const NVSDK_NGX_Parameter*,
     PFN_NVSDK_NGX_ProgressCallback);
-using ReleaseFn = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Handle*);
-using AllocateFn = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter**);
-using DestroyFn = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter*);
+// Release and the parameter entries have the D3D12 route's types (dlss5_provider.h).
+using dlss5::ReleaseFn, dlss5::AllocateFn, dlss5::DestroyFn;
 // The NGX route's Vulkan entries (the originals behind our hooks).
 struct Api {
     HMODULE runtime = nullptr;

@@ -7,10 +7,15 @@
 #include "overlay_native.h"
 #include "overlay_application_imports.h"
 #include "overlay_adapter_parent.h"
+#include "overlay_graphics_api.h"
 #include "caller_scoped_import.h"
+#include "optiscaler_host.h"
 #include "witcher_dots/witcher_dots.h"
+#include "rtx_hair/universal_hair.h"
 #include <d3d12.h>
+#include <d3d11.h>
 #include <intrin.h>
+#include <algorithm>
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -104,8 +109,11 @@ struct DeviceGateways {
         if(output)witcher_dots::BeforeDeviceCreate(_ReturnAddress());
         const auto result=originals[I].load(std::memory_order_acquire)(adapter,level,iid,output);
         const DWORD error=GetLastError();
-        if(SUCCEEDED(result)&&output&&*output)
+        if(SUCCEEDED(result)&&output&&*output) {
+            graphics_api::Note(graphics_api::kD3D12); // dx11menu.1: bookkeeping only
             witcher_dots::ObserveDevice(static_cast<IUnknown*>(*output),_ReturnAddress());
+            rtx_hair::universal::ObserveDevice(static_cast<IUnknown*>(*output)); // rtxhair.1 (hairauto.1: on unless turned off)
+        }
         SetLastError(error);
         return result;
     }
@@ -122,6 +130,119 @@ struct DeviceGateways {
                 return reinterpret_cast<FARPROC>(entries[i]);
         }
         return entry;
+    }
+};
+// dx11menu.1: a DirectX 11 game's public device creation. D3D11CreateDevice arms the adapter-parent route from the
+// returned device's adapter, so a factory taken through IDXGIDevice -> GetAdapter -> GetParent is the menu's proxy;
+// D3D11CreateDeviceAndSwapChain also hands its swapchain to the DirectX 11 menu. Beside OptiScaler, or with the menu
+// off, both forward only.
+bool D3D11DeviceName(const char* name) noexcept {
+    return !strcmp(name,"D3D11CreateDevice")||!strcmp(name,"D3D11CreateDeviceAndSwapChain");
+}
+// What the executable's import directory links, by DLL and by name or ordinal. d3d12.lib binds D3D12CreateDevice by
+// ordinal (#101), which slots::VisitImports does not report. Any import from d3d11.dll counts as D3D11, so a dual-API
+// executable keeps the runtime signals (graphics_api). Bounded like VisitImports; no delay imports.
+struct LinkedApis { bool d3d11=false,d3d12=false,vulkan=false,valid=false; };
+LinkedApis ScanLinkedApis(HMODULE image) noexcept {
+    LinkedApis linked{};
+    if (!image) return linked;
+    const auto base=reinterpret_cast<uint8_t*>(image);
+    const auto dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic!=IMAGE_DOS_SIGNATURE||dos->e_lfanew<=0||dos->e_lfanew>0x100000) return linked;
+    const auto nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
+    if (nt->Signature!=IMAGE_NT_SIGNATURE||nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC) return linked;
+    const size_t size=nt->OptionalHeader.SizeOfImage;
+    const auto valid=[&](size_t rva,size_t bytes){return rva<size&&bytes<=size-rva;};
+    const auto text=[&](size_t rva)->const char*{
+        if (!valid(rva,1)) return nullptr;
+        const auto* s=reinterpret_cast<const char*>(base+rva);
+        return memchr(s,0,(std::min)(size_t(4096),size-rva))?s:nullptr;
+    };
+    const auto dir=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!dir.VirtualAddress) {linked.valid=true;return linked;}
+    if (!valid(dir.VirtualAddress,dir.Size)||dir.Size>1024*sizeof(IMAGE_IMPORT_DESCRIPTOR)) return linked;
+    const auto imports=reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base+dir.VirtualAddress);
+    for (size_t i=0;i<dir.Size/sizeof(*imports);++i) {
+        const auto& imp=imports[i];
+        if (!imp.Name) {linked.valid=true;return linked;}
+        const char* dll=text(imp.Name);
+        if (!dll) return linked;
+        const bool d3d11=!_stricmp(dll,"d3d11.dll"),d3d12=!_stricmp(dll,"d3d12.dll");
+        linked.d3d11|=d3d11;
+        // Bound slots hold addresses, not names: only the original thunks are read (as VisitImports).
+        if (!imp.OriginalFirstThunk) continue;
+        const size_t thunks=imp.OriginalFirstThunk;
+        for (size_t j=0;j<4096;++j) {
+            const size_t rva=thunks+j*sizeof(IMAGE_THUNK_DATA64);
+            if (!valid(rva,sizeof(IMAGE_THUNK_DATA64))) return linked;
+            const auto value=reinterpret_cast<IMAGE_THUNK_DATA64*>(base+rva)->u1.AddressOfData;
+            if (!value) break;
+            if (IMAGE_SNAP_BY_ORDINAL64(value)) {
+                if (d3d12&&IMAGE_ORDINAL64(value)==101) linked.d3d12=true;
+                continue;
+            }
+            const char* name=text(static_cast<size_t>(value)+2);
+            if (!name) return linked;
+            if (D3D11DeviceName(name)) linked.d3d11=true;
+            else if (!strcmp(name,"D3D12CreateDevice")) linked.d3d12=true;
+            else if (!strcmp(name,"vkCreateInstance")) linked.vulkan=true;
+        }
+    }
+    return linked;
+}
+bool D3D11MenuWanted() noexcept {
+    return single_module::OverlayAllowed()&&!optiscaler_host::Detected();
+}
+struct D3D11Gateways {
+    inline static std::array<std::atomic<PFN_D3D11_CREATE_DEVICE>,8> devices{};
+    inline static std::array<std::atomic<PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN>,8> chains{};
+    template<size_t I> static HRESULT WINAPI CreateDevice(IDXGIAdapter* adapter,D3D_DRIVER_TYPE type,HMODULE software,
+        UINT flags,const D3D_FEATURE_LEVEL* levels,UINT count,UINT sdk,ID3D11Device** device,D3D_FEATURE_LEVEL* level,
+        ID3D11DeviceContext** context) {
+        const auto result=devices[I].load(std::memory_order_acquire)(adapter,type,software,flags,levels,count,sdk,
+            device,level,context);
+        const DWORD error=GetLastError();
+        if(SUCCEEDED(result)&&device&&*device) {
+            graphics_api::Note(graphics_api::kD3D11);
+            if(D3D11MenuWanted())adapter_parent::ObserveD3D11(*device);
+        }
+        SetLastError(error);
+        return result;
+    }
+    template<size_t I> static HRESULT WINAPI CreateDeviceAndSwapChain(IDXGIAdapter* adapter,D3D_DRIVER_TYPE type,
+        HMODULE software,UINT flags,const D3D_FEATURE_LEVEL* levels,UINT count,UINT sdk,const DXGI_SWAP_CHAIN_DESC* desc,
+        IDXGISwapChain** chain,ID3D11Device** device,D3D_FEATURE_LEVEL* level,ID3D11DeviceContext** context) {
+        const auto original=chains[I].load(std::memory_order_acquire);
+        if(!D3D11MenuWanted())return original(adapter,type,software,flags,levels,count,sdk,desc,chain,device,level,context);
+        const auto result=proxy::D3D11ChainCall(original,_ReturnAddress(),adapter,type,software,flags,levels,count,sdk,
+            desc,chain,device,level,context);
+        const DWORD error=GetLastError();
+        if(SUCCEEDED(result)&&((device&&*device)||(chain&&*chain)))graphics_api::Note(graphics_api::kD3D11);
+        if(SUCCEEDED(result)&&device&&*device)adapter_parent::ObserveD3D11(*device);
+        SetLastError(error);
+        return result;
+    }
+    template<size_t... I> static auto DeviceEntries(std::index_sequence<I...>) {
+        return std::array<PFN_D3D11_CREATE_DEVICE,sizeof...(I)>{&CreateDevice<I>...};
+    }
+    template<size_t... I> static auto ChainEntries(std::index_sequence<I...>) {
+        return std::array<PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN,sizeof...(I)>{&CreateDeviceAndSwapChain<I>...};
+    }
+    template<class Fn,size_t N> static FARPROC Bind(std::array<std::atomic<Fn>,N>& originals,const std::array<Fn,N>& entries,
+        FARPROC entry) noexcept {
+        const auto target=reinterpret_cast<Fn>(entry);
+        for(size_t i=0;i<N;++i) {
+            if(entries[i]==target)return entry;
+            Fn expected=nullptr;
+            if(originals[i].compare_exchange_strong(expected,target,std::memory_order_acq_rel)||expected==target)
+                return reinterpret_cast<FARPROC>(entries[i]);
+        }
+        return entry;
+    }
+    static FARPROC Bind(const char* name,FARPROC entry) noexcept {
+        static const auto deviceEntries=DeviceEntries(std::make_index_sequence<8>{});
+        static const auto chainEntries=ChainEntries(std::make_index_sequence<8>{});
+        return !strcmp(name,"D3D11CreateDevice")?Bind(devices,deviceEntries,entry):Bind(chains,chainEntries,entry);
     }
 };
 bool PublishFactoryOriginal(const char* name,void* target,void* trampoline) noexcept {
@@ -174,6 +295,32 @@ bool Eligible(HMODULE module,FARPROC original) noexcept {
     return eligible&&GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
         reinterpret_cast<LPCWSTR>(original),&pinned)&&pinned==module;
 }
+// dx11menu.1: the D3D11 device entries' owners. System32 d3d11.dll; also a local ReShade d3d11.dll and this module
+// when it is named d3d11.dll (its d3d11 proxy family), which forward the same public ABI. The entry must be that
+// exact image's own export, pinned for the process lifetime.
+bool EligibleD3D11(HMODULE module,LPCSTR name,FARPROC original) noexcept {
+    std::unique_ptr<wchar_t[]> storage(new(std::nothrow) wchar_t[32768]);
+    if (!storage) return false;
+    wchar_t* path=storage.get();
+    wchar_t system[MAX_PATH]{};
+    const DWORD count=module?GetModuleFileNameW(module,path,32768):0;
+    if (!count||count>=32768||!slots::ImageEntry(module,reinterpret_cast<void*>(original))
+        ||GetProcAddress(module,name)!=original) return false;
+    const wchar_t* leaf=wcsrchr(path,L'\\'); leaf=leaf?leaf+1:path;
+    if (_wcsicmp(leaf,L"d3d11.dll")||!GetSystemDirectoryW(system,MAX_PATH)||wcscat_s(system,L"\\d3d11.dll")) return false;
+    bool eligible=!_wcsicmp(path,system);
+    if (!eligible) {
+        eligible=true;
+        for (const char* entry:{"D3D11CreateDevice","D3D11CreateDeviceAndSwapChain"})
+            eligible=slots::ImageEntry(module,reinterpret_cast<void*>(GetProcAddress(module,entry)))&&eligible;
+        if (module!=single_module::Self())
+            for (const char* entry:{"ReShadeRegisterAddon","ReShadeUnregisterAddon"})
+                eligible=slots::ImageEntry(module,reinterpret_cast<void*>(GetProcAddress(module,entry)))&&eligible;
+    }
+    HMODULE pinned=nullptr;
+    return eligible&&GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
+        reinterpret_cast<LPCWSTR>(original),&pinned)&&pinned==module;
+}
 // Where Winds Meet's packed executable resolves the interposer's factory
 // exports itself: no import slot or GetProcAddress call reaches us, so only
 // Streamline's swapchain is created. Route main-executable callers of this
@@ -209,12 +356,26 @@ FARPROC ResolveProc(HMODULE module,LPCSTR name,FARPROC original) noexcept {
     }
     // OptiScaler mode: the device gateway above (Witcher DOTS) stays; factory,
     // Vulkan and input routes exist only for RTXMFG's menu.
-    if (!single_module::OverlayAllowed()) return original;
+    if (!single_module::OverlayAllowed()) {
+#if MFG_UNLOCK_OVERLAY_MENU_DRAW
+        // vkprov.2: except the Vulkan instance and device lifecycle the XeMFG DLSS-G provider records into, while it
+        // is installed (checked there); RTXMFG's menu stays off.
+        if (name[0]=='v' && name[1]=='k') return vulkan::ResolveLifecycle(module,name,original);
+#endif
+        return original;
+    }
     if (!strcmp(name,"CreateDXGIFactory")||!strcmp(name,"CreateDXGIFactory1")||!strcmp(name,"CreateDXGIFactory2")) {
         if (!Eligible(module,original)) return original;
         if (!strcmp(name,"CreateDXGIFactory")) return Gateways<Factory0,proxy::FactoryFn>::Bind(original);
         if (!strcmp(name,"CreateDXGIFactory1")) return Gateways<Factory1,proxy::FactoryFn>::Bind(original);
         return Gateways<Factory2,proxy::Factory2Fn>::Bind(original);
+    }
+    // dx11menu.1: none beside OptiScaler, whose own swap chain wrappers serve a DirectX 11 game, and none in a D3D12
+    // or Vulkan application (graphics_api), which keeps its D3D11 entries untouched.
+    if (D3D11DeviceName(name)) {
+        if (optiscaler_host::Detected()||!graphics_api::D3D11Application()||!EligibleD3D11(module,name,original))
+            return original;
+        return D3D11Gateways::Bind(name,original);
     }
 #if MFG_UNLOCK_OVERLAY_MENU_DRAW
     if (name[0]=='v' && name[1]=='k') return vulkan::Resolve(module,name,original);
@@ -250,9 +411,20 @@ void ArmFactoryGateway() noexcept {
     const bool loaderCallout=native::InsideLoader();
     const bool dotsDevice=witcher_dots::GameProcess();
     size_t deferred=0;
+    // dx11menu.1: an executable linking D3D12 or Vulkan creation and no D3D11 creation gets no DirectX 11 menu.
+    {
+        const LinkedApis apis=ScanLinkedApis(executable);
+        const uint32_t linked=!apis.valid||apis.d3d11?0u
+            :(apis.d3d12?graphics_api::kD3D12Linked:0u)|(apis.vulkan?graphics_api::kVulkanLinked:0u);
+        if (linked&&!(graphics_api::Seen()&linked)) {
+            graphics_api::Note(linked);
+            single_module::Log(L"MFG_PROXY_UI executable links D3D12 or Vulkan creation and no D3D11 creation: no DirectX 11 menu or D3D11 gateway (step=application_api)");
+        }
+    }
     const bool inspected=slots::VisitImports(executable,[&](const char* name,void** slot) {
         if (strcmp(name,"CreateDXGIFactory")&&strcmp(name,"CreateDXGIFactory1")&&strcmp(name,"CreateDXGIFactory2")
             && !(dotsDevice&&!strcmp(name,"D3D12CreateDevice"))
+            && !D3D11DeviceName(name)
             && !(name[0]=='v'&&name[1]=='k')) return true;
         void* value=protected_pointer::ReadPointer(reinterpret_cast<uintptr_t>(slot));
         HMODULE owner=nullptr;
@@ -261,9 +433,11 @@ void ArmFactoryGateway() noexcept {
         const auto original=reinterpret_cast<FARPROC>(value);
         const auto replacement=ResolveProc(owner,name,original);
         if (original==replacement) return true;
-        if(!strcmp(name,"D3D12CreateDevice")) {
+        if(!strcmp(name,"D3D12CreateDevice")||D3D11DeviceName(name)) {
             // DOTS requires this early, aligned import. Do not use the
-            // factory-entry fallback for a different public ABI.
+            // factory-entry fallback for a different public ABI. The D3D11
+            // device entries (dx11menu.1) likewise: aligned slots only;
+            // GetProcAddress callers reach the same gateways.
             if(!slots::ImageSlot(executable,slot)) {++deferred;return true;}
             return batch.Add(executable,slot,value,reinterpret_cast<void*>(replacement));
         }

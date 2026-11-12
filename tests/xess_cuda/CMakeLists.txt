@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 # XeFG tensor-core route (source/native/xess/cuda): CUDA kernels against Intel's DXIL programs through
 # the production route code. GPU test: needs an NVIDIA RTX 20/30/40/50 adapter and no game using the GPU.
-project(XefgCudaTests LANGUAGES CXX)
+project(XefgCudaTests LANGUAGES C CXX)
 set(NATIVE "${CMAKE_CURRENT_SOURCE_DIR}/../../source/native")
+enable_testing()
 set(XEFG_CUDA_FATBIN "" CACHE FILEPATH "xefg_cuda_layers.fatbin from the product build (generated/xess_cuda)")
 set(XEFG_NATIVE_PROGRAMS "" CACHE PATH "Directory with libxess_fg 3.0.2's U-Net and flow DXIL programs")
 set(XEFG_PORTED_PROGRAMS "" CACHE PATH "Directory with RTXMFG's embedded ported programs (xess-programs/programs)")
@@ -21,6 +22,37 @@ set(XEFG_RESHADE_ADDONS "" CACHE STRING "ReShade add-on files loaded with it (op
 if(NOT EXISTS "${XEFG_CUDA_FATBIN}" OR NOT IS_DIRECTORY "${XEFG_NATIVE_PROGRAMS}" OR NOT IS_DIRECTORY "${XEFG_PORTED_PROGRAMS}"
     OR NOT IS_DIRECTORY "${XEFG_OWN_SHADERS}")
     message(FATAL_ERROR "Explicit XEFG_CUDA_FATBIN, XEFG_NATIVE_PROGRAMS, XEFG_PORTED_PROGRAMS and XEFG_OWN_SHADERS are required")
+endif()
+# V0's import prerequisite uses the real production module loader, independently of any game.
+option(XEFG_CUDA_VULKAN_PROBE "Build the gated NVX module-import probe" OFF)
+if(XEFG_CUDA_VULKAN_PROBE)
+    set(XVK_VULKAN_INCLUDE_DIR "" CACHE PATH "Pinned Vulkan 1.4.363.0 headers")
+    if(NOT EXISTS "${XVK_VULKAN_INCLUDE_DIR}/vulkan/vulkan.h")
+        message(FATAL_ERROR "Explicit XVK_VULKAN_INCLUDE_DIR required for the NVX probe")
+    endif()
+    add_executable(XefgCudaVkTests cuda_vk_tests.cpp "${NATIVE}/xess/vulkan/xvk_tensor.cpp" "${NATIVE}/xess/cuda/cuda_route.cpp")
+    set(XEFG_CUDA_GENERATED "" CACHE PATH "Candidate native generated directory (program-set headers)")
+    if(NOT EXISTS "${XEFG_CUDA_GENERATED}/embedded_xvk_programs.generated.h")
+        message(FATAL_ERROR "Explicit XEFG_CUDA_GENERATED with the candidate program headers required")
+    endif()
+    target_sources(XefgCudaVkTests PRIVATE
+        "${NATIVE}/xess/vulkan/xvk_device.cpp" "${NATIVE}/xess/vulkan/xvk_resource.cpp"
+        "${NATIVE}/xess/vulkan/xvk_commandlist.cpp" "${NATIVE}/xess/vulkan/xvk_queue.cpp"
+        "${NATIVE}/xess/vulkan/xvk_pipeline.cpp" "${NATIVE}/xess/vulkan/xvk_programs.cpp"
+        "${NATIVE}/xess/vulkan/xvk_dxgi.cpp" "${NATIVE}/xess/vulkan/xvk_util.cpp"
+        "${NATIVE}/embedded_payload.cpp" "${NATIVE}/third_party/lzma/LzmaDec.c")
+    target_include_directories(XefgCudaVkTests PRIVATE "${XEFG_CUDA_GENERATED}")
+    target_compile_features(XefgCudaVkTests PRIVATE cxx_std_20)
+    target_compile_definitions(XefgCudaVkTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_include_directories(XefgCudaVkTests PRIVATE "${NATIVE}" "${XVK_VULKAN_INCLUDE_DIR}")
+    target_link_libraries(XefgCudaVkTests PRIVATE d3d12 dxgi bcrypt user32)
+    set_target_properties(XefgCudaVkTests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    set(XEFG_CUDA_CANDIDATE_DLL "" CACHE FILEPATH "Candidate product DLL providing its embedded program set")
+    foreach(case equivalence borders shadow_refresh refusals gate)
+        add_test(NAME xefg_cuda_vk_${case} COMMAND XefgCudaVkTests --fatbin "${XEFG_CUDA_FATBIN}" --programs "${XEFG_NATIVE_PROGRAMS}"
+            --programs "${XEFG_PORTED_PROGRAMS}" --programs "${XEFG_OWN_SHADERS}"
+            --candidate-dll "${XEFG_CUDA_CANDIDATE_DLL}" --case ${case} --texturing 64 --module fatbin --params extras --barriers xefg)
+    endforeach()
 endif()
 # psorefused.1 (board #543): a device wrapper and a module that hooks only pipeline creation (the shape of the SCSKiller
 # shader recorder's d3d12.dll under ReShade), each in its own image beside every test executable; loaded only by
@@ -46,7 +78,6 @@ endfunction()
 set(XEFG_CUDA_ARGS --fatbin "${XEFG_CUDA_FATBIN}" --programs "${XEFG_NATIVE_PROGRAMS}" --programs "${XEFG_PORTED_PROGRAMS}"
     --programs "${XEFG_OWN_SHADERS}")
 xefg_cuda_test_target(XefgCudaRouteTests)
-enable_testing()
 add_test(NAME xefg_cuda_route_equivalence COMMAND XefgCudaRouteTests ${XEFG_CUDA_ARGS} --list create)
 add_test(NAME xefg_cuda_route_equivalence_list1 COMMAND XefgCudaRouteTests ${XEFG_CUDA_ARGS} --list create1)
 add_test(NAME xefg_cuda_route_wrapped_device COMMAND XefgCudaRouteTests ${XEFG_CUDA_ARGS} --wrapped-device)
@@ -115,4 +146,57 @@ if(XEFG_RESHADE_DXGI)
         add_test(NAME xefg_cuda_route_reshade_agility COMMAND XefgCudaRouteTestsReShadeAgility ${XEFG_CUDA_ARGS} --list create --expect-agility --expect-wrapper)
         add_test(NAME xefg_cuda_route_reshade_agility_list1 COMMAND XefgCudaRouteTestsReShadeAgility ${XEFG_CUDA_ARGS} --list create1 --expect-agility --expect-wrapper)
     endif()
+endif()
+
+# Provider command-list proxy; separate executable preserves the existing D3D12 test entry point.
+function(xefg_cuda_proxy_target name)
+    add_executable(${name} proxy_tests.cpp "${NATIVE}/xess/cuda/cuda_route.cpp" "${NATIVE}/xess/cuda/provider_list.cpp")
+    target_compile_features(${name} PRIVATE cxx_std_20)
+    target_compile_definitions(${name} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_include_directories(${name} PRIVATE "${NATIVE}")
+    target_link_libraries(${name} PRIVATE d3d12 dxgi bcrypt)
+    set_target_properties(${name} PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded")
+endfunction()
+xefg_cuda_proxy_target(XefgCudaProxyTests)
+foreach(pair "equivalence;equivalence" "no_table_writes;table" "wrapped_list;wrapped" "stale_state;stale" "escape;escape" )
+    list(GET pair 0 suffix)
+    list(GET pair 1 mode)
+    add_test(NAME xefg_cuda_proxy_${suffix} COMMAND XefgCudaProxyTests ${XEFG_CUDA_ARGS} --proxy-list --test ${mode})
+endforeach()
+add_test(NAME xefg_cuda_proxy_dred COMMAND XefgCudaProxyTests ${XEFG_CUDA_ARGS} --proxy-list --test table --dred)
+if(XEFG_AGILITY_CORE)
+    xefg_cuda_proxy_target(XefgCudaProxyTestsAgility)
+    target_compile_definitions(XefgCudaProxyTestsAgility PRIVATE XEFG_CUDA_AGILITY_SDK_VERSION=${XEFG_AGILITY_SDK_VERSION})
+    add_custom_command(TARGET XefgCudaProxyTestsAgility POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:XefgCudaProxyTestsAgility>/D3D12"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${XEFG_AGILITY_CORE}" "$<TARGET_FILE_DIR:XefgCudaProxyTestsAgility>/D3D12/D3D12Core.dll")
+    add_test(NAME xefg_cuda_proxy_agility COMMAND XefgCudaProxyTestsAgility ${XEFG_CUDA_ARGS} --proxy-list --test equivalence --expect-agility)
+    add_test(NAME xefg_cuda_proxy_agility_dred COMMAND XefgCudaProxyTestsAgility ${XEFG_CUDA_ARGS} --proxy-list --test table --dred --expect-agility)
+endif()
+
+add_test(NAME xefg_cuda_pipeline_tokens COMMAND XefgCudaProxyTests ${XEFG_CUDA_ARGS} --proxy-list --test tokens)
+
+if(XEFG_CUDA_CANDIDATE_DLL)
+    enable_language(RC)
+    find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+    set(STREAMLINE_ROOT "" CACHE PATH "Established Streamline SDK containing external/ngx-sdk/include")
+    set(XEFG_PROVIDER_RUNTIME "" CACHE PATH "Profiled XeFG 1.3.1.78 / XeLL runtime pair")
+    if(NOT EXISTS "${STREAMLINE_ROOT}/external/ngx-sdk/include/nvsdk_ngx_params.h"
+       OR NOT EXISTS "${XEFG_PROVIDER_RUNTIME}/libxess_fg.dll" OR NOT EXISTS "${XEFG_PROVIDER_RUNTIME}/libxell.dll")
+        message(FATAL_ERROR "Provider fixture needs explicit STREAMLINE_ROOT and XEFG_PROVIDER_RUNTIME")
+    endif()
+    add_library(XefgProviderHostFixture SHARED ../release_regression/optiscaler_host_fixture.cpp ../release_regression/optiscaler_host_fixture.rc)
+    target_compile_features(XefgProviderHostFixture PRIVATE cxx_std_20)
+    target_compile_definitions(XefgProviderHostFixture PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    set_target_properties(XefgProviderHostFixture PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    add_executable(XefgD3D12ProviderFixture provider_fixture.cpp "${NATIVE}/xess/cuda/cuda_route.cpp")
+    target_compile_features(XefgD3D12ProviderFixture PRIVATE cxx_std_20)
+    target_compile_definitions(XefgD3D12ProviderFixture PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_include_directories(XefgD3D12ProviderFixture PRIVATE "${NATIVE}" "${XVK_VULKAN_INCLUDE_DIR}" "${STREAMLINE_ROOT}/external/ngx-sdk/include")
+    target_link_libraries(XefgD3D12ProviderFixture PRIVATE d3d12 dxgi bcrypt)
+    set_target_properties(XefgD3D12ProviderFixture PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    add_test(NAME xefg_cuda_d3d12_provider_fixture COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/provider_fixture.py"
+        --exe "$<TARGET_FILE:XefgD3D12ProviderFixture>" --dll "${XEFG_CUDA_CANDIDATE_DLL}" --host "$<TARGET_FILE:XefgProviderHostFixture>"
+        --runtime "${XEFG_PROVIDER_RUNTIME}" --output "${CMAKE_CURRENT_BINARY_DIR}/provider-fixture")
+    set_tests_properties(xefg_cuda_d3d12_provider_fixture PROPERTIES TIMEOUT 400 RUN_SERIAL TRUE)
 endif()

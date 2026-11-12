@@ -58,7 +58,7 @@ bool gReadOverflow = false; // Protected by gReadMutex; unknown readers deny res
 // The driver's own answer to a provider's NVAPI preset query that this process
 // overrode. Cached-reader providers keep that answer in a per-process DRS cache
 // filled once, so after an override the cache holds the override; a later
-// Game / driver selection replays the driver's answer instead (V1.6.0).
+// Game / driver selection replays the driver's answer instead.
 struct DriverRead
 {
     HMODULE module = nullptr;
@@ -80,7 +80,7 @@ struct CachedReader
     config::Layout config{}; // Immutable before module's release publication.
     std::atomic<bool> configReady{false};
     std::atomic<uint64_t> resets{0};
-    // V1.6.1: another route's detour owns the reader (RTX 30/20 translated
+    // Another route's detour owns the reader (RTX 30/20 translated
     // route); immutable before module's release publication.
     bool routeOwned = false;
     entry_detour::Handle routeHook{};

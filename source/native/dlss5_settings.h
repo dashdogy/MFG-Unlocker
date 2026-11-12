@@ -9,86 +9,10 @@
 #include <string>
 #include <string_view>
 
-// The dlss5* keys of the native control file and the status protocol. The
-// backend (patcher.cpp), the menu (reshade_frontend.cpp) and the status
-// writer share this table, so a key, its range and its default exist once.
+// Reading and writing the dlss5* keys of kFields (dlss5_policy.h).
 namespace dlss5::settings_json
 {
-enum class Kind : uint8_t { eBool, eUnsigned, eFloat };
-
-struct Field
-{
-    const char* key;
-    Kind kind;
-    float minimum, maximum;
-    bool Settings::* flag;
-    uint32_t Settings::* integer;
-    float Settings::* real;
-};
-
-inline constexpr Field Flag(const char* key, bool Settings::* member) { return {key, Kind::eBool, 0, 1, member, nullptr, nullptr}; }
-inline constexpr Field Choice(const char* key, uint32_t minimum, uint32_t maximum, uint32_t Settings::* member)
-{ return {key, Kind::eUnsigned, static_cast<float>(minimum), static_cast<float>(maximum), nullptr, member, nullptr}; }
-inline constexpr Field Real(const char* key, float minimum, float maximum, float Settings::* member)
-{ return {key, Kind::eFloat, minimum, maximum, nullptr, nullptr, member}; }
-
-inline constexpr Field kFields[] = {
-    Flag("dlss5", &Settings::enabled),
-    Choice("dlss5HookStage", 0, 3, &Settings::stage),
-    Choice("dlss5UseDlssResources", 0, 2, &Settings::resources),
-    Choice("dlss5UiCorrection", 0, 2, &Settings::uiCorrection),
-    Choice("dlss5Encoding", 0, 5, &Settings::encoding),
-    Real("dlss5DiffuseWhite", kMinDiffuseWhite, kMaxDiffuseWhite, &Settings::diffuseWhite),
-    Flag("dlss5DiffuseWhiteOverride", &Settings::diffuseWhiteOverride),
-    Real("dlss5OverallIntensity", 0.0f, 1.0f, &Settings::intensity),
-    Choice("dlss5Model", 0, 2, &Settings::model),
-    Real("dlss5StructureIntensity", 0.0f, kMaxStrength, &Settings::structure),
-    Real("dlss5ToneIntensity", 0.0f, kMaxStrength, &Settings::tone),
-    Flag("dlss5CharacterMask", &Settings::characterMask),
-    Real("dlss5CharacterIntensity", kMinCharacter, kMaxStrength, &Settings::character),
-    Real("dlss5ResolutionScale", 0.0f, kMaxScale, &Settings::scale),
-    Flag("dlss5ResolutionScaleAuto", &Settings::scaleAuto),
-    Choice("dlss5ScalingDomain", 0, 2, &Settings::domain),
-    Choice("dlss5DownsampleFilter", 0, 2, &Settings::downsample),
-    Choice("dlss5UpsampleFilter", 0, 3, &Settings::upsample),
-    Choice("dlss5ScaleReconstruction", 0, 2, &Settings::reconstruction),
-    Choice("dlss5Preset", 0, 2, &Settings::preset),
-    Choice("dlss5PassCount", 1, kMaxPasses, &Settings::passes),
-    Choice("dlss5SignalEncoding", 0, 2, &Settings::signal),
-    Flag("dlss5BlockHudless", &Settings::blockHudless),
-    Real("dlss5Exposure", 0.0f, kMaxExposure, &Settings::exposure),
-    Choice("dlss5UseExposureValue", 0, 2, &Settings::exposureMode),
-    Flag("dlss5AdaptiveExposure", &Settings::adaptiveExposure),
-    Flag("dlss5Boost", &Settings::boost),
-    Flag("dlss5CompareSplitView", &Settings::compare),
-    Real("dlss5CompareSplit", kMinCompareSplit, kMaxCompareSplit, &Settings::compareSplit),
-    Choice("dlss5CompareKey", 0, 254, &Settings::compareKey),
-    // dlss5adv.1: the Advanced additions.
-    Flag("dlss5LaterPassesCustom", &Settings::laterCustom),
-    Choice("dlss5LaterModel", 0, 2, &Settings::laterModel),
-    Real("dlss5LaterIntensity", 0.0f, 1.0f, &Settings::laterIntensity),
-    Real("dlss5LaterStructure", 0.0f, kMaxStrength, &Settings::laterStructure),
-    Real("dlss5LaterTone", 0.0f, kMaxStrength, &Settings::laterTone),
-    Real("dlss5LaterCharacter", kMinCharacter, kMaxStrength, &Settings::laterCharacter),
-    Real("dlss5BlendStrength", 0.0f, kMaxBlend, &Settings::blend),
-    Real("dlss5ColorStrength", 0.0f, kMaxColor, &Settings::color),
-    Flag("dlss5HighlightGuard", &Settings::highlightGuard),
-    Real("dlss5HighlightLimit", kMinHighlightLimit, kMaxHighlightLimit, &Settings::highlightLimit),
-    Real("dlss5HaloDark", 0.0f, 1.0f, &Settings::haloDark),
-    Real("dlss5HaloBright", 0.0f, 1.0f, &Settings::haloBright),
-    Choice("dlss5HaloRadius", kMinHaloRadius, kMaxHaloRadius, &Settings::haloRadius),
-    Choice("dlss5SupersampleFilter", 0, 1, &Settings::supersample),
-    Real("dlss5HdrKnee", kMinKnee, kMaxKnee, &Settings::knee),
-    Real("dlss5AdaptiveTarget", kMinAdaptiveTarget, kMaxAdaptiveTarget, &Settings::adaptiveTarget),
-    Choice("dlss5BoostTolerance", 0, 2, &Settings::boostTolerance),
-    Choice("dlss5DebugView", 0, 3, &Settings::debugView),
-    Flag("dlss5CompareSwap", &Settings::compareSwap),
-    // autoscale.2: the defaults generation (MigrateDefaults; 3 since alpha.15). Any later value parses and is not
-    // migrated.
-    Choice("dlss5DefaultsVersion", 0, 65535, &Settings::defaultsVersion),
-};
-
-// Before 1.7.0-dlss5.2: "dlss5Intensity" in percent and "dlss5Quality" (1 =
+// Legacy keys: "dlss5Intensity" in percent and "dlss5Quality" (1 =
 // the 0.85 network extent). Read only when the new key is absent.
 inline constexpr const char* kLegacyIntensity = "dlss5Intensity";
 inline constexpr const char* kLegacyQuality = "dlss5Quality";
@@ -147,9 +71,8 @@ inline std::string Format(const Field& field, const Settings& settings)
 
 // Reads every present dlss5* key over `settings`. False when a present key is
 // malformed or out of range: the caller keeps its last valid settings. Content
-// of an older defaults generation (without dlss5DefaultsVersion: generation 1,
-// before autoscale.2) moves to the new defaults where it still held the old
-// ones (MigrateDefaults).
+// of an older defaults generation (without dlss5DefaultsVersion: generation 1)
+// moves to the new defaults where it still held the old ones (MigrateDefaults).
 inline bool Parse(std::string_view content, Settings& settings) noexcept
 {
     Settings parsed = settings;

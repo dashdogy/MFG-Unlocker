@@ -8,13 +8,17 @@
 // pixel per frame with exact motion vectors:
 //   separate  Color = scene (non-pixel-shader resource), Output = its own UAV texture
 //   inplace   the scene is copied into Output first; Color = Output (UAV), as dlss5.cpp runs it
+// --integrated runs dlss5.cpp's D3D12 stage on the harness's device; --d3d11 [--d3d11-depth r32|r24g8] runs the
+// same frames through the DirectX 11 bridge on a D3D11 device (dx11nr.1). --dump/--compare compare two runs.
 // Checks: Create/Evaluate succeed, outputs finite and not a copy of the input, and
 // the in-place output matches the separate one. Writes PNG previews and timings.
 // Exit codes: 0 pass, 1 check failed, 2 setup failure, 3 provider unavailable on this GPU.
 #include "dlss5.h"
+#include "dlss5_d3d11.h"
 #include "dlss5_settings.h"
 
 #include <Windows.h>
+#include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
@@ -62,6 +66,15 @@ struct Options
     // autoscale.1: at this integrated frame, Resolution Scale 75 % and the next
     // Model; every frame from the first evaluation on must still be evaluated.
     uint32_t step = 0;
+    // autorect.1 --auto-step N: Resolution Scale Auto at 100 %, its level pinned (testing::SetAutoLevel) and moved
+    // to 75 % at integrated frame N. --reset-at N: the game's Reset at frame N as well as frame 0 (a fixed-scale
+    // reference whose history starts where the step's does).
+    uint32_t autoStep = 0, resetAt = 0;
+    // dx11nr.1 --d3d11 (RunD3D11); --d3d11-depth r32: R32_TYPELESS, r24g8: R24G8_TYPELESS, both depth-stencil + shader resource.
+    bool d3d11 = false;
+    std::wstring d3d11Depth = L"r32";
+    // --compare: a raw float RGB dump (--dump) of another run on the same image, e.g. --integrated against --d3d11.
+    std::wstring compare;
 };
 
 std::FILE* gLog = nullptr;
@@ -508,12 +521,377 @@ bool ParseOptions(int argc, wchar_t** argv, Options& options)
         else if (arg == L"--preset" && more) options.preset = static_cast<uint32_t>(_wtoi(argv[++i]));
         else if (arg == L"--structure" && more) options.structure = static_cast<float>(_wtof(argv[++i]));
         else if(arg==L"--step" && more) options.integrated=true,options.step=static_cast<uint32_t>(_wtoi(argv[++i]));
+        else if(arg==L"--auto-step" && more) options.integrated=options.automatic=true,options.autoStep=static_cast<uint32_t>(_wtoi(argv[++i]));
+        else if(arg==L"--reset-at" && more) options.resetAt=static_cast<uint32_t>(_wtoi(argv[++i]));
+        else if(arg==L"--d3d11") options.integrated=options.d3d11=true;
+        else if(arg==L"--d3d11-depth" && more) options.d3d11Depth=argv[++i];
+        else if(arg==L"--compare" && more) options.compare=argv[++i];
         else return false;
     }
+    // The bridge runs Auto, After and Before upscaling on its own device: no Present stage, no direct-only run.
+    if (options.d3d11 && (options.present || options.direct)) return false;
+    // --auto-step steps the D3D12 integrated route after its first frames; --step changes the feature instead.
+    if (options.autoStep && (options.d3d11 || options.step || options.autoStep >= options.frames - 1)) return false;
+    if (options.d3d11Depth != L"r32" && options.d3d11Depth != L"r24g8") return false;
     return !options.dir.empty() && !options.out.empty() && options.width >= 64 && options.height >= 64
         && options.width<=7680 && options.height<=4320 && options.frames>=2 && options.frames<=128
         && options.quality<=1 && options.intensity<=100 && options.renderScale > 0.2f && options.renderScale <= 1.0f
         && options.uiCorrection<=2 && options.resources<=2;
+}
+
+// The settings every route of the harness runs with; false when --settings is rejected.
+bool HarnessSettings(const Options& options, dlss5::Settings& settings)
+{
+    settings = {};
+    settings.enabled = true;
+    // --quality 1: the former 0.85 network extent; --intensity in percent.
+    settings.scale = options.quality ? 85.0f : 100.0f;settings.intensity=static_cast<float>(options.intensity)/100.0f;
+    if (options.scale > 0.0f) settings.scale = options.scale;
+    settings.passes = options.passes; settings.model = options.model; settings.preset = options.preset;
+    if (options.structure >= 0.0f) settings.structure = options.structure;
+    if (!options.automatic) {
+        settings.stage = static_cast<uint32_t>(dlss5::Stage::eUpscaled);
+        settings.scaleAuto = false; settings.adaptiveExposure = false;
+    }
+    // autorect.1 --auto-step: Resolution Scale Auto under the slider (100 % unless --scale), plain exposure.
+    if (options.autoStep) { settings.scaleAuto = true; settings.adaptiveExposure = false; }
+    if (options.present) settings.stage = static_cast<uint32_t>(dlss5::Stage::ePresent);
+    settings.uiCorrection = options.uiCorrection; settings.resources = options.resources;
+    if (!options.settingsJson.empty() && !dlss5::settings_json::Parse(options.settingsJson, settings))
+    {
+        Print("settings JSON rejected: %s\n", options.settingsJson.c_str());
+        return false;
+    }
+    settings = dlss5::Sanitized(settings);
+    if (!options.settingsJson.empty()) Print("settings JSON %s\n", options.settingsJson.c_str());
+    Print("settings scale %.1f (auto %d) passes %u model %u preset %u structure %.2f stage %u adaptive exposure %d uiCorrection %u (provider value %d)\n",
+        settings.scale, settings.scaleAuto ? 1 : 0, settings.passes, settings.model, settings.preset, settings.structure, settings.stage,
+        settings.adaptiveExposure ? 1 : 0,
+        settings.uiCorrection, dlss5::UiCorrectionValue(settings, static_cast<dlss5::Stage>(settings.stage)));
+    return true;
+}
+
+// The game DLSS feature's Create keys: render size in, output size out, motion vectors at render size, inverted depth.
+dlss_sr::CreateKeys HarnessCreate(const Options& options, uint32_t width, uint32_t height, uint32_t renderWidth, uint32_t renderHeight)
+{
+    dlss_sr::CreateKeys create{};
+    create.present = dlss_sr::CreateKeys::eRequired | dlss_sr::CreateKeys::eCreateFlags;
+    create.width = renderWidth; create.height = renderHeight; create.outWidth = width; create.outHeight = height;
+    create.createFlags = dlss5::kMotionLowResFlag | dlss5::kDepthInvertedFlag | (options.hdr?1:0);
+    return create;
+}
+
+bool CompareReference(const Options& options, const char* mode, const std::vector<float>& out)
+{
+    if (options.compare.empty()) return true;
+    std::vector<float> reference(out.size());
+    std::FILE* file = _wfopen(options.compare.c_str(), L"rb");
+    const bool complete = file && std::fread(reference.data(), sizeof(float), reference.size(), file) == reference.size()
+        && std::fgetc(file) == EOF;
+    if (file) std::fclose(file);
+    if (!complete)
+    {
+        Print("[%s] reference %ls does not hold this image's %zu floats\n", mode, options.compare.c_str(), out.size());
+        return false;
+    }
+    const Stats same = Compare(out, reference);
+    Print("[%s] vs reference %ls: mean |diff| %.6f max %.5f\n", mode, options.compare.c_str(), same.meanAbsDiff, same.maxAbsDiff);
+    return !same.nonFinite && same.meanAbsDiff <= 2e-3;
+}
+
+// --d3d11: the game's DLSS. After upscaling its output is already in place; Before upscaling it copies the Color it
+// was handed into the output's corner (render size), and counts the calls whose Color DLSS 5 substituted.
+ID3D11Resource* gGameColor = nullptr;
+ID3D11Resource* gGameOutput = nullptr;
+bool gFakeCopiesColor = false;
+unsigned long long gFakeCalls = 0, gFakeSubstituted = 0;
+NVSDK_NGX_Result NVSDK_CONV FakeEvaluate(ID3D11DeviceContext* context, const NVSDK_NGX_Handle*,
+    const NVSDK_NGX_Parameter* parameters, PFN_NVSDK_NGX_ProgressCallback)
+{
+    ++gFakeCalls;
+    ID3D11Resource* color = nullptr;
+    if (parameters->Get("Color", &color) != NVSDK_NGX_Result_Success) color = nullptr;
+    if (color && color != gGameColor) ++gFakeSubstituted;
+    if (gFakeCopiesColor && color) context->CopySubresourceRegion(gGameOutput, 0, 0, 0, 0, color, 0, nullptr);
+    return NVSDK_NGX_Result_Success;
+}
+
+// dx11nr.1 --d3d11: the integrated route's frames through the DirectX 11 bridge (dlss5_d3d11.h), the harness as the
+// game: NGX D3D11 on a D3D11 device, the image, depth-stencil depth, motion vectors and color in D3D11, evaluated
+// through the bridge around FakeEvaluate. Same frames, keys and summary line as --integrated, so --integrated --dump
+// a.bin and --d3d11 --compare a.bin compare the same network path. GPU ms include the bridge's copies and waits.
+int RunD3D11(const Options& options, IDXGIAdapter1* adapter, uint32_t width, uint32_t height, uint32_t renderWidth,
+    uint32_t renderHeight)
+{
+    const char* const mode = "d3d11";
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+    if (FAILED(D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, levels, 2, D3D11_SDK_VERSION, &device, nullptr,
+            &context))) { Print("D3D11CreateDevice failed\n"); return 2; }
+    // NGX on the game's D3D11 device, as a game initializes it.
+    const std::wstring appData = (std::filesystem::path(options.out) / L"ngx").wstring();
+    std::filesystem::create_directories(appData);
+    const wchar_t* paths[]{options.dir.c_str()};
+    NVSDK_NGX_FeatureCommonInfo info{};
+    info.PathListInfo.Path = paths;
+    info.PathListInfo.Length = 1;
+    info.LoggingInfo.LoggingCallback = &NgxLog;
+    info.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_VERBOSE;
+    NVSDK_NGX_Result result = NVSDK_NGX_D3D11_Init_with_ProjectID("b5a8a8d2-3d5c-4f11-9e0f-5d1a6c7e8f90",
+        NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0", appData.c_str(), device.Get(), &info);
+    Print("NGX D3D11 init 0x%08X\n", static_cast<uint32_t>(result));
+    if (NVSDK_NGX_FAILED(result)) return 2;
+    const HMODULE runtime = GetModuleHandleW(L"_nvngx.dll");
+    if (!runtime) { Print("_nvngx.dll is not loaded\n"); return 2; }
+    dlss5::d3d11::Api api{};
+    api.runtime = runtime;
+    api.evaluate = &FakeEvaluate;
+    api.d3d12.runtime = runtime;
+    api.d3d12.create = reinterpret_cast<dlss5::CreateFn>(GetProcAddress(runtime, "NVSDK_NGX_D3D12_CreateFeature"));
+    api.d3d12.evaluate = reinterpret_cast<dlss5::EvaluateFn>(GetProcAddress(runtime, "NVSDK_NGX_D3D12_EvaluateFeature"));
+    api.d3d12.release = reinterpret_cast<dlss5::ReleaseFn>(GetProcAddress(runtime, "NVSDK_NGX_D3D12_ReleaseFeature"));
+    api.d3d12.allocate = reinterpret_cast<dlss5::AllocateFn>(GetProcAddress(runtime, "NVSDK_NGX_D3D12_AllocateParameters"));
+    api.d3d12.destroy = reinterpret_cast<dlss5::DestroyFn>(GetProcAddress(runtime, "NVSDK_NGX_D3D12_DestroyParameters"));
+    api.init = [](HMODULE module) noexcept {
+        return reinterpret_cast<dlss5::d3d11::InitFn>(GetProcAddress(module, "NVSDK_NGX_D3D12_Init_Ext"));
+    };
+    if (!api.d3d12.Complete()) { Print("_nvngx.dll lacks the D3D12 entries the bridge uses\n"); return 2; }
+    Print("bridge runtime=%p NVSDK_NGX_D3D12_Init_Ext=%s\n", static_cast<void*>(runtime), api.init(runtime) ? "exported" : "absent");
+
+    const auto texture = [&](uint32_t w, uint32_t h, DXGI_FORMAT format, UINT bind) {
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = w; desc.Height = h; desc.MipLevels = desc.ArraySize = 1; desc.Format = format; desc.SampleDesc.Count = 1;
+        desc.Usage = bind ? D3D11_USAGE_DEFAULT : D3D11_USAGE_STAGING; desc.BindFlags = bind;
+        desc.CPUAccessFlags = bind ? 0 : D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> made;
+        return SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &made)) ? made : ComPtr<ID3D11Texture2D>{};
+    };
+    const bool r24 = options.d3d11Depth == L"r24g8";
+    const DXGI_FORMAT depthFormat = r24 ? DXGI_FORMAT_R24G8_TYPELESS : DXGI_FORMAT_R32_TYPELESS;
+    const size_t motionChannels = options.motionRgba ? 4 : 2;
+    const DXGI_FORMAT motionFormat = options.motionRgba ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16G16_FLOAT;
+    // The game's DLSS output and input color, its depth-stencil buffer and motion vectors.
+    auto output = texture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+    auto color = texture(renderWidth, renderHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_SHADER_RESOURCE);
+    auto depth = texture(renderWidth, renderHeight, depthFormat, D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE);
+    // A depth-stencil texture takes no UpdateSubresource: its depth arrives through a plain texture of its family.
+    auto depthUpload = texture(renderWidth, renderHeight, depthFormat, D3D11_BIND_SHADER_RESOURCE);
+    auto motion = texture(renderWidth, renderHeight, motionFormat, D3D11_BIND_SHADER_RESOURCE);
+    auto staging = texture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, 0);
+    if (!output || !color || !depth || !depthUpload || !motion || !staging) { Print("D3D11 textures failed\n"); return 2; }
+    Print("[%s] depth %s, motion vectors %s\n", mode, r24 ? "R24G8_TYPELESS" : "R32_TYPELESS", options.motionRgba ? "RGBA16F" : "RG16F");
+    const auto uploadDepth = [&](const std::vector<float>& values) {
+        std::vector<uint32_t> texels(values.size());
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            // R24G8: 24-bit unorm depth in the low bits, stencil 0.
+            if (r24) texels[i] = static_cast<uint32_t>(std::lround(std::clamp(values[i], 0.0f, 1.0f) * 16777215.0));
+            else std::memcpy(&texels[i], &values[i], 4);
+        }
+        context->UpdateSubresource(depthUpload.Get(), 0, nullptr, texels.data(), renderWidth * 4, 0);
+        context->CopyResource(depth.Get(), depthUpload.Get());
+    };
+    // Depth and motion vectors as --integrated makes them.
+    std::vector<float> depthData(size_t{renderWidth} * renderHeight);
+    for (uint32_t y = 0; y < renderHeight; ++y)
+        for (uint32_t x = 0; x < renderWidth; ++x)
+            depthData[size_t{y} * renderWidth + x] = 0.1f + 0.8f * y / renderHeight;
+    std::vector<uint16_t> motionData(size_t{renderWidth} * renderHeight * motionChannels);
+    const float motionX = options.image.empty() ? -1.0f * renderWidth / width : 0.0f;
+    std::vector<uint16_t> imagePixels;
+    if (!options.image.empty() && !LoadFrame(options.image, options.imagePq, width, height, imagePixels))
+    {
+        Print("image %ls does not hold %ux%u %s texels\n", options.image.c_str(), width, height, options.imagePq ? "PQ rgb48le" : "rgb24");
+        return 2;
+    }
+    for (size_t i = 0; i < motionData.size(); i += motionChannels)
+    {
+        motionData[i] = Half(motionX); motionData[i + 1] = Half(0);
+        if (motionChannels == 4) { motionData[i + 2] = Half(0); motionData[i + 3] = Half(1); }
+    }
+    uploadDepth(depthData);
+    context->UpdateSubresource(motion.Get(), 0, nullptr, motionData.data(), static_cast<UINT>(renderWidth * motionChannels * 2), 0);
+
+    NVSDK_NGX_Parameter* parameters = nullptr;
+    if (NVSDK_NGX_FAILED(NVSDK_NGX_D3D11_AllocateParameters(&parameters)) || !parameters) return 2;
+    parameters->Set("Output", static_cast<ID3D11Resource*>(output.Get()));
+    parameters->Set("Color", static_cast<ID3D11Resource*>(color.Get()));
+    parameters->Set("Depth", static_cast<ID3D11Resource*>(depth.Get()));
+    parameters->Set("MotionVectors", static_cast<ID3D11Resource*>(motion.Get()));
+    gGameColor = color.Get(); gGameOutput = output.Get();
+
+    dlss5::Settings settings{};
+    if (!HarnessSettings(options, settings)) return 2;
+    if (settings.stage == static_cast<uint32_t>(dlss5::Stage::ePresent)) { Print("Present does not run through the bridge\n"); return 2; }
+    gFakeCopiesColor = settings.stage == static_cast<uint32_t>(dlss5::Stage::eRender);
+    const dlss_sr::CreateKeys create = HarnessCreate(options, width, height, renderWidth, renderHeight);
+    dlss5::testing::SetProviderPath((std::filesystem::path(options.dir) / L"nvngx_dlssnr.dll").c_str());
+    // The bridge's create path, with a fake game handle.
+    const auto* gameHandle = reinterpret_cast<const NVSDK_NGX_Handle*>(0x1234);
+    dlss5::d3d11::GameCreated(gameHandle, create);
+    dlss5::Configure(settings);
+    if (!dlss5::Owns(dlss5::kD3D11Route, gameHandle)) { Print("[%s] the bridge did not track the feature\n", mode); return 1; }
+
+    ComPtr<ID3D11Query> disjoint, begin, end, idle;
+    D3D11_QUERY_DESC query{D3D11_QUERY_TIMESTAMP_DISJOINT};
+    const bool queries = SUCCEEDED(device->CreateQuery(&query, &disjoint))
+        && (query.Query = D3D11_QUERY_TIMESTAMP, SUCCEEDED(device->CreateQuery(&query, &begin)) && SUCCEEDED(device->CreateQuery(&query, &end)))
+        && (query.Query = D3D11_QUERY_EVENT, SUCCEEDED(device->CreateQuery(&query, &idle)));
+    if (!queries) return 2;
+    // Everything submitted so far completed (the bridge's D3D11 waits include its queue's work).
+    const auto finish = [&]() {
+        context->End(idle.Get());
+        context->Flush();
+        const ULONGLONG start = GetTickCount64();
+        BOOL done = FALSE;
+        while (context->GetData(idle.Get(), &done, sizeof(done), 0) == S_FALSE)
+        {
+            if (GetTickCount64() - start > 20000) return false;
+            Sleep(0);
+        }
+        return device->GetDeviceRemovedReason() == S_OK;
+    };
+    if (!finish()) return 2;
+
+    std::vector<uint16_t> pixels, colorPixels(size_t{renderWidth} * renderHeight * 4);
+    std::vector<float> lastScene;
+    std::vector<double> timesMs;
+    int exitCode = 0;
+    unsigned long long evaluated = 0; unsigned gaps = 0;
+    for (uint32_t frame = 0; frame < options.frames; ++frame)
+    {
+        if (options.step && frame == options.step)
+        {
+            auto next = settings; next.scale = 75.0f; next.model = (settings.model + 1) % 3; dlss5::Configure(next);
+            Print("[%s] frame %u: Resolution Scale 75, model %u\n", mode, frame, next.model);
+        }
+        if (imagePixels.empty()) Scene(width, height, static_cast<float>(frame), pixels);
+        else pixels = imagePixels;
+        if (gGhost && imagePixels.empty())
+        {
+            std::vector<float> ghostDepth;
+            std::vector<uint16_t> ghostMotion;
+            GhostGeometry(width, height, renderWidth, renderHeight, static_cast<float>(frame), motionChannels, ghostDepth, ghostMotion);
+            uploadDepth(ghostDepth);
+            context->UpdateSubresource(motion.Get(), 0, nullptr, ghostMotion.data(), static_cast<UINT>(renderWidth * motionChannels * 2), 0);
+        }
+        if (options.hdr && imagePixels.empty()) for (size_t n = 0; n < pixels.size(); ++n) if (n % 4 != 3) pixels[n] = Half(FromHalf(pixels[n]) * 4.0f);
+        context->UpdateSubresource(output.Get(), 0, nullptr, pixels.data(), width * 8, 0);
+        // The DLSS input: the frame at render size (nearest texel).
+        for (uint32_t y = 0; y < renderHeight; ++y)
+            for (uint32_t x = 0; x < renderWidth; ++x)
+                std::memcpy(&colorPixels[(size_t{y} * renderWidth + x) * 4],
+                    &pixels[(size_t{y * height / renderHeight} * width + size_t{x} * width / renderWidth) * 4], 8);
+        context->UpdateSubresource(color.Get(), 0, nullptr, colorPixels.data(), renderWidth * 8, 0);
+        parameters->Set("Reset", frame == 0 ? 1 : 0);
+        context->Begin(disjoint.Get());
+        context->End(begin.Get());
+        result = dlss5::d3d11::Evaluate(api, context.Get(), gameHandle, parameters, nullptr);
+        context->End(end.Get());
+        context->End(disjoint.Get());
+        if (!finish()) { Print("[%s] device lost at frame %u\n", mode, frame); return 1; }
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT clock{};
+        UINT64 first = 0, last = 0;
+        if (frame && context->GetData(disjoint.Get(), &clock, sizeof(clock), 0) == S_OK && !clock.Disjoint && clock.Frequency
+            && context->GetData(begin.Get(), &first, sizeof(first), 0) == S_OK && context->GetData(end.Get(), &last, sizeof(last), 0) == S_OK
+            && last >= first)
+            timesMs.push_back(static_cast<double>(last - first) * 1000.0 / static_cast<double>(clock.Frequency));
+        const auto state = dlss5::Read();
+        Print("d3d11 frame=%u state=%u route=%u bridge=%d refusal=%u creates=%llu evaluations=%llu processed=%llu result=0x%08X stage=%u scale=%.0f gpuMs=%.2f budgetMs=%.2f gain=%.3f\n",
+            frame, static_cast<unsigned>(state.state), state.route, state.d3d11 ? 1 : 0, state.d3d11Refusal,
+            static_cast<unsigned long long>(state.creates), static_cast<unsigned long long>(state.evaluations),
+            static_cast<unsigned long long>(dlss5::d3d11::testing::Processed()), state.result, state.stage, state.scale, state.gpuMs,
+            state.budgetMs, state.exposureGain);
+        if (NVSDK_NGX_FAILED(result) || state.state == dlss5::State::eEvaluateFailed || state.state == dlss5::State::eCreateFailed
+            || state.state == dlss5::State::eUnsupported || state.state == dlss5::State::eDriverUpdate)
+        {
+            Print("[%s] frame %u: game result 0x%08X, DLSS 5 state %u result 0x%08X\n", mode, frame, static_cast<uint32_t>(result),
+                static_cast<unsigned>(state.state), state.result);
+            // Unsupported without a bridge refusal: the provider refused this GPU (as exit code 3 elsewhere).
+            exitCode = state.state == dlss5::State::eUnsupported
+                && !dlss5::d3d11::Blocking(static_cast<dlss5::d3d11::Refusal>(state.d3d11Refusal)) ? 3 : 1;
+            break;
+        }
+        if (evaluated && state.evaluations != evaluated + 1) { ++gaps; Print("[%s] frame %u went without an evaluation\n", mode, frame); }
+        evaluated = state.evaluations;
+        if (frame == options.frames - 1)
+        {
+            std::vector<float> rgb;
+            for (size_t i = 0; i < pixels.size() / 4; ++i)
+                for (int c = 0; c < 3; ++c) rgb.push_back(FromHalf(pixels[i * 4 + c]));
+            lastScene = rgb;
+            if (!options.dumpInput.empty())
+                if (std::FILE* file = _wfopen(options.dumpInput.c_str(), L"wb")) { std::fwrite(rgb.data(), sizeof(float), rgb.size(), file); std::fclose(file); }
+        }
+    }
+    if (exitCode)
+    {
+        const bool owned = dlss5::d3d11::BeforeRelease(gameHandle);
+        dlss5::d3d11::AfterRelease(gameHandle, NVSDK_NGX_Result_Success, owned);
+        NVSDK_NGX_D3D11_DestroyParameters(parameters);
+        Print("result FAIL\n");
+        return exitCode;
+    }
+    context->CopyResource(staging.Get(), output.Get());
+    if (!finish()) return 1;
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return 2;
+    std::vector<float> out(size_t{width} * height * 3);
+    for (uint32_t y = 0; y < height; ++y)
+    {
+        const auto* row = reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(mapped.pData) + size_t{y} * mapped.RowPitch);
+        for (uint32_t x = 0; x < width; ++x)
+            for (int c = 0; c < 3; ++c) out[(size_t{y} * width + x) * 3 + c] = FromHalf(row[x * 4 + c]);
+    }
+    context->Unmap(staging.Get(), 0);
+    std::sort(timesMs.begin(), timesMs.end());
+    const Stats stats = Compare(out, lastScene);
+    Print("[%s] GPU ms median %.3f min %.3f max %.3f | output mean %.4f, vs input mean |diff| %.5f max %.4f, non-finite %zu\n",
+        mode, timesMs.empty() ? 0.0 : timesMs[timesMs.size() / 2], timesMs.empty() ? 0.0 : timesMs.front(),
+        timesMs.empty() ? 0.0 : timesMs.back(), stats.meanValue, stats.meanAbsDiff, stats.maxAbsDiff, stats.nonFinite);
+    const auto bridge = dlss5::Read();
+    const uint64_t processed = dlss5::d3d11::testing::Processed();
+    Print("[%s] bridge: stage gpuMs %.3f on its own queue (the GPU ms above add the D3D11 copies and waits), %llu of %llu evaluations reached the game, game DLSS calls %llu, Color substituted %llu\n",
+        mode, bridge.gpuMs, static_cast<unsigned long long>(processed), static_cast<unsigned long long>(bridge.evaluations), gFakeCalls,
+        gFakeSubstituted);
+    WritePng(std::filesystem::path(options.out) / (std::string(mode) + "-output.png"), width, height, out);
+    WritePng(std::filesystem::path(options.out) / "input.png", width, height, lastScene);
+    if (stats.nonFinite || stats.meanValue <= 0.01 || (options.intensity?stats.meanAbsDiff<1e-5:stats.meanAbsDiff>1e-5)) exitCode=1;
+    // Every DLSS 5 evaluation reached the game (copied back, or its Color substituted), and the game's own DLSS ran
+    // exactly once per frame.
+    if (!bridge.d3d11 || !bridge.evaluations || processed != bridge.evaluations || gFakeCalls != options.frames
+        || (gFakeCopiesColor && gFakeSubstituted != processed) || (!gFakeCopiesColor && gFakeSubstituted)) exitCode = 1;
+    if (!options.dump.empty())
+        if (std::FILE* file = _wfopen(options.dump.c_str(), L"wb")) { std::fwrite(out.data(), sizeof(float), out.size(), file); std::fclose(file); }
+    if (!CompareReference(options, mode, out)) exitCode = 1;
+    if (options.step)
+    {
+        const uint32_t extent = static_cast<uint32_t>(std::lround(width * 0.75));
+        Print("[%s] step: extent %ux%u creates %llu live %u pending %d gaps %u\n", mode, bridge.extentWidth, bridge.extentHeight,
+            static_cast<unsigned long long>(bridge.creates), bridge.live, bridge.pending ? 1 : 0, gaps);
+        if (gaps || bridge.extentWidth != extent || bridge.creates != 2ull * settings.passes || bridge.pending || bridge.live != 1) exitCode = 1;
+    }
+    if (options.automatic)
+    {
+        Print("[%s] auto stage %u scale %.0f gpuMs %.3f budgetMs %.3f gain %.3f\n", mode, bridge.stage, bridge.scale, bridge.gpuMs,
+            bridge.budgetMs, bridge.exposureGain);
+        if (bridge.stage != static_cast<uint32_t>(dlss5::Stage::eUpscaled) || !(bridge.gpuMs >= 0.0f && bridge.gpuMs < 1000.0f)
+            || !(bridge.budgetMs > 0.0f) || !(bridge.exposureGain >= 0.125f && bridge.exposureGain <= 8.0f)
+            || (!options.hdr && bridge.exposureGain != 1.0f)) exitCode = 1;
+    }
+    // The bridge's release path: the slot goes once its work completed (every frame above finished).
+    const bool owned = dlss5::d3d11::BeforeRelease(gameHandle);
+    dlss5::d3d11::AfterRelease(gameHandle, NVSDK_NGX_Result_Success, owned);
+    const auto released = dlss5::Read();
+    const size_t sets = dlss5::d3d11::testing::Sets();
+    if (!owned || released.live != 0 || released.d3d11 || sets) exitCode = 1;
+    Print("[%s] ReleaseFeature owned=%d live=%u shared sets held=%zu\n", mode, owned ? 1 : 0, released.live, sets);
+    NVSDK_NGX_D3D11_DestroyParameters(parameters);
+    // The bridge keeps NGX on its own device for the process; the game's D3D11 NGX shuts down as a game's would.
+    if (!gNoShutdown) NVSDK_NGX_D3D11_Shutdown1(device.Get());
+    Print("result %s\n", exitCode ? "FAIL" : "PASS");
+    return exitCode;
 }
 }
 
@@ -523,7 +901,8 @@ int Run(int argc, wchar_t** argv)
     if (!ParseOptions(argc, argv, options))
     {
         std::fputs("usage: Dlss5ProviderHarness --dir <provider folder> --out <folder> [--width W --height H] "
-            "[--render-scale S] [--frames N] [--quality 0|1]\n", stderr);
+            "[--render-scale S] [--frames N] [--quality 0|1] [--integrated | --d3d11 [--d3d11-depth r32|r24g8]] "
+            "[--dump F] [--compare F]\n", stderr);
         return 2;
     }
     std::filesystem::create_directories(options.out);
@@ -550,6 +929,12 @@ int Run(int argc, wchar_t** argv)
         adapter.Reset();
     }
     if (!adapter) { Print("no NVIDIA adapter\n"); return 2; }
+    if (options.d3d11)
+    {
+        const int code = RunD3D11(options, adapter.Get(), width, height, renderWidth, renderHeight);
+        if (gLog) { std::fclose(gLog); gLog = nullptr; }
+        return code;
+    }
     Gpu gpu{};
     if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&gpu.device)))) return 2;
     const LUID luid=gpu.device->GetAdapterLuid();
@@ -628,33 +1013,8 @@ int Run(int argc, wchar_t** argv)
     if (!gpu.Submit()) return 2;
 
     dlss5::Settings settings{};
-    settings.enabled = true;
-    // --quality 1: the former 0.85 network extent; --intensity in percent.
-    settings.scale = options.quality ? 85.0f : 100.0f;settings.intensity=static_cast<float>(options.intensity)/100.0f;
-    if (options.scale > 0.0f) settings.scale = options.scale;
-    settings.passes = options.passes; settings.model = options.model; settings.preset = options.preset;
-    if (options.structure >= 0.0f) settings.structure = options.structure;
-    if (!options.automatic) {
-        settings.stage = static_cast<uint32_t>(dlss5::Stage::eUpscaled);
-        settings.scaleAuto = false; settings.adaptiveExposure = false;
-    }
-    if (options.present) settings.stage = static_cast<uint32_t>(dlss5::Stage::ePresent);
-    settings.uiCorrection = options.uiCorrection; settings.resources = options.resources;
-    if (!options.settingsJson.empty() && !dlss5::settings_json::Parse(options.settingsJson, settings))
-    {
-        Print("settings JSON rejected: %s\n", options.settingsJson.c_str());
-        return 2;
-    }
-    settings = dlss5::Sanitized(settings);
-    if (!options.settingsJson.empty()) Print("settings JSON %s\n", options.settingsJson.c_str());
-    Print("settings scale %.1f (auto %d) passes %u model %u preset %u structure %.2f stage %u adaptive exposure %d uiCorrection %u (provider value %d)\n",
-        settings.scale, settings.scaleAuto ? 1 : 0, settings.passes, settings.model, settings.preset, settings.structure, settings.stage,
-        settings.adaptiveExposure ? 1 : 0,
-        settings.uiCorrection, dlss5::UiCorrectionValue(settings, static_cast<dlss5::Stage>(settings.stage)));
-    dlss_sr::CreateKeys create{};
-    create.present = dlss_sr::CreateKeys::eRequired | dlss_sr::CreateKeys::eCreateFlags;
-    create.width = renderWidth; create.height = renderHeight; create.outWidth = width; create.outHeight = height;
-    create.createFlags = dlss5::kMotionLowResFlag | dlss5::kDepthInvertedFlag | (options.hdr?1:0);
+    if (!HarnessSettings(options, settings)) return 2;
+    const dlss_sr::CreateKeys create = HarnessCreate(options, width, height, renderWidth, renderHeight);
 
     dlss5::Api nrApi{};
     const auto* gameHandle=reinterpret_cast<const NVSDK_NGX_Handle*>(0x1234);
@@ -712,6 +1072,11 @@ int Run(int argc, wchar_t** argv)
                 auto next=settings;next.scale=75.0f;next.model=(settings.model+1)%3;dlss5::Configure(next);
                 Print("[%s] frame %u: Resolution Scale 75, model %u\n",mode,frame,next.model);
             }
+            if(options.integrated && options.autoStep && (frame==0 || frame==options.autoStep)){
+                // Auto's level: 100 % (kLevels[0]) from the first frame, 75 % (kLevels[2]) from the step.
+                dlss5::testing::SetAutoLevel(frame?2:0);
+                if(frame)Print("[%s] frame %u: Resolution Scale Auto steps to 75 %%\n",mode,frame);
+            }
             if (imagePixels.empty()) Scene(width, height, static_cast<float>(frame), pixels);
             else pixels = imagePixels;
             if (gGhost && imagePixels.empty())
@@ -750,7 +1115,7 @@ int Run(int argc, wchar_t** argv)
             source.depth = reinterpret_cast<uintptr_t>(depth.Get());
             source.motion = reinterpret_cast<uintptr_t>(motion.Get());
             source.renderWidth = renderWidth; source.renderHeight = renderHeight;
-            source.reset = frame == 0;
+            source.reset = frame == 0 || (options.resetAt && frame == options.resetAt);
             dlss5::Frame evaluation{};
             if (!dlss5::Build(source, create, dlss5::Stage::eUpscaled, false, evaluation)) return 2;
             if (!inPlace) evaluation.color = reinterpret_cast<uintptr_t>(scene.Get());
@@ -758,7 +1123,7 @@ int Run(int argc, wchar_t** argv)
             gpu.list->EndQuery(gpu.queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frame * 2);
             if(options.integrated){
                 parameters->Set("Output",output.Get());parameters->Set("Depth",depth.Get());parameters->Set("MotionVectors",motion.Get());
-                parameters->Set("Reset",frame==0?1:0);
+                parameters->Set("Reset",frame==0 || (options.resetAt && frame==options.resetAt)?1:0);
                 dlss5::AfterEvaluate(0,nrApi,gpu.list.Get(),gameHandle,parameters,NVSDK_NGX_Result_Success);
                 if(options.present){
                     // The game presents its image (in PRESENT) after submitting the frame.
@@ -811,6 +1176,8 @@ int Run(int argc, wchar_t** argv)
         for (uint32_t frame = 1; frame < options.frames; ++frame)
             timesMs.push_back(static_cast<double>(stamps[frame * 2 + 1] - stamps[frame * 2]) * 1000.0 / gpu.frequency);
         gpu.queryReadback->Unmap(0, nullptr);
+        // Frame n's GPU time is perFrameMs[n - 1] (--auto-step compares both sides of its step).
+        const std::vector<double> perFrameMs = timesMs;
         std::sort(timesMs.begin(), timesMs.end());
         const Stats stats = Compare(out, lastScene);
         Print("[%s] GPU ms median %.3f min %.3f max %.3f | output mean %.4f, vs input mean |diff| %.5f max %.4f, non-finite %zu\n",
@@ -822,6 +1189,7 @@ int Run(int argc, wchar_t** argv)
         finals.push_back(out);
         if (!options.dump.empty())
             if (std::FILE* file = _wfopen(options.dump.c_str(), L"wb")) { std::fwrite(out.data(), sizeof(float), out.size(), file); std::fclose(file); }
+        if (!CompareReference(options, mode, out)) exitCode = 1;
         if(!presentMs.empty()){
             std::sort(presentMs.begin(),presentMs.end());
             Print("[%s] present wall ms (record + GPU) median %.3f min %.3f max %.3f\n",mode,
@@ -835,6 +1203,25 @@ int Run(int argc, wchar_t** argv)
             Print("[%s] step: extent %ux%u creates %llu live %u pending %d gaps %u\n",mode,stepped.extentWidth,stepped.extentHeight,
                 static_cast<unsigned long long>(stepped.creates),stepped.live,stepped.pending?1:0,gaps);
             if(gaps || stepped.extentWidth!=extent || stepped.creates!=2ull*settings.passes || stepped.pending || stepped.live!=1)exitCode=1;
+        }
+        if(options.integrated&&options.autoStep){
+            // autorect.1: the feature created at the first frame (its 100 % capacity) still evaluates, the network
+            // on 75 % of it since the step, nothing pending and no frame left out. The GPU time on each side of
+            // the step (frames 1 .. N-1 and N+1 ..) is reported, not judged: harness GPU clocks vary (P2/P3).
+            const auto stepped=dlss5::Read();
+            const uint32_t extentWidth=static_cast<uint32_t>(std::lround(width*0.75)),extentHeight=static_cast<uint32_t>(std::lround(height*0.75));
+            const auto median=[&](size_t first,size_t last){
+                if(first>=last || last>perFrameMs.size())return 0.0;
+                std::vector<double> part(perFrameMs.begin()+first,perFrameMs.begin()+last);
+                std::sort(part.begin(),part.end());return part[part.size()/2];
+            };
+            const double before=median(0,options.autoStep-1),after=median(options.autoStep,perFrameMs.size());
+            Print("[%s] auto step: extent %ux%u scale %.0f creates %llu live %u pending %d gaps %u | GPU ms median before %.3f after %.3f (x%.2f)\n",
+                mode,stepped.extentWidth,stepped.extentHeight,stepped.scale,static_cast<unsigned long long>(stepped.creates),stepped.live,
+                stepped.pending?1:0,gaps,before,after,before>0.0?after/before:0.0);
+            if(gaps || stepped.extentWidth!=extentWidth || stepped.extentHeight!=extentHeight || stepped.scale!=75.0f
+                || stepped.creates!=settings.passes || stepped.pending || stepped.live!=1)exitCode=1;
+            dlss5::testing::SetAutoLevel(SIZE_MAX);
         }
         if(options.integrated&&options.automatic){
             // Auto resolves to After upscaling, and the stage's GPU time and

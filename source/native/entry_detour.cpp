@@ -31,7 +31,7 @@ constexpr size_t kForwardRelayBytes = 26;
 // five-byte hotpatch region. Five entry bytes are sufficient to detect later
 // replacement without reaching into an adjacent short function.
 constexpr size_t kVerificationBytes = 5;
-// ngxforward.1: the bytes after a relocated entry's patch. The trampoline resumes
+// The bytes after a relocated entry's patch. The trampoline resumes
 // inside them (a relocated prologue is at most 5 + 14 bytes), so a later hook that
 // changed none of them left the trampoline's continuation intact.
 constexpr size_t kTailBytes = 19;
@@ -483,7 +483,7 @@ bool Current(const Slot& slot) noexcept
     return false;
 }
 
-// ngxforward.1: the bytes after the first five, before the entry is patched.
+// The bytes after the first five, before the entry is patched.
 void RecordTail(Slot& slot, const uint8_t* entry) noexcept
 {
     const bool readable = QueryExecutableImage(const_cast<uint8_t*>(entry), kVerificationBytes + kTailBytes,
@@ -493,7 +493,7 @@ void RecordTail(Slot& slot, const uint8_t* entry) noexcept
     slot.tailRecorded.store(readable, std::memory_order_release);
 }
 
-// ngxforward.1: an entry whose patch another hook replaced by its own jump (rel32
+// An entry whose patch another hook replaced by its own jump (rel32
 // or short) within the first five bytes and nothing after them. That hook's
 // trampoline still runs our jump, and our trampoline resumes at or past entry + 5
 // (a relocated five-byte jump, or a hotpatch entry replaying the whole five-byte

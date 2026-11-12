@@ -8,7 +8,7 @@ namespace xess_runtime
 {
 // Original baseline for fixtures and provenance. runtime_layout.h admits compatible
 // loaded instruction families independently of this digest. The mod never ships
-// these DLLs: beta.8 uses the pair the process loaded (under OptiScaler, the copy its
+// these DLLs: it uses the pair the process loaded (under OptiScaler, the copy its
 // XeFG output uses). Anything else keeps Intel's behaviour (one generated frame on
 // non-Intel GPUs).
 struct Profile

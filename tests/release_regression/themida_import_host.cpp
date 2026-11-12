@@ -1,8 +1,8 @@
 // Gears of War E-Day model: a Themida-packed executable whose import descriptors
 // keep only FirstThunk (OriginalFirstThunk = 0). zero_import_names.py rewrites
 // this executable that way after linking. RTXMFG loads beside it as the
-// statically imported version.dll; its DllMain used to read the bound
-// FirstThunk as name RVAs and fail process startup with 0xc0000142.
+// statically imported version.dll; a DllMain that reads the bound FirstThunk
+// as name RVAs fails process startup with 0xc0000142.
 #include "single_module_status.h"
 #include <Windows.h>
 #include <cstdio>
@@ -10,6 +10,8 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 namespace
 {

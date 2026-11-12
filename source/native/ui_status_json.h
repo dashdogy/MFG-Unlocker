@@ -17,6 +17,10 @@ inline bool ValueEnd(std::string_view text, size_t offset) noexcept
     return offset == text.size() || text[offset] == ',' || text[offset] == '}';
 }
 
+// The most top-level keys one status may carry. rtx30ngx.1: an RTX 30/20 status
+// reached 515 keys, past the old 512, and was rejected.
+constexpr size_t kMaximumKeys = 2048;
+
 // Status protocols contain one flat object of strings, numeric measurements,
 // counters, booleans and nulls. Validate the entire document before the field
 // reader can publish it; a complete prefix is not a complete snapshot.
@@ -62,7 +66,7 @@ inline bool CompleteObject(std::string_view text)
         for (;;)
         {
             std::string_view key;
-            if (keys.size() == 512 || !string(true, key)) return false;
+            if (keys.size() == kMaximumKeys || !string(true, key)) return false;
             keys.push_back(key);
             space();
             if (offset == text.size() || text[offset++] != ':') return false;

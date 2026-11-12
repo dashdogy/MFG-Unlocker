@@ -16,8 +16,18 @@ int wmain(int argc,wchar_t** argv) {
     if(!Check(provider!=nullptr,"unmodified real provider loads"))return 2;
     Check(!ngx_mfg_gate::Patch(nullptr,true).patched,"null owner rejected");
     Check(!ngx_mfg_gate::Patch(GetModuleHandleW(nullptr),true).patched,"non-provider owner rejected");
+    // GitHub issue 149: a supported provider before 310.7 (AION 2's 310.6.0.0) has no count/index check to restore,
+    // and RTX 40 holds the game at 2X with it. Run with an archived 310.1-310.6 provider and "missing".
+    if(argc==3 && !wcscmp(argv[2],L"missing")) {
+        Check(!ngx_mfg_gate::Missing(nullptr)&&!ngx_mfg_gate::Missing(GetModuleHandleW(nullptr)),"null and non-provider owners are not reported");
+        Check(!ngx_mfg_gate::Find(provider).match&&ngx_mfg_gate::Missing(provider),"provider without the count/index check is reported missing");
+        Check(!ngx_mfg_gate::Patch(provider,true).candidate&&!ngx_mfg_gate::Ready(provider),"nothing is published on it");
+        printf("PROVIDER missing\n");
+        printf("COMPLETE gate checks=%u failures=%u\n",checks,failures);return failures?1:0;
+    }
     const auto site=ngx_mfg_gate::Find(provider);
     if(!Check(site.match&&site.functionBegin,"unique gate, aligned branch, decoded target and unwind bounds established"))return 2;
+    Check(!ngx_mfg_gate::Missing(provider),"provider with the count/index check is not reported missing");
     printf("PROVIDER gateRva=0x%llX functionRva=0x%llX\n",
         static_cast<unsigned long long>(site.match-reinterpret_cast<uint8_t*>(provider)),
         static_cast<unsigned long long>(site.functionBegin-reinterpret_cast<uintptr_t>(provider)));

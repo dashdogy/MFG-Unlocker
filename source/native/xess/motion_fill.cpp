@@ -146,23 +146,6 @@ bool Reprojection(const float (&view)[16], const float (&projection)[16], const 
     return true;
 }
 
-bool CameraMotion(const float (&r)[16], uint32_t x, uint32_t y, uint32_t w, uint32_t h, float depth,
-    float& mvX, float& mvY) noexcept
-{
-    mvX = mvY = 0.0f;
-    if (!w || !h) return false;
-    const float ndcX = (float(x)+0.5f)/float(w)*2.0f-1.0f, ndcY = 1.0f-(float(y)+0.5f)/float(h)*2.0f;
-    const float v[4]{ndcX, ndcY, depth, 1.0f};
-    float p[4]{};
-    for (int j = 0; j < 4; ++j) for (int i = 0; i < 4; ++i) p[j] += v[i]*r[i*4+j];
-    if (!(p[3] > 1e-9f)) return false;
-    mvX = 0.5f*(ndcX-p[0]/p[3]);
-    mvY = 0.5f*(p[1]/p[3]-ndcY);
-    return true;
-}
-
-bool IsMarker(float x, float y) noexcept { return std::abs(x-2.0f) <= 0.001f && std::abs(y-2.0f) <= 0.001f; }
-
 bool UsableMatrices(const float (&view)[16], const float (&projection)[16]) noexcept
 {
     const auto zero = [](float value) { return std::abs(value) < 1e-4f; };
@@ -279,7 +262,7 @@ bool Filler::WaitSlot(const Slot& slot, DWORD milliseconds) noexcept
 void Filler::Copy(ID3D12GraphicsCommandList* list, ID3D12Resource* source, D3D12_RESOURCE_STATES state,
     ID3D12Resource* buffer, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint) noexcept
 {
-    // Only the game resource's own declared state is touched, and put back (dev.37 capture route).
+    // Only the game resource's own declared state is touched, and put back.
     const bool transition = state != D3D12_RESOURCE_STATE_COPY_SOURCE;
     auto barrier = Transition(source, state, D3D12_RESOURCE_STATE_COPY_SOURCE);
     if (transition) list->ResourceBarrier(1, &barrier);

@@ -76,7 +76,7 @@ std::atomic<RuntimeValidator> gRuntimeValidator{nullptr};
 size_t gSelected = kNoRoute;
 Status gDiscoveryStatus = Status::eWaitingForModule;
 
-// reflexgate.1: refused module generations (gDiscoveryMutex). A version
+// Refused module generations (gDiscoveryMutex). A version
 // refusal is final for that generation, so rescans skip its resolver; an
 // incomplete entry set is retried but reported once.
 struct RefusedModule
@@ -177,7 +177,7 @@ bool ReadVersion(HMODULE module, std::array<uint32_t, 4>& version) noexcept
     return true;
 }
 
-// reflexgate.1: every NVIDIA OTA plugin from 2.7.10 to 2.14.16 sends
+// Every NVIDIA OTA plugin from 2.7.10 to 2.14.16 sends
 // slReflexSetOptions to slSetData(options, nullptr) and slReflexGetState to
 // slGetData(nullptr, state, nullptr). slSetData finds ReflexOptions v1 by type
 // and copies all 0x30 bytes (frameLimitUs at +0x24); slGetData writes

@@ -3,11 +3,15 @@
 #include "status_transport.h"
 #include "ui_status_json.h"
 #include "temporal_interval_trace.h"
+#include "runtime_log_setting.h"
 #include <aclapi.h>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #pragma comment(lib, "advapi32.lib")
 using namespace harness;
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 // Only the standalone trace-file test uses this stub. It submits no NGX work;
 // the candidate DLL retains its unchanged authoritative GPU selection policy.
 namespace gpu_dispatch { bool UsesTranslatedProgram() noexcept {return false;} }
@@ -60,11 +64,45 @@ static int Worker(const wchar_t* mode,const wchar_t* dll,const wchar_t* events) 
         Check(ReadText(log).find("Patch worker started")!=std::string::npos,"candidate writes its runtime log to %TEMP% when the game folder cannot be written");
         return gFailures?1:0;
     }
-    if(!wcscmp(mode,L"worker-trace")) {
+    if(!wcscmp(mode,L"worker-trace")||!wcscmp(mode,L"worker-notrace")) {
+        // GitHub issue 122: the CSV is an opt-in diagnostic; the counters (the FPS readout) run either way.
+        const bool file=!wcscmp(mode,L"worker-trace");
+        SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_INTERVAL_TRACE",file?L"1":nullptr);
         const auto directory=std::filesystem::path(diagnostic_paths::RuntimeLog()).parent_path();
         temporal_interval_trace::Initialize(directory.c_str(),diagnostic_paths::Executable().c_str());
-        temporal_interval_trace::SetEnabled(true);temporal_interval_trace::Flush();
-        Check(temporal_interval_trace::ReadSnapshot().logReady,"production trace writer opens stable file");
+        temporal_interval_trace::SetEnabled(true);
+        temporal_interval_trace::Record(nullptr,nullptr,false);
+        temporal_interval_trace::Flush();
+        const auto snapshot=temporal_interval_trace::ReadSnapshot();
+        Check(temporal_interval_trace::FileEnabled()==file,file?"trace file opted in":"trace file off by default");
+        Check(snapshot.invalidSamples==1&&!snapshot.droppedSamples,"trace counters record the sample with or without the file");
+        Check(snapshot.logReady==file,file?"production trace writer opens stable file":"trace writer opens no file by default");
+        return gFailures?1:0;
+    }
+    if(!wcscmp(mode,L"worker-cadence")) {
+        // GitHub issue 122, production cadence: the in-process copy advances every second; the 1 s heartbeat leaves
+        // the file alone (it is rewritten at startup, on state changes and every 30 s).
+        SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT",nullptr);
+        if(!Check(LoadCandidate(dll)!=nullptr,"cadence worker loads exact candidate"))return 1;
+        auto valid=[](const std::string& s){return ui_status_json::CompleteObject(s)
+            &&Has(s,"pid",GetCurrentProcessId())&&Has(s,"processBirth",diagnostic_paths::ProcessBirth());};
+        auto heartbeat=[](const std::string& s)->uint64_t{
+            const std::string key="\"heartbeat\":";const auto at=s.find(key);
+            return at==std::string::npos?0:std::strtoull(s.c_str()+at+key.size(),nullptr,10);};
+        std::string current;
+        for(unsigned i=0;i<320&&status_transport::Read(StatusPath().wstring(),current,&ReadFileText,valid)==status_transport::Source::None;++i)Sleep(25);
+        Sleep(3000);
+        std::error_code error;
+        const auto written=std::filesystem::last_write_time(StatusPath(),error);
+        if(!Check(!error&&valid(ReadText(StatusPath())),"startup writes this launch's status file"))return 1;
+        Check(status_transport::Read(StatusPath().wstring(),current,&ReadFileText,valid)==status_transport::Source::Fallback,
+            "status reader takes the in-process copy");
+        const uint64_t first=heartbeat(current);
+        Sleep(10000);
+        Check(status_transport::Read(StatusPath().wstring(),current,&ReadFileText,valid)==status_transport::Source::Fallback
+            &&first&&heartbeat(current)>=first+8,"in-process status advances every second");
+        const auto later=std::filesystem::last_write_time(StatusPath(),error);
+        Check(!error&&later==written,"the 1 s heartbeat does not rewrite the status file");
         return gFailures?1:0;
     }
     if(!Check(LoadCandidate(dll)!=nullptr,"retention worker loads exact candidate"))return 1;
@@ -79,6 +117,8 @@ static int Worker(const wchar_t* mode,const wchar_t* dll,const wchar_t* events) 
     }
     if(!Check(source!=status_transport::Source::None&&valid(current),"worker receives only its own current-lifetime snapshot"))return 1;
     if(!wcscmp(mode,L"worker-rival"))Check(source==status_transport::Source::Fallback,"overlapping launch uses process memory without stealing primary file");
+    // Past the startup log lines and at least one 1 s status file heartbeat.
+    if(!wcscmp(mode,L"worker-settle"))Sleep(2500);
     if(!wcscmp(mode,L"worker-hold")) {
         HANDLE ready=OpenEventW(EVENT_MODIFY_STATE,FALSE,(std::wstring(events)+L"-Ready").c_str());
         HANDLE release=OpenEventW(SYNCHRONIZE,FALSE,(std::wstring(events)+L"-Release").c_str());
@@ -98,8 +138,8 @@ struct Child {
         startup.hStdOutput=GetStdHandle(STD_OUTPUT_HANDLE);startup.hStdError=GetStdHandle(STD_ERROR_HANDLE);startup.hStdInput=GetStdHandle(STD_INPUT_HANDLE);
         return CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process)!=FALSE;
     }
-    bool Finish() {
-        if(!process.hProcess||WaitForSingleObject(process.hProcess,12000)!=WAIT_OBJECT_0)return false;
+    bool Finish(DWORD milliseconds=12000) {
+        if(!process.hProcess||WaitForSingleObject(process.hProcess,milliseconds)!=WAIT_OBJECT_0)return false;
         DWORD code=1;GetExitCodeProcess(process.hProcess,&code);return code==0;
     }
     ~Child(){if(process.hProcess){if(WaitForSingleObject(process.hProcess,0)==WAIT_TIMEOUT)TerminateProcess(process.hProcess,2);CloseHandle(process.hProcess);}if(process.hThread)CloseHandle(process.hThread);}
@@ -118,6 +158,47 @@ int wmain(int argc,wchar_t** argv) {
         Child next;Check(next.Start(L"worker-trace",argv[2],L"unused")&&next.Finish(),"second trace process exits cleanly");
         Check(ReadText(csv).find("RESTART-TRACE-MARKER")==std::string::npos,"next trace launch overwrites same file");
         Check(ReadText(csv).starts_with("# NGX temporal-request trace."),"trace file retains production header");
+        Check(ReadText(csv).find("\n1,")!=std::string::npos,"opted-in trace file holds the recorded sample");
+        std::filesystem::remove(csv);
+        Child quiet;Check(quiet.Start(L"worker-notrace",argv[2],L"unused")&&quiet.Finish(),"untraced process exits cleanly");
+        Check(!std::filesystem::exists(csv),"no trace file without RTXMFG_DIAGNOSTIC_INTERVAL_TRACE=1");
+        return gFailures?1:0;
+    }
+    if(!wcscmp(argv[1],L"status-cadence")) {
+        Child child;
+        Check(child.Start(L"worker-cadence",argv[2],L"unused")&&child.Finish(25000),"cadence worker exits cleanly");
+        return gFailures?1:0;
+    }
+    if(!wcscmp(argv[1],L"log-toggle")) {
+        // GitHub issue 122: Diagnostics > Write log file in the menu, [Diagnostics] Logging in RTX40MFG-UI.ini beside
+        // the game. On by default; only an explicit off stops the log, from the next launch.
+        const auto ini=runtime_log_setting::Path();
+        const auto previous=std::filesystem::path(log).replace_extension(L".previous.log");
+        std::error_code ignored;
+        std::filesystem::remove(ini,ignored);
+        Check(!ini.empty()&&std::filesystem::path(ini).parent_path()==std::filesystem::path(log).parent_path(),"log setting is saved beside the game");
+        Check(runtime_log_setting::SavedOn(),"log is on without a settings file");
+        Check(runtime_log_setting::Save(false)&&!runtime_log_setting::SavedOn(),"menu saves the log off");
+        std::filesystem::remove(previous);
+        std::ofstream(std::filesystem::path(log))<<"LOG-OFF-MARKER";
+        Child off;
+        Check(off.Start(L"worker-settle",argv[2],L"unused")&&off.Finish(),"launch with the log off exits cleanly");
+        Check(ReadText(log)=="LOG-OFF-MARKER","log off: the launch leaves the old log untouched");
+        Check(!std::filesystem::exists(previous),"log off: the launch rotates nothing");
+        Check(Has(ReadText(StatusPath()),"pid",off.process.dwProcessId),"log off: the status file is still written");
+        WritePrivateProfileStringW(runtime_log_setting::kSection,runtime_log_setting::kKey,L"maybe",ini.c_str());
+        Check(runtime_log_setting::SavedOn(),"an unknown saved value keeps the log on");
+        Child odd;
+        Check(odd.Start(L"worker-settle",argv[2],L"unused")&&odd.Finish(),"launch with an unknown saved value exits cleanly");
+        Check(ReadText(previous)=="LOG-OFF-MARKER","log on again: the old log rotates to .previous.log");
+        Check(ReadText(log).find("Diagnostic files: runtime log on (saved value is not 1 or 0)")!=std::string::npos,
+            "unknown saved value: the launch logs and says the value was not 1 or 0");
+        Check(runtime_log_setting::Save(true)&&runtime_log_setting::SavedOn(),"menu saves the log on");
+        Child on;
+        Check(on.Start(L"worker-settle",argv[2],L"unused")&&on.Finish(),"launch with the log on exits cleanly");
+        Check(ReadText(log).find("Diagnostic files: runtime log on ([Diagnostics] Logging=0")!=std::string::npos,
+            "log on: the launch writes its log");
+        std::filesystem::remove(ini,ignored);
         return gFailures?1:0;
     }
     if(!wcscmp(argv[1],L"log-location")) {

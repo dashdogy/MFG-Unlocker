@@ -60,6 +60,12 @@ target_compile_features(DynamicAvailabilityTests PRIVATE cxx_std_20)
 target_include_directories(DynamicAvailabilityTests PRIVATE "${NATIVE_SOURCE}")
 target_compile_definitions(DynamicAvailabilityTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 set_target_properties(DynamicAvailabilityTests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# keybinds.1: the Keybinds tab's saved form and mode selection.
+add_executable(KeybindsPolicyTests keybinds_policy_tests.cpp)
+target_compile_features(KeybindsPolicyTests PRIVATE cxx_std_20)
+target_include_directories(KeybindsPolicyTests PRIVATE "${NATIVE_SOURCE}")
+target_compile_definitions(KeybindsPolicyTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+set_target_properties(KeybindsPolicyTests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # vkmenu.1: Vulkan V-Sync present-mode status and the DLSS-G presented-frame rate.
 add_executable(VulkanMenuStatusTests vulkan_menu_status_tests.cpp "${NATIVE_SOURCE}/vsync_control.cpp")
 target_compile_features(VulkanMenuStatusTests PRIVATE cxx_std_20)
@@ -88,7 +94,11 @@ set_target_properties(SessionDiagnosticsTests PROPERTIES MSVC_RUNTIME_LIBRARY "M
 add_library(OptiScalerHostFixture SHARED optiscaler_host_fixture.cpp optiscaler_host_fixture.rc)
 add_library(FakeNvapiFixture SHARED optiscaler_host_fixture.cpp)
 target_compile_definitions(FakeNvapiFixture PRIVATE OPTISCALER_FIXTURE_NO_IDENTITY=1)
-foreach(target OptiScalerHostFixture FakeNvapiFixture)
+# menutab.1: the host stand-in that also offers OptiScaler's plugin tab API.
+add_library(OptiScalerMenuTabFixture SHARED optiscaler_host_fixture.cpp optiscaler_host_fixture.rc)
+target_compile_definitions(OptiScalerMenuTabFixture PRIVATE OPTISCALER_FIXTURE_MENU_TAB=1)
+target_include_directories(OptiScalerMenuTabFixture PRIVATE "${NATIVE_SOURCE}")
+foreach(target OptiScalerHostFixture FakeNvapiFixture OptiScalerMenuTabFixture)
     target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     set_target_properties(${target} PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endforeach()
@@ -97,7 +107,7 @@ target_compile_features(OptiScalerHostTests PRIVATE cxx_std_20)
 target_include_directories(OptiScalerHostTests PRIVATE "${NATIVE_SOURCE}")
 target_compile_definitions(OptiScalerHostTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 set_target_properties(OptiScalerHostTests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-add_dependencies(OptiScalerHostTests OptiScalerHostFixture FakeNvapiFixture)
+add_dependencies(OptiScalerHostTests OptiScalerHostFixture FakeNvapiFixture OptiScalerMenuTabFixture)
 # xefgmenu.1: with the XeSS SDK 3.0.2 headers the stand-in also builds OptiScaler's XeFG output swapchain
 # (the optiscaler-xefg-output* cases) and its DXGI factory hook.
 set(XESS_SDK_ROOT "" CACHE PATH "XeSS SDK 3.0.2 (inc/xess_fg) for the OptiScaler XeFG output cases")
@@ -215,6 +225,15 @@ add_custom_command(TARGET ThemidaImportHost POST_BUILD
         "$<TARGET_FILE:ThemidaImportHost>"
     VERBATIM)
 
+# shadPS4 model: mincore comes before the default libraries, so GetProcAddress is imported from the library-loader
+# API-set contract and no KERNEL32.dll descriptor provides it. version comes first to keep the proxy's static import.
+add_executable(ApiSetImportHost api_set_import_host.cpp)
+target_compile_features(ApiSetImportHost PRIVATE cxx_std_20)
+target_include_directories(ApiSetImportHost PRIVATE "${NATIVE_SOURCE}")
+target_compile_definitions(ApiSetImportHost PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(ApiSetImportHost PRIVATE version mincore)
+set_target_properties(ApiSetImportHost PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_library(ExistingOverlayFixture SHARED overlay_fixture.cpp
     "${NATIVE_SOURCE}/third_party/minhook/src/hook.c"
     "${NATIVE_SOURCE}/third_party/minhook/src/buffer.c"
@@ -233,3 +252,12 @@ target_include_directories(WarpPresentHarness PRIVATE "${STREAMLINE_ROOT}/includ
 target_compile_definitions(WarpPresentHarness PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(WarpPresentHarness PRIVATE d3d12 dxgi user32 dwmapi dinput8 dxguid EngineFactoryFixture)
 set_target_properties(WarpPresentHarness PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+# dx11menu.1: DirectX 11 games. Its own executable, which like a DirectX 11 game's links no D3D12 creation (d3d11,
+# d3d12 and d3dcompiler_47 are resolved at run time).
+add_executable(D3D11PresentHarness d3d11_present_harness.cpp)
+target_compile_features(D3D11PresentHarness PRIVATE cxx_std_20)
+target_include_directories(D3D11PresentHarness PRIVATE "${NATIVE_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(D3D11PresentHarness PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(D3D11PresentHarness PRIVATE dxgi user32)
+set_target_properties(D3D11PresentHarness PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

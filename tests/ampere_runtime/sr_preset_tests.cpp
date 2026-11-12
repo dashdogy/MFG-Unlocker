@@ -1,4 +1,4 @@
-// srpreset.1/.2 (V1.6.0): DLSS Super Resolution and Ray Reconstruction
+// DLSS Super Resolution and Ray Reconstruction
 // detection and live preset switching. The pure tracker, then the production
 // dlss_sr.cpp against a fake NGX runtime modelled on the 310.9.16 providers:
 // typed parameter objects, one DRS preset read per provider when it initializes
@@ -750,7 +750,7 @@ void SharedParameterCases()
     BeforeRelease(0,&FakeRelease,game);AfterRelease(0,game,FakeRelease(game));
 }
 
-// vkpreset.1 (V1.6.2): the runtime's Vulkan entries. CreateFeature1 names the
+// The runtime's Vulkan entries. CreateFeature1 names the
 // game's VkDevice, CreateFeature does not; both record on a VkCommandBuffer.
 struct VulkanCall { unsigned creates = 0; void* device = nullptr; void* command = nullptr; };
 VulkanCall gVkCreate, gVkCreate1;

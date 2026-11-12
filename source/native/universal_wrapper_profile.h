@@ -21,14 +21,6 @@ constexpr uint32_t SafeMaximumMultiplier(uint32_t compiledMaximum) noexcept
         ? compiledMaximum + 1u : 2u;
 }
 
-constexpr uint32_t ClampMultiplier(uint32_t requested,
-    uint32_t compiledMaximum) noexcept
-{
-    const uint32_t safeMaximum = SafeMaximumMultiplier(compiledMaximum);
-    return requested < 2u ? 2u
-        : requested > safeMaximum ? safeMaximum : requested;
-}
-
 inline bool Matches(const uint8_t* candidate, size_t available) noexcept
 {
     if (!candidate || available < kPatternSize || candidate[0] != 0xBA)

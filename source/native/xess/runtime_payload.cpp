@@ -2,6 +2,9 @@
 #include "../sha256_util.h"
 #include "embedded_xess_programs.generated.h"
 #include "embedded_xess_shaders.generated.h"
+#include "xess_programs.packed.h"
+#include "xess_shaders.packed.h"
+#include "xefg_cuda.packed.h"
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
@@ -17,14 +20,21 @@ std::string Hash(std::span<const unsigned char> bytes) {
     return sha256_util::LowerHex(digest);
 }
 std::span<const Asset> Assets() noexcept { return embedded::assets; }
+// Resource `id` from its packed group (embedded_payload.h): the portable programs, our shaders or the CUDA layers.
+static std::span<const unsigned char> Packed(HMODULE module,unsigned id) noexcept {
+    namespace packed=embedded_payload::packed;
+    const std::pair<const embedded_payload::Group*,std::span<const embedded_payload::Item>> groups[]{
+        {&packed::xess_programs,packed::xess_programs_items},{&packed::xess_shaders,packed::xess_shaders_items},
+        {&packed::xefg_cuda,packed::xefg_cuda_items}};
+    for(const auto& [group,items]:groups)
+        if(std::any_of(items.begin(),items.end(),[&](const auto& item){return item.id==id;}))
+            return embedded_payload::Find(module,*group,items,id);
+    return {};
+}
 std::span<const unsigned char> Read(HMODULE module,const Asset& asset) {
     if(!module)throw std::runtime_error("payload_module_missing");
-    const auto resource=FindResourceW(module,MAKEINTRESOURCEW(asset.id),RT_RCDATA);
-    const auto loaded=resource?LoadResource(module,resource):nullptr;
-    const auto size=resource?SizeofResource(module,resource):0;
-    const auto* bytes=loaded?static_cast<const unsigned char*>(LockResource(loaded)):nullptr;
-    if(!bytes||size!=asset.bytes)throw std::runtime_error("embedded_payload_shape");
-    const std::span<const unsigned char> data(bytes,size);
+    const auto data=Packed(module,asset.id);
+    if(data.empty()||data.size()!=asset.bytes)throw std::runtime_error("embedded_payload_shape");
     if(Hash(data)!=asset.hash)throw std::runtime_error("embedded_payload_hash");
     return data;
 }
@@ -53,9 +63,9 @@ Programs LoadPrograms(HMODULE module) {
 }
 std::span<const Asset> ShaderAssets() noexcept { return embedded::shaders; }
 std::vector<Replacement> LoadReplacements(HMODULE module) {
-    // The Intel program each shader replaces: XeFG's motion-vector splat in libxess_fg 3.0.2 (ec5e0c65), and
-    // (splat.2) its inverted-depth variant, which XeFG uses when started with INVERTED_DEPTH (OptiScaler's default);
-    // unet.1: five U-Net conv programs of the same build (the CUDA route recognizes both bytes, xess/cuda/cuda_route.cpp).
+    // The Intel program each shader replaces: XeFG's motion-vector splat in libxess_fg 3.0.2 (ec5e0c65), its
+    // inverted-depth variant, which XeFG uses when started with INVERTED_DEPTH (OptiScaler's default), and five
+    // U-Net conv programs of the same build (the CUDA route recognizes both bytes, xess/cuda/cuda_route.cpp).
     struct Native { const char* name; const char* hash; size_t bytes; };
     static constexpr Native natives[]{
         {"shaders/splat_motion_aware.dxil","3f3f91d2ecd4345042f0519f7455776314be9e7730453a3fcb42c57f0acb49b5",4008},

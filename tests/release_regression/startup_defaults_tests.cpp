@@ -4,6 +4,8 @@
 #include <string>
 #include <cstdio>
 #include "ui_status_json.h"
+// GitHub issue 122: the candidate rewrites its status file every 30 s; this test polls it, so it asks for every second.
+[[maybe_unused]] static const bool kStatusFileEverySecond = SetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_STATUS_HEARTBEAT", L"1") != FALSE;
 
 int wmain(int argc, wchar_t** argv)
 {

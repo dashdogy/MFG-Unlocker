@@ -52,6 +52,9 @@ SLIST_HEADER gFreeEvents{};
 SLIST_HEADER gPendingEvents{};
 std::atomic<uint32_t> gInitializationState{0};
 std::atomic<bool> gEnabled{false};
+// GitHub issue 122: the FPS readout needs only the counters below; the CSV (one row per real frame, unbounded
+// within a session) is an opt-in diagnostic, read once at Initialize.
+std::atomic<bool> gFileEnabled{false};
 std::atomic<bool> gLogReady{false};
 std::atomic<uint64_t> gSequence{0};
 std::atomic<uint64_t> gValidSamples{0};
@@ -63,10 +66,7 @@ std::atomic<int32_t> gLastCount{0};
 std::atomic<int32_t> gLastIndex{0};
 std::atomic<uint32_t> gLastPositionNumerator{0};
 std::atomic<uint32_t> gLastPositionDenominator{0};
-std::array<std::atomic<uintptr_t>, kFirstSampleHandleCapacity>
-    gFirstSampleHandles{};
-std::array<std::atomic<uint64_t>, kFirstSampleHandleCapacity>
-    gFirstSampleCounts{};
+FirstSampleTable<kFirstSampleHandleCapacity> gFirstSamples;
 LARGE_INTEGER gQpcFrequency{};
 int64_t gLastWrittenQpc = 0;
 FILE* gTrace = nullptr;
@@ -129,32 +129,7 @@ bool ValidTemporalSample(const Event& event) noexcept
 
 void RecordFirstSample(uintptr_t handle) noexcept
 {
-    if (!handle)
-        return;
-    for (size_t index = 0; index < kFirstSampleHandleCapacity; ++index)
-    {
-        uintptr_t current = gFirstSampleHandles[index].load(
-            std::memory_order_acquire);
-        if (current == handle)
-        {
-            gFirstSampleCounts[index].fetch_add(
-                1, std::memory_order_relaxed);
-            return;
-        }
-        if (current != 0)
-            continue;
-
-        uintptr_t empty = 0;
-        if (gFirstSampleHandles[index].compare_exchange_strong(
-                empty, handle, std::memory_order_acq_rel,
-                std::memory_order_acquire)
-            || empty == handle)
-        {
-            gFirstSampleCounts[index].fetch_add(
-                1, std::memory_order_relaxed);
-            return;
-        }
-    }
+    gFirstSamples.Record(handle);
 }
 
 bool OpenTrace() noexcept
@@ -231,6 +206,8 @@ bool RecordImpl(const NVSDK_NGX_Handle* handle,
         gInvalidSamples.fetch_add(1, std::memory_order_relaxed);
     }
 
+    if (!gFileEnabled.load(std::memory_order_acquire))
+        return valid;
     PSLIST_ENTRY entry = InterlockedPopEntrySList(&gFreeEvents);
     if (!entry)
     {
@@ -270,6 +247,9 @@ void Initialize(const wchar_t* tempDirectory, const wchar_t* executablePath) noe
         }
         wcscat_s(gFilePath, gFileName);
     }
+    wchar_t file[2]{};
+    gFileEnabled.store(GetEnvironmentVariableW(L"RTXMFG_DIAGNOSTIC_INTERVAL_TRACE", file, 2) == 1 && file[0] == L'1',
+        std::memory_order_release);
     gInitializationState.store(2, std::memory_order_release);
 }
 
@@ -281,6 +261,11 @@ void SetEnabled(bool enabled) noexcept
 bool Enabled() noexcept
 {
     return gEnabled.load(std::memory_order_acquire);
+}
+
+bool FileEnabled() noexcept
+{
+    return gFileEnabled.load(std::memory_order_acquire);
 }
 
 void Record(const NVSDK_NGX_Handle* handle,
@@ -299,7 +284,7 @@ void Flush() noexcept
 {
     if (!FullyInitialized())
         return;
-    if (Enabled())
+    if (Enabled() && FileEnabled())
         OpenTrace();
 
     PSLIST_ENTRY list = InterlockedFlushSList(&gPendingEvents);
@@ -388,10 +373,8 @@ Snapshot ReadSnapshot() noexcept
         gLastPositionDenominator.load(std::memory_order_acquire);
     for (size_t index = 0; index < kFirstSampleHandleCapacity; ++index)
     {
-        snapshot.firstSampleCounters[index].handle =
-            gFirstSampleHandles[index].load(std::memory_order_acquire);
-        snapshot.firstSampleCounters[index].samples =
-            gFirstSampleCounts[index].load(std::memory_order_relaxed);
+        snapshot.firstSampleCounters[index].handle = gFirstSamples.Handle(index);
+        snapshot.firstSampleCounters[index].samples = gFirstSamples.Samples(index);
     }
     return snapshot;
 }

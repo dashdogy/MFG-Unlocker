@@ -43,7 +43,7 @@ int main()
         && std::strcmp(ampere_startup_requirements::AnswerName(Answer::eReadyProvider), "supported-prepared-provider") == 0
         && std::strcmp(ampere_startup_requirements::AnswerName(Answer::eEligibleOta), "supported-eligible-ota-provider") == 0,
         "answers have stable log names");
-    // slinitfg.3: InvalidParameter is the driver's identifier check (FF7 Rebirth, 617.42), never the GPU.
+    // InvalidParameter is the driver's identifier check (driver 617.42), never the GPU.
     using ampere_startup_requirements::ClassifyResult;
     const auto fromResult = [](uint32_t result, bool slInit, bool eligibleOta, bool providerReady) {
         Query query{};

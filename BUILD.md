@@ -1,10 +1,11 @@
-# Building v1.7.0
+# Building v1.7.1
 
-The v1.7.0 release combines the DLSS MFG backend, the built-in menu with its
-translations, RTX 50, RTX 30 and experimental RTX 20 support, and XeSS Multi Frame
-Generation (XeMFG) standalone or through OptiScaler, including the XeMFG
-tensor-core kernels, and the DLSS 5 stage, in one DLL. ProductVersion is
-1.7.0; FileVersion is 1.7.0.1145.
+The v1.7.1 release combines the DLSS MFG backend, the built-in menu with its
+translations, RTX 50, RTX 30 and experimental RTX 20 support, XeSS Multi Frame
+Generation (XeMFG) standalone, through OptiScaler or as OptiScaler's DLSS Frame
+Generation provider, including the XeMFG tensor-core kernels, the DLSS 5 stage
+and the RTX Hair conversion, in one DLL. ProductVersion is 1.7.1; FileVersion
+is 1.7.1.177.
 
 The release target is `RTXMFGUnified`, producing `Release/MFGUnlocker.dll`.
 Use Windows x64, Visual Studio 2022/MSVC 14.38.33130, Windows SDK
@@ -16,7 +17,9 @@ Required external inputs:
 - Dear ImGui revision `3912b3d9a9c1b3f17431aebafd86d2f40ee6e59c`
   from ReShade 6.8.0, including its backends.
 - Vulkan SDK 1.2.176.1 headers and `glslangValidator.exe`.
-- Vulkan SDK 1.4.363.0 headers (the XeMFG Vulkan layer) and its `Bin/dxc.exe` with
+- Vulkan SDK 1.4.363.0 headers (the XeMFG Vulkan layer; the RTX Hair SPIR-V operand
+  table is generated from its `spirv/unified1/spirv.core.grammar.json`, pinned by
+  SHA-256) and its `Bin/dxc.exe` with
   `dxcompiler.dll` and `spirv-val.exe`, which compile `dlss5.cpp`'s DLSS 5 passes
   to SPIR-V for the Vulkan stage (`build.ps1 -Dlss5VulkanDxc`; all three pinned
   by SHA-256, and the generator pins every output).
@@ -64,7 +67,7 @@ actual paths and a fresh build directory:
     -NativeCacheRoot 'C:/BuildInputs/rtxmfg-sm86' `
     -XessSdkRoot 'C:/SDKs/xess-sdk-3.0.2' `
     -XessProgramsRoot 'C:/BuildInputs/xess-programs' `
-    -BuildDirectory "$PWD/build/v1.7.0" `
+    -BuildDirectory "$PWD/build/v1.7.1" `
     -EnableNgxCreateResultDiagnostics `
     -EnableSessionDiagnostics
 ```
@@ -89,7 +92,7 @@ Task Manager, or a hang. If the runtime log is still held open by another
 process, the session writes `<log>.<pid>.log` and says why. The switch is off by
 default.
 
-The proxy dispatchers, Vulkan shader arrays, adapted ImGui DX12 backend, the
+The proxy dispatchers, Vulkan shader arrays, adapted ImGui DX12 and DX11 backends, the
 embedded XeSS program table, MFG Unlocker's own XeFG shaders
 (`source/native/xess/port/splat_motion_aware.hlsl` and `unet_conv.hlsl`,
 compiled with the Windows SDK's `dxc.exe`) and the tensor-core kernel fatbin (sm_75, sm_86, sm_89 and sm_120 SASS,

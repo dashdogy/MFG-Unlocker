@@ -229,12 +229,7 @@ int main(int argc, char** argv)
         for (uint32_t y = 0; y < outHeight; ++y)
             std::memcpy(&halfs[size_t(y) * outWidth * 4], mapped + footprint.Offset + size_t(y) * footprint.Footprint.RowPitch, size_t(outWidth) * 8);
         readback->Unmap(0, nullptr);
-        for (size_t i = 0; i < texels.size(); ++i) texels[i] = Float(halfs[i]);
-        if (dump)
-        {
-            std::ofstream out(Directory() + L"\\output-" + std::wstring(name, name + strlen(name)) + L".rgba16f", std::ios::binary);
-            out.write(reinterpret_cast<const char*>(halfs.data()), std::streamsize(halfs.size() * 2));
-        }
+        Decode(halfs.data(), texels, dump, name);
         return texels;
     };
     bool ok = true;

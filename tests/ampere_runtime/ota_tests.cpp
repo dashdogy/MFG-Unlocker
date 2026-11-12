@@ -1,4 +1,5 @@
 #include "streamline_ota_policy.h"
+#include "streamline_state_policy.h"
 #include "ampere_provider_arch.h"
 #include "nvidia_mfg_policy.h"
 #include <iostream>
@@ -55,6 +56,31 @@ int main()
     const auto pinned = Apply(original | kAllowOta, true, true, true, Gpu::eAmpere, Gpu::eUnknown, true);
     Check(pinned.flags == (original | kAllowOta) && pinned.reason == Reason::eNativePinned,
         "native Streamline diagnostic pin does not remove host flags or alter DLSS-G selection");
+    {
+        // GitHub issue 137: Pragmata's slInit flags 0xA9 (state tracking off, no manual hooking).
+        using StateReason = streamline_state_policy::Reason;
+        using streamline_state_policy::kDisableClStateTracking;
+        using streamline_state_policy::kUseManualHooking;
+        constexpr uint64_t pragmata = 0xA9;
+        const auto restored = streamline_state_policy::Apply(pragmata, true, 2);
+        Check(restored.flags == 0xA8 && restored.reason == StateReason::eRestored,
+            "DLSS 5 on a tracking-off proxy host turns Streamline's state tracking back on and nothing else");
+        const auto noDlss5 = streamline_state_policy::Apply(pragmata, false, 2);
+        Check(noDlss5.flags == pragmata && noDlss5.reason == StateReason::eNoDlss5,
+            "without DLSS 5 the host's flags stay as they are");
+        constexpr uint64_t manual = kDisableClStateTracking | kUseManualHooking;
+        const auto manualHost = streamline_state_policy::Apply(manual, true, 2);
+        Check(manualHost.flags == manual && manualHost.reason == StateReason::eManualHooking,
+            "a manual-hooking host keeps its flags (Streamline restores nothing for it)");
+        const auto tracking = streamline_state_policy::Apply(0xA8, true, 2);
+        Check(tracking.flags == 0xA8 && tracking.reason == StateReason::eHostTracks, "a host that tracks already is unchanged");
+        Check(streamline_state_policy::Apply(pragmata, true, 0).flags == pragmata
+            && streamline_state_policy::Apply(pragmata, true, 1).reason == StateReason::eHostVersion,
+            "an unknown or non-2.x interposer keeps its flags");
+        const auto ota = Apply(pragmata, true, true, true, Gpu::eAda, Gpu::eUnknown);
+        Check(streamline_state_policy::Apply(ota.flags, true, 2).flags == (ota.flags & ~kDisableClStateTracking),
+            "the state-tracking change composes with the full OTA flags");
+    }
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

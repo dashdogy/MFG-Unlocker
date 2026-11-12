@@ -1,0 +1,38 @@
+#version 460
+// vkhair.1 phase 0, pass 1: inline ray query in a compute shader; the committed triangle's vertices
+// through OpRayQueryGetIntersectionTriangleVertexPositionsKHR (VK_KHR_ray_tracing_position_fetch).
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_ray_tracing_position_fetch : require
+#extension GL_GOOGLE_include_directive : require
+#include "probe_common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= params.rayCount)
+        return;
+    uint index = params.rayOffset + i;
+    RayIn r = rays[index];
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, Scene, gl_RayFlagsOpaqueEXT, r.mask & 0xFFu, r.origin, 0.0, r.direction, r.tmax);
+    while (rayQueryProceedEXT(query))
+    {
+    }
+    HitOut o = Empty();
+    if (rayQueryGetIntersectionTypeEXT(query, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        o.status = 1u;
+        o.instanceId = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+        o.primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(query, true));
+        o.geometry = uint(rayQueryGetIntersectionGeometryIndexEXT(query, true));
+        o.bary = rayQueryGetIntersectionBarycentricsEXT(query, true);
+        o.t = rayQueryGetIntersectionTEXT(query, true);
+        o.hitKind = rayQueryGetIntersectionFrontFaceEXT(query, true) ? 0xFEu : 0xFFu;
+        vec3 v[3];
+        rayQueryGetIntersectionTriangleVertexPositionsEXT(query, true, v);
+        Fill(o, v[0], v[1], v[2]);
+    }
+    results[index] = o;
+}

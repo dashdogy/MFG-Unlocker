@@ -1,5 +1,8 @@
 #include "ampere_native_cache.h"
 #include "sha256_util.h"
+#if MFG_AMPERE_EMBEDDED_KERNELS
+#include "ampere_kernels.packed.h"
+#endif
 #include <Windows.h>
 #include <bcrypt.h>
 #include <algorithm>
@@ -268,13 +271,10 @@ Status LoadEmbeddedProgram(ProgramView validatedPtx, void* module, CompleteProgr
         for (const auto& kernel : kKernelResources)
             if (std::strcmp(kernel.fatbinSha256, entry.fatbinSha256) == 0) { resourceId = kernel.id; break; }
         if (!resourceId) return false;
-        const auto owner = static_cast<HMODULE>(module);
-        const HRSRC resource = FindResourceW(owner, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
-        if (!resource || SizeofResource(owner, resource) != entry.fatbinBytes) return false;
-        const HGLOBAL loaded = LoadResource(owner, resource);
-        const auto* bytes = loaded ? static_cast<const uint8_t*>(LockResource(loaded)) : nullptr;
-        if (!bytes) return false;
-        slot.assign(bytes, bytes + entry.fatbinBytes);
+        const auto bytes = embedded_payload::Find(static_cast<HMODULE>(module), embedded_payload::packed::ampere_kernels,
+            embedded_payload::packed::ampere_kernels_items, resourceId);
+        if (bytes.size() != entry.fatbinBytes) return false;
+        slot.assign(bytes.begin(), bytes.end());
         return true;
 #else
         (void)module; (void)entry; (void)slot;

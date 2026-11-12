@@ -67,6 +67,84 @@ msgstr ""
 "Visar verklig FPS och DLSS-FPS i övre vänstra hörnet\n"
 "när menyn är stängd. Sparas till nästa gång du startar spelet."
 
+msgid ""
+"Shows the PC latency in the top-left corner\n"
+"while the menu is closed. Saved for the next launch."
+msgstr ""
+"Visar PC-latensen i övre vänstra hörnet\n"
+"när menyn är stängd. Sparas till nästa start."
+
+msgid "Latency"
+msgstr "Latens"
+
+msgid "%.1f ms, 1%% high %.1f ms"
+msgstr "%.1f ms, sämsta 1%% %.1f ms"
+
+msgid ""
+"PC latency: from the game starting a frame (its Reflex simulation start)\n"
+"to the first frame showing it reaching the screen."
+msgstr ""
+"PC-latens: från att spelet startar en bild (dess Reflex-simuleringsstart)\n"
+"tills den första bilden som visar den når skärmen."
+
+msgid "Game %.1f ms, frame generation %.1f ms, display %.1f ms."
+msgstr "Spel %.1f ms, Frame Generation %.1f ms, visning %.1f ms."
+
+msgid "The real frame reaches the screen after %.1f ms."
+msgstr "Den riktiga bilden når skärmen efter %.1f ms."
+
+msgid "Mouse and monitor delay are not included."
+msgstr "Fördröjning i mus och skärm ingår inte."
+
+msgid "Unavailable"
+msgstr "Ej tillgängligt"
+
+msgid "the game sends no Reflex markers"
+msgstr "spelet skickar inga Reflex-markörer"
+
+msgid "no frames to time on this route"
+msgstr "inga bilder att mäta på den här vägen"
+
+msgid "Windows reports no flip times here"
+msgstr "Windows rapporterar inga visningstider här"
+
+msgid "Measuring..."
+msgstr "Mäter..."
+
+msgid "Game / driver default"
+msgstr "Standard för spel / drivrutin"
+
+msgid "Preset C (performance)"
+msgstr "Preset C (prestanda)"
+
+msgid ""
+"The DLSS frame generation model preset.\n"
+"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
+"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
+"A change made while frame generation runs restarts it once, with a short pause;\n"
+"some older DLSS-G versions apply it after a game restart."
+msgstr ""
+"Modellpreset för DLSS Frame Generation.\n"
+"Preset C är NVIDIAs lättare Frame Generation-läge. Det kräver DLSS-G 310.9.16 eller senare,\n"
+"från DLSS Override i NVIDIA-appen; andra providers behåller spelets / drivrutinens preset.\n"
+"En ändring medan Frame Generation körs startar om den en gång, med en kort paus;\n"
+"med vissa äldre DLSS-G-versioner gäller den först efter en omstart av spelet."
+
+msgid "Preset %s is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Preset %s är sparat. Det gäller nästa gång Frame Generation startar, eller efter en omstart av spelet."
+
+msgid "The game / driver preset is saved. It applies the next time frame generation starts, or after a game restart."
+msgstr "Spelets / drivrutinens preset är sparat. Det gäller nästa gång Frame Generation startar, eller efter en omstart av spelet."
+
+msgid "Restarting frame generation with the new preset..."
+msgstr "Startar om Frame Generation med det nya presetet..."
+
+msgid "The game / driver preset is saved. Restart the game to use it."
+msgstr "Spelets / drivrutinens preset är sparat. Starta om spelet för att tillämpa det."
+
+msgid "Preset %s is saved. Restart the game to use it."
+msgstr "Preset %s är sparat. Starta om spelet för att tillämpa det."
+
 msgid "DLSS-G preset"
 msgstr "DLSS-G-preset"
 
@@ -103,42 +181,14 @@ msgstr "Den här DLSS-G-providern stöder bara sitt standardpreset. Preset B fö
 msgid "This DLSS-G provider supports its original preset only."
 msgstr "Den här DLSS-G-providern stöder bara sitt standardpreset."
 
-msgid "Restarting frame generation with the new preset..."
-msgstr "Startar om Frame Generation med det nya presetet..."
-
-msgid "The game / driver preset is saved. Restart the game to use it."
-msgstr "Spelets / drivrutinens preset är sparat. Starta om spelet för att tillämpa det."
-
-msgid "Preset %s is saved. Restart the game to use it."
-msgstr "Preset %s är sparat. Starta om spelet för att tillämpa det."
-
 msgid "Preset C needs DLSS-G 310.9.16 or newer (NVIDIA app). This game's frame generation keeps the game / driver preset."
 msgstr "Preset C kräver DLSS-G 310.9.16 eller senare (via NVIDIA-appen). I det här spelet behåller Frame Generation spelets / drivrutinens preset."
 
 msgid "The preset selection could not be saved."
 msgstr "Valet av preset kunde inte sparas."
 
-msgid "Game / driver default"
-msgstr "Standard för spel / drivrutin"
-
-msgid "Preset C (performance)"
-msgstr "Preset C (prestanda)"
-
 msgid "Original preset"
 msgstr "Standardpreset"
-
-msgid ""
-"The DLSS frame generation model preset.\n"
-"Preset C is NVIDIA's lighter Frame Generation mode. It needs DLSS-G 310.9.16 or newer,\n"
-"from the NVIDIA app's DLSS override; other providers keep the game / driver preset.\n"
-"A change made while frame generation runs restarts it once, with a short pause;\n"
-"some older DLSS-G versions apply it after a game restart."
-msgstr ""
-"Modellpreset för DLSS Frame Generation.\n"
-"Preset C är NVIDIAs lättare Frame Generation-läge. Det kräver DLSS-G 310.9.16 eller senare,\n"
-"från DLSS Override i NVIDIA-appen; andra providers behåller spelets / drivrutinens preset.\n"
-"En ändring medan Frame Generation körs startar om den en gång, med en kort paus;\n"
-"med vissa äldre DLSS-G-versioner gäller den först efter en omstart av spelet."
 
 msgid "Performance"
 msgstr "Prestanda"
@@ -293,6 +343,176 @@ msgstr "Hookmetoden är inte tillgänglig"
 msgid "Waiting for DLSS"
 msgstr "Väntar på DLSS"
 
+msgid "This game evaluates DLSS on a deferred DirectX 11 context. DLSS 5 needs the immediate context, so it leaves the frame as is."
+msgstr "Spelet kör DLSS i en fördröjd DirectX 11-kontext. DLSS 5 behöver den omedelbara kontexten och lämnar därför bilden som den är."
+
+msgid "DLSS 5 on DirectX 11 needs shared fences (Windows 10 version 1703 or later and a current driver). It leaves the frame as is."
+msgstr "DLSS 5 med DirectX 11 kräver delade fences (Windows 10 version 1703 eller senare och en aktuell drivrutin). Bilden lämnas som den är."
+
+msgid "DLSS 5 could not create its DirectX 12 device for this DirectX 11 game; the log names the reason."
+msgstr "DLSS 5 kunde inte skapa sin DirectX 12-enhet för detta DirectX 11-spel; loggen anger orsaken."
+
+msgid "DLSS 5 could not share textures between this DirectX 11 game and its DirectX 12 device; the log names the reason."
+msgstr "DLSS 5 kunde inte dela texturer mellan detta DirectX 11-spel och sin DirectX 12-enhet; loggen anger orsaken."
+
+msgid "DLSS 5 cannot attach to this game's DirectX 11 DLSS: MFG Unlocker did not see it being created (it came before the hook, or another hook covers NVIDIA's entries). The log names the reason."
+msgstr "DLSS 5 kan inte ansluta till spelets DirectX 11-DLSS: MFG Unlocker såg inte när det skapades (det kom före hooken, eller så täcker en annan hook NVIDIAs ingångar). Loggen anger orsaken."
+
+msgid ""
+"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
+"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
+"After upscaling processes the DLSS output after reconstruction.\n"
+"Present processes the final image, game UI included, before presentation and frame generation."
+msgstr ""
+"Auto bearbetar DLSS-utdata efter rekonstruktionen; Upplösningsskala Auto håller kostnaden nere.\n"
+"Före uppskalning bearbetar DLSS-indata i renderingsupplösning, före DLSS SR, DLAA eller Ray Reconstruction.\n"
+"Efter uppskalning bearbetar DLSS-utdata efter rekonstruktionen.\n"
+"Presentation bearbetar den färdiga bilden, med spelets UI, innan den visas och före Frame Generation."
+
+msgid ""
+"Subtle, Balanced and Strong set Intensity, Style, Structure, Tone and Faces & skin together.\n"
+"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
+"Pass Count under Advanced strengthens any look further, at extra GPU cost.\n"
+"Your saved presets are listed below them. Each loads its look, Hook Method and every other setting; Compare and Debug view stay as they are.\n"
+"Loading a saved preset turns DLSS 5 on. Delete removes the saved preset shown."
+msgstr ""
+"Diskret, Balanserad och Kraftig ställer in Intensitet, Stil, Struktur, Ton och Ansikten och hud tillsammans.\n"
+"Balanserad är leverantörens eget standardval, Diskret halverar effekten och Kraftig går längre.\n"
+"Antal pass under Avancerat förstärker valfritt utseende ytterligare, till en extra GPU-kostnad.\n"
+"Dina sparade presets listas under dem. Var och en laddar sitt utseende, hookmetod och alla andra inställningar; Jämför och felsökningsvyn förblir som de är.\n"
+"Att ladda en sparad preset slår på DLSS 5. Ta bort tar bort den sparade preset som visas."
+
+msgid ""
+"How the network draws its look. All three cost the same.\n"
+"Neutral changes the game's image the least.\n"
+"Rich keeps skin warm and colourful, and deepens bright areas such as sky.\n"
+"Soft gives a flatter, softer image."
+msgstr ""
+"Hur nätverket tecknar sitt utseende. Alla tre kostar lika mycket.\n"
+"Neutral ändrar spelets bild minst.\n"
+"Fyllig håller huden varm och färgstark och fördjupar ljusa ytor som himlen.\n"
+"Mjuk ger en plattare, mjukare bild."
+
+msgid ""
+"Which of the provider's two networks runs.\n"
+"Default lets the provider choose: DLSS 5 310.9.16 runs Fast.\n"
+"Quality is the larger network: stronger changes and a little more fine detail, at about 1.7x the GPU time.\n"
+"Fast is the smaller network."
+msgstr ""
+"Vilket av leverantörens två nätverk som körs.\n"
+"Standard låter leverantören välja: DLSS 5 310.9.16 kör Snabbt.\n"
+"Kvalitet är det större nätverket: kraftigare förändringar och lite mer fina detaljer, till ungefär 1,7x GPU-tiden.\n"
+"Snabbt är det mindre nätverket."
+
+msgid "Off while Character Mask is off."
+msgstr "Av medan Karaktärsmask är av."
+
+msgid ""
+"Structure enhancement on detected skin and faces.\n"
+"Same as Structure takes the Structure strength, the provider's own default."
+msgstr ""
+"Strukturförstärkning på upptäckt hud och ansikten.\n"
+"Som Struktur använder strukturintensiteten, leverantörens eget standardval."
+
+msgid ""
+"Share of the hook method's resolution that the network processes.\n"
+"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
+"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
+msgstr ""
+"Andel av hookmetodens upplösning som nätverket bearbetar.\n"
+"100 är inbyggd, lägre är snabbare, upp till 200 översamplar. Värden under 25 blir 25.\n"
+"Auto sänker den när DLSS 5 tar mer än ungefär en tredjedel av varje renderad bild, inte under 75, och höjer den igen när det finns marginal, aldrig över reglaget."
+
+msgid "Half rate is not available on Vulkan or with the Present hook method yet."
+msgstr "Halv takt är ännu inte tillgängligt med Vulkan eller med hookmetoden Presentation."
+
+msgid ""
+"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
+"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
+msgstr ""
+"Kör nätverket varannan bildruta. Bildrutorna däremellan tillämpar dess senaste utseende på sin egen bild, så att rörliga och animerade ytor behåller det utan spår.\n"
+"Ungefär halva GPU-kostnaden. Fina detaljer följer spelets rörelsevektorer där en yta bara har flyttat sig."
+
+msgid "%s (changed)"
+msgstr "%s (ändrad)"
+
+msgid "Preset %u"
+msgstr "Preset %u"
+
+msgid "Imported preset"
+msgstr "Importerad preset"
+
+msgid "Saved \"%s\"."
+msgstr "Sparade ”%s”."
+
+msgid "Deleted \"%s\"."
+msgstr "Tog bort ”%s”."
+
+msgid "Imported \"%s\"."
+msgstr "Importerade ”%s”."
+
+msgid "Copied the preset code to the clipboard."
+msgstr "Preset-koden kopierades till urklipp."
+
+msgid "The clipboard is unavailable. The code is in the field to copy by hand."
+msgstr "Urklipp är inte tillgängligt. Koden står i fältet så att du kan kopiera den för hand."
+
+msgid "No preset code found. Codes start with DLSS5-."
+msgstr "Ingen preset-kod hittades. Koderna börjar med DLSS5-."
+
+msgid "This preset code is damaged or incomplete. Copy it again in full."
+msgstr "Preset-koden är skadad eller ofullständig. Kopiera hela koden igen."
+
+msgid "This preset code needs a newer MFG Unlocker."
+msgstr "Preset-koden kräver en nyare MFG Unlocker."
+
+msgid "%u presets is the most. Delete one to save another."
+msgstr "Högst %u presets. Ta bort en för att spara en till."
+
+msgid "The presets file could not be read or written."
+msgstr "Preset-filen kunde inte läsas eller skrivas."
+
+msgid "Some settings in this code need a newer MFG Unlocker and were left out."
+msgstr "Vissa inställningar i koden kräver en nyare MFG Unlocker och utelämnades."
+
+msgid ""
+"Saves the current DLSS 5 settings as a preset under this name; a preset with the same name is replaced.\n"
+"Presets are kept beside the game."
+msgstr ""
+"Sparar de aktuella DLSS 5-inställningarna som en preset med det här namnet; en preset med samma namn ersätts.\n"
+"Presets sparas bredvid spelet."
+
+msgid ""
+"Export copies the current settings to the clipboard as a code starting with DLSS5-, to share with other players.\n"
+"Import applies a pasted code and saves it as a preset. With the field empty, Import reads the clipboard."
+msgstr ""
+"Exportera kopierar de aktuella inställningarna till urklipp som en kod som börjar med DLSS5-, att dela med andra spelare.\n"
+"Importera tillämpar en inklistrad kod och sparar den som en preset. Med tomt fält läser Importera från urklipp."
+
+msgid "Delete"
+msgstr "Ta bort"
+
+msgid "Save as"
+msgstr "Spara som"
+
+msgid "Save"
+msgstr "Spara"
+
+msgid "Name"
+msgstr "Namn"
+
+msgid "Share"
+msgstr "Dela"
+
+msgid "Import"
+msgstr "Importera"
+
+msgid "Export"
+msgstr "Exportera"
+
+msgid "Paste a code"
+msgstr "Klistra in en kod"
+
 msgid "Neural Rendering"
 msgstr "Neural rendering"
 
@@ -311,17 +531,6 @@ msgstr "Auto: %s"
 msgid "Hook Method"
 msgstr "Hookmetod"
 
-msgid ""
-"Auto processes the DLSS output after reconstruction; Resolution Scale Auto keeps its cost in check.\n"
-"Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-"After upscaling processes the DLSS output after reconstruction.\n"
-"Present processes the final image, game UI included, before presentation and frame generation."
-msgstr ""
-"Auto bearbetar DLSS-utdata efter rekonstruktionen; Upplösningsskala Auto håller kostnaden nere.\n"
-"Före uppskalning bearbetar DLSS-indata i renderingsupplösning, före DLSS SR, DLAA eller Ray Reconstruction.\n"
-"Efter uppskalning bearbetar DLSS-utdata efter rekonstruktionen.\n"
-"Presentation bearbetar den färdiga bilden, med spelets UI, innan den visas och före Frame Generation."
-
 msgid "Subtle"
 msgstr "Diskret"
 
@@ -334,45 +543,26 @@ msgstr "Anpassad"
 msgid "Look"
 msgstr "Utseende"
 
-msgid ""
-"Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-"Balanced is the provider's own default, Subtle halves its change and Strong goes further.\n"
-"Pass Count under Advanced strengthens any look further, at extra GPU cost."
-msgstr ""
-"Ställer in Intensitet, Modell, Struktur, Ton och Ansikten och hud tillsammans.\n"
-"Balanserad är leverantörens eget standardval, Diskret halverar effekten och Kraftig går längre.\n"
-"Antal pass under Avancerat förstärker valfritt utseende ytterligare, till en extra GPU-kostnad."
-
 msgid "Intensity"
 msgstr "Intensitet"
 
 msgid "Strength of the whole neural rendering effect."
 msgstr "Styrkan på hela den neurala renderingseffekten."
 
-msgid "Model A"
-msgstr "Modell A"
+msgid "Neutral"
+msgstr "Neutral"
 
-msgid "Model B"
-msgstr "Modell B"
+msgid "Rich"
+msgstr "Fyllig"
 
-msgid "Model C"
-msgstr "Modell C"
+msgid "Soft"
+msgstr "Mjuk"
 
-msgid "Model"
-msgstr "Modell"
+msgid "Style"
+msgstr "Stil"
 
 msgid "Faces & skin"
 msgstr "Ansikten och hud"
-
-msgid "Off while Character Mask is off. Turn it on under Advanced."
-msgstr "Av medan Karaktärsmask är av. Slå på den under Avancerat."
-
-msgid ""
-"Structure enhancement on detected skin and faces.\n"
-"Same as Structure takes the Structure strength, the provider's own default."
-msgstr ""
-"Strukturförstärkning på upptäckt hud och ansikten.\n"
-"Som Struktur använder strukturintensiteten, leverantörens eget standardval."
 
 msgid "Resolution Scale"
 msgstr "Upplösningsskala"
@@ -383,27 +573,8 @@ msgstr "Auto"
 msgid "up to %.0f%%"
 msgstr "upp till %.0f%%"
 
-msgid ""
-"Share of the hook method's resolution that the network processes.\n"
-"100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-"Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, not below 75, and raises it again with headroom, never above the slider."
-msgstr ""
-"Andel av hookmetodens upplösning som nätverket bearbetar.\n"
-"100 är inbyggd, lägre är snabbare, upp till 200 översamplar. Värden under 25 blir 25.\n"
-"Auto sänker den när DLSS 5 tar mer än ungefär en tredjedel av varje renderad bild, inte under 75, och höjer den igen när det finns marginal, aldrig över reglaget."
-
 msgid "Half rate"
 msgstr "Halv takt"
-
-msgid "Half rate is not available on Vulkan or with the Present hook method yet."
-msgstr "Halv takt är ännu inte tillgängligt med Vulkan eller med hookmetoden Presentation."
-
-msgid ""
-"Runs the network on every other frame. The frames between apply its last look to their own image, so moving and animated surfaces keep it without trails.\n"
-"About half the GPU cost. Fine detail follows the game's motion vectors where a surface only moved."
-msgstr ""
-"Kör nätverket varannan bildruta. Bildrutorna däremellan tillämpar dess senaste utseende på sin egen bild, så att rörliga och animerade ytor behåller det utan spår.\n"
-"Ungefär halva GPU-kostnaden. Fina detaljer följer spelets rörelsevektorer där en yta bara har flyttat sig."
 
 msgid "DLSS 5 settings could not be saved."
 msgstr "DLSS 5-inställningarna kunde inte sparas."
@@ -411,11 +582,11 @@ msgstr "DLSS 5-inställningarna kunde inte sparas."
 msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
 msgstr "Före uppskalning och Presentation körs inte med Vulkan ännu. Välj Auto eller Efter uppskalning."
 
+msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
+msgstr "Presentation körs inte med DirectX 11 ännu. Välj Auto, Före uppskalning eller Efter uppskalning."
+
 msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
 msgstr "Spelets swapchain kan inte använda hookmetoden Presentation; loggen anger orsaken. Före och efter uppskalning fungerar fortfarande."
-
-msgid "Debug view is on (Advanced, Inspect)."
-msgstr "Felsökningsvyn är på (Avancerat, Granska)."
 
 msgid "Compare"
 msgstr "Jämför"
@@ -442,6 +613,9 @@ msgid ""
 msgstr ""
 "Medan tangenten hålls ned visar spelet sin originalbild, så att DLSS 5 kan jämföras i rörelse.\n"
 "DLSS 5 fortsätter att köras, så GPU-kostnaden är oförändrad, och tangenten når fortfarande spelet."
+
+msgid "Presets"
+msgstr "Presets"
 
 msgid "Status"
 msgstr "Status"
@@ -481,6 +655,9 @@ msgstr "Direkt leverantör"
 
 msgid "Native NGX"
 msgstr "Inbyggd NGX"
+
+msgid "DirectX 11 to DirectX 12"
+msgstr "DirectX 11 till DirectX 12"
 
 msgid "Waiting for DLSS 5 GPU work to complete before applying settings."
 msgstr "Väntar på att DLSS 5:s GPU-arbete ska slutföras innan inställningarna tillämpas."
@@ -526,8 +703,8 @@ msgstr "Karaktärsmask"
 msgid "Detects skin and faces so that Faces & skin applies to them."
 msgstr "Hittar hud och ansikten så att Ansikten och hud gäller dem."
 
-msgid "Passes"
-msgstr "Pass"
+msgid "Look & passes"
+msgstr "Utseende och pass"
 
 msgid "Pass Count"
 msgstr "Antal pass"
@@ -542,10 +719,10 @@ msgid "Later passes"
 msgstr "Senare pass"
 
 msgid ""
-"Passes 2 and later refine the previous pass's output. Custom gives them their own Model and strengths.\n"
+"Passes 2 and later refine the previous pass's output. Custom gives them their own Style and strengths.\n"
 "Tone adds up from pass to pass, so later passes usually want less of it."
 msgstr ""
-"Pass 2 och senare förfinar föregående pass utdata. Anpassad ger dem egen modell och egna intensiteter.\n"
+"Pass 2 och senare förfinar föregående pass utdata. Anpassad ger dem egen stil och egna intensiteter.\n"
 "Ton adderas från pass till pass, så senare pass behöver oftast mindre av den."
 
 msgid "Later-pass settings apply when Pass Count is 2 or more."
@@ -644,23 +821,18 @@ msgstr "RGB-residual"
 msgid "Processed image"
 msgstr "Bearbetad bild"
 
-msgid "Ratio"
-msgstr "Kvot"
-
 msgid "Scale Reconstruction"
 msgstr "Skalrekonstruktion"
 
 msgid ""
 "RGB residual adds the network's change to the full-resolution image.\n"
-"Processed image uses the upscaled network output directly.\n"
-"Ratio multiplies the full-resolution image by the network's change, so black stays black."
+"Processed image uses the upscaled network output directly."
 msgstr ""
 "RGB-residual lägger till nätverkets ändring i bilden med full upplösning.\n"
-"Bearbetad bild använder nätverkets uppskalade utdata direkt.\n"
-"Kvot multiplicerar bilden med full upplösning med nätverkets ändring, så svart förblir svart."
+"Bearbetad bild använder nätverkets uppskalade utdata direkt."
 
-msgid "HDR and signal"
-msgstr "HDR och signal"
+msgid "HDR"
+msgstr "HDR"
 
 msgid "Linear BT.709"
 msgstr "Linjär BT.709"
@@ -742,17 +914,11 @@ msgstr "Leverantör"
 msgid "Default"
 msgstr "Standard"
 
-msgid "Preset A"
-msgstr "Preset A"
+msgid "Fast"
+msgstr "Snabbt"
 
-msgid "Preset B"
-msgstr "Preset B"
-
-msgid "Preset"
-msgstr "Preset"
-
-msgid "The provider's render preset hint."
-msgstr "Leverantörens tips om renderingspreset."
+msgid "Network"
+msgstr "Nätverk"
 
 msgid "UI Correction"
 msgstr "UI-korrigering"
@@ -808,8 +974,8 @@ msgstr "Blockera HUD-lös bild"
 msgid "Present only: keeps the game's HUD-less image from DLSS frame generation, so generated frames match processed ones."
 msgstr "Endast Presentation: håller spelets HUD-lösa bild borta från DLSS Frame Generation så att genererade bilder matchar de bearbetade."
 
-msgid "Inspect"
-msgstr "Granska"
+msgid "Mask"
+msgstr "Mask"
 
 msgid "Network input"
 msgstr "Nätverkets indata"
@@ -971,6 +1137,42 @@ msgstr "Reflex-status är tillfälligt otillgänglig."
 msgid "Path traced hair"
 msgstr "Hår med path tracing"
 
+msgid "Preparing"
+msgstr "Förbereder"
+
+msgid "Active"
+msgstr "Aktivt"
+
+msgid "universal: game RTX hair converted"
+msgstr "universellt: spelets RTX-hår konverterat"
+
+msgid "no hair built in the last 2 s"
+msgstr "inget hår byggt de senaste 2 s"
+
+msgid "Ready"
+msgstr "Redo"
+
+msgid "waiting for game hair"
+msgstr "väntar på hårdata från spelet"
+
+msgid "Universal hair runs the game's own RTX 50 hair on this GPU. It is on by default; set Universal=0 under [RtxHair] in RTXMFG.RtxHair.ini beside the game to turn it off."
+msgstr "Universellt hår kör spelets eget RTX 50-hår på den här GPU:n. Det är på som standard; sätt Universal=0 under [RtxHair] i RTXMFG.RtxHair.ini bredvid spelet för att stänga av det."
+
+msgid "%s updates"
+msgstr "%s uppdateringar"
+
+msgid "Builds"
+msgstr "Byggen"
+
+msgid "%s not converted"
+msgstr "%s inte konverterade"
+
+msgid "Hair shaders"
+msgstr "Hårshaders"
+
+msgid "Hair diagnostics"
+msgstr "Hårdiagnostik"
+
 msgid "Unknown"
 msgstr "Okänt"
 
@@ -979,9 +1181,6 @@ msgstr "Inaktiverat"
 
 msgid "Waiting for early device"
 msgstr "Väntar på grafikenheten"
-
-msgid "Preparing"
-msgstr "Förbereder"
 
 msgid "Unsupported game build"
 msgstr "Spelversionen stöds inte"
@@ -992,17 +1191,11 @@ msgstr "GPU:n stöds inte"
 msgid "Native LSS"
 msgstr "Inbyggt LSS"
 
-msgid "Unavailable"
-msgstr "Ej tillgängligt"
-
 msgid "Unsupported driver"
 msgstr "Drivrutinen stöds inte"
 
 msgid "game Path Traced Hair setting"
 msgstr "spelets inställning Path Traced Hair"
-
-msgid "Active"
-msgstr "Aktivt"
 
 msgid "tracing converted hair"
 msgstr "renderar konverterat hår"
@@ -1010,26 +1203,11 @@ msgstr "renderar konverterat hår"
 msgid "no hair traced in the last 2 s"
 msgstr "inget hår renderat de senaste 2 s"
 
-msgid "Ready"
-msgstr "Redo"
-
-msgid "waiting for game hair"
-msgstr "väntar på hårdata från spelet"
-
 msgid "Turn it on or off with HairWorks and Path Traced Hair in the game's graphics settings."
 msgstr "Slå på eller av med HairWorks och Path Traced Hair i spelets grafikinställningar."
 
 msgid "Traced hair"
 msgstr "Renderat hår"
-
-msgid "%s updates"
-msgstr "%s uppdateringar"
-
-msgid "Builds"
-msgstr "Byggen"
-
-msgid "Hair diagnostics"
-msgstr "Hårdiagnostik"
 
 msgid "Turn on frame generation in the game's settings (DLSS or XeSS)."
 msgstr "Slå på Frame Generation i spelets inställningar (DLSS eller XeSS)."
@@ -1090,15 +1268,37 @@ msgstr "Spelet ser ett NVIDIA GeForce RTX 4090 under den här sessionen."
 msgid "This GPU is not an RTX 30 card; the game sees its real name."
 msgstr "Det här grafikkortet är inte ett RTX 30-kort; spelet ser dess riktiga namn."
 
+msgid ""
+"Writes the MFG Unlocker log beside the game. Bug reports need it.\n"
+"Turn it off to stop writing the log. Applies after a game restart."
+msgstr ""
+"Skriver MFG Unlockers logg bredvid spelet. Felrapporter behöver den.\n"
+"Stäng av den för att sluta skriva loggen. Gäller efter en omstart av spelet."
+
+msgid "The log setting could not be saved."
+msgstr "Logginställningen kunde inte sparas."
+
+msgid "Restart the game to write the log again."
+msgstr "Starta om spelet för att skriva loggen igen."
+
+msgid "Restart the game to stop writing the log."
+msgstr "Starta om spelet för att sluta skriva loggen."
+
+msgid "Write log file"
+msgstr "Skriv loggfil"
+
+msgid "Diagnostics"
+msgstr "Diagnostik"
+
 msgid "XeMFG standalone"
 msgstr "Fristående XeMFG"
 
 msgid ""
 "MFG Unlocker runs XeSS multi-frame generation itself, without OptiScaler, from the inputs of the game's DLSS frame generation or of its DLSS, XeSS or FSR 3.1 upscaling. It replaces the game's own frame generation.\n"
-"Switching it on or off applies after a restart."
+"Switching it on or off applies at once: MFG Unlocker briefly resizes the game's window so the game hands its swap chain over. If the game ignores that, it applies at the game's next resolution or window-mode change, or after a restart."
 msgstr ""
 "MFG Unlocker kör XeSS Multi-Frame Generation själv, utan OptiScaler, med indata från spelets DLSS Frame Generation eller från dess DLSS-, XeSS- eller FSR 3.1-uppskalning. Den ersätter spelets egen Frame Generation.\n"
-"Att slå på eller av det gäller efter en omstart."
+"Att slå på eller av gäller direkt: MFG Unlocker ändrar kort storlek på spelets fönster så att spelet lämnar över sin swapchain. Om spelet ignorerar det gäller det vid spelets nästa byte av upplösning eller fönsterläge, eller efter en omstart."
 
 msgid "Dynamic"
 msgstr "Dynamisk"
@@ -1172,11 +1372,41 @@ msgstr "De två filerna ligger i olika mappar."
 msgid "Found %s, not %s: check the file's name and extension."
 msgstr "Hittade %s, inte %s: kontrollera filens namn och filändelse."
 
-msgid "The XeMFG setting could not be saved."
-msgstr "XeMFG-inställningen kunde inte sparas."
+msgid "The %s in %s is version %s, which is too old for XeMFG."
+msgstr "Filen %s i %s har version %s, som är för gammal för XeMFG."
+
+msgid "The %s in %s is too old for XeMFG."
+msgstr "Filen %s i %s är för gammal för XeMFG."
+
+msgid "Put libxess_fg.dll and libxell.dll from Intel's XeSS SDK %s in %s, then restart the game."
+msgstr "Lägg libxess_fg.dll och libxell.dll från Intels XeSS SDK %s i %s och starta sedan om spelet."
 
 msgid "Restart the game to start XeMFG."
 msgstr "Starta om spelet för att starta XeMFG."
+
+msgid "This game ignores window size changes, so XeMFG starts after a restart. From then on, XeMFG switches on and off in this game without a restart."
+msgstr "Det här spelet ignorerar ändringar av fönsterstorleken, så XeMFG startar efter en omstart. Därefter slås XeMFG på och av i det här spelet utan omstart."
+
+msgid "The game did not resize its swap chain, so XeMFG has not started yet. It starts at the game's next resolution or window-mode change, or after a restart."
+msgstr "Spelet ändrade inte storlek på sin swapchain, så XeMFG har inte startat än. Det startar vid spelets nästa byte av upplösning eller fönsterläge, eller efter en omstart."
+
+msgid "XeMFG cannot take over a swap chain in exclusive fullscreen. Switch the game to borderless or windowed, or restart the game."
+msgstr "XeMFG kan inte ta över en swapchain i exklusiv helskärm. Byt spelet till kantlöst läge eller fönsterläge, eller starta om spelet."
+
+msgid "XeMFG could not take over the running game's swap chain (%s). Restart the game to start XeMFG."
+msgstr "XeMFG kunde inte ta över det körande spelets swapchain (%s). Starta om spelet för att starta XeMFG."
+
+msgid "The XeMFG setting could not be saved."
+msgstr "XeMFG-inställningen kunde inte sparas."
+
+msgid "XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or window-mode change, or a restart."
+msgstr "XeMFG är av, men XeFG behåller spelets swapchain till spelets nästa byte av upplösning eller fönsterläge, eller till en omstart."
+
+msgid "XeMFG is off. The game's DLSS frame generation comes back after a restart: it cannot start again in this session once XeMFG has taken over its swap chain."
+msgstr "XeMFG är av. Spelets DLSS-bildgenerering kommer tillbaka efter en omstart: den kan inte starta igen i den här sessionen när XeMFG har tagit över dess swapchain."
+
+msgid "Moving the game's swap chain to XeMFG..."
+msgstr "Flyttar spelets swapchain till XeMFG..."
 
 msgid "XeMFG could not start: %s"
 msgstr "XeMFG kunde inte starta: %s"
@@ -1199,6 +1429,12 @@ msgstr "Dynamisk, %ux"
 msgid "held as cap"
 msgstr "hålls som tak"
 
+msgid "Starting"
+msgstr "Startar"
+
+msgid "Waiting for a resize"
+msgstr "Väntar på storleksändring"
+
 msgid "Restart needed"
 msgstr "Omstart krävs"
 
@@ -1218,17 +1454,47 @@ msgstr ""
 msgid "%.1f real, %.1f XeMFG"
 msgstr "%.1f verkliga, %.1f XeMFG"
 
-msgid "Measuring..."
-msgstr "Mäter..."
-
 msgid "XeMFG off"
 msgstr "XeMFG av"
+
+msgid "Low-latency pacing"
+msgstr "Takt med låg latens"
+
+msgid "XeMFG holds the game inside Present until the display has room for its next frames, after the game has read your input. This moves that wait to before the game reads its input, so your actions show sooner. The frame rate stays the same. Auto turns it on. Applies at once."
+msgstr "XeMFG håller kvar spelet i Present tills skärmen har plats för nästa bildrutor, efter att spelet har läst din inmatning. Det här flyttar väntan till innan spelet läser inmatningen, så att dina handlingar syns tidigare. Bildfrekvensen är densamma. Auto slår på det. Gäller direkt."
+
+msgid "The low-latency pacing setting could not be saved."
+msgstr "Inställningen för takt med låg latens kunde inte sparas."
+
+msgid "for XeMFG's frames"
+msgstr "på XeMFG:s bildrutor"
+
+msgid "No sleep point"
+msgstr "Ingen vilopunkt"
+
+msgid "the game's frames reach no sleep before their input"
+msgstr "spelets bildrutor når ingen väntan före inmatningen"
+
+msgid "the game is not held in Present"
+msgstr "spelet hålls inte kvar i Present"
+
+msgid "%.1f ms sooner"
+msgstr "%.1f ms tidigare"
+
+msgid "of %.1f ms the game waited in Present"
+msgstr "av %.1f ms som spelet väntade i Present"
 
 msgid "MFG Unlocker multi-frame port"
 msgstr "MFG Unlockers multi-frame-port"
 
 msgid "Intel 2x model"
 msgstr "Intels 2x-modell"
+
+msgid "No generated frames"
+msgstr "Inga genererade bildrutor"
+
+msgid "the provider is failing; see the RTXMFG log"
+msgstr "leverantören misslyckas; se RTXMFG-loggen"
 
 msgid "Frame generation"
 msgstr "Frame Generation"
@@ -1275,6 +1541,9 @@ msgstr "Tillämpat"
 msgid "Not verified"
 msgstr "Ej verifierat"
 
+msgid "Model"
+msgstr "Modell"
+
 msgid "Tensor cores"
 msgstr "Tensorkärnor"
 
@@ -1302,11 +1571,137 @@ msgstr "Frame Generation ställs in i OptiScalers meny. Den här menyn har DLSS-
 msgid "DLSS 5"
 msgstr "DLSS 5"
 
-msgid "Waiting for status"
-msgstr "Väntar på status"
+msgid "Present does not run from OptiScaler's menu. Choose Auto, Before upscaling or After upscaling."
+msgstr "Presentation körs inte från OptiScalers meny. Välj Auto, Före uppskalning eller Efter uppskalning."
+
+msgid "XeFG"
+msgstr "XeFG"
+
+msgid "CUDA port"
+msgstr "CUDA-port"
+
+msgid "int8 layers on the tensor cores"
+msgstr "int8-lager på tensorkärnorna"
+
+msgid "XMX port"
+msgstr "XMX-port"
+
+msgid "on the shader cores"
+msgstr "på shaderkärnorna"
+
+msgid "XMX port: MFG Unlocker's port of Intel's multi-frame XMX model, run as DXIL shaders on any GPU. CUDA port: the same model with its int8 layers run as CUDA kernels on RTX tensor cores."
+msgstr "XMX-port: MFG Unlockers port av Intels multi-frame-XMX-modell, körs som DXIL-shaders på alla GPU:er. CUDA-port: samma modell med int8-lagren körda som CUDA-kernels på RTX-tensorkärnor."
 
 msgid "Waiting for current backend status. Saved settings are preserved."
 msgstr "Väntar på aktuell backend-status. Sparade inställningar behålls."
+
+msgid "Status is temporarily unavailable; controls are paused."
+msgstr "Status är tillfälligt otillgänglig; kontrollerna är pausade."
+
+msgid "Keybinds"
+msgstr "Snabbtangenter"
+
+msgid "FPS readout on"
+msgstr "FPS-visning på"
+
+msgid "FPS readout off"
+msgstr "FPS-visning av"
+
+msgid "Raise multiplier"
+msgstr "Höj multiplikator"
+
+msgid "Lower multiplier"
+msgstr "Sänk multiplikator"
+
+msgid "Dynamic on/off"
+msgstr "Dynamisk på/av"
+
+msgid "FPS readout on/off"
+msgstr "FPS-visning på/av"
+
+msgid "Pin panel"
+msgstr "Fäst panelen"
+
+msgid "Next preset"
+msgstr "Nästa preset"
+
+msgid "Previous preset"
+msgstr "Föregående preset"
+
+msgid "Frame generation keys apply once frame generation is ready"
+msgstr "Frame Generation-tangenterna gäller när Frame Generation är redo"
+
+msgid "Applying the last change..."
+msgstr "Tillämpar den senaste ändringen..."
+
+msgid "XeMFG: %s"
+msgstr "XeMFG: %s"
+
+msgid "Frame generation: %s"
+msgstr "Frame Generation: %s"
+
+msgid "%s is unavailable right now"
+msgstr "%s är inte tillgängligt just nu"
+
+msgid "Highest mode here: %s"
+msgstr "Högsta läget här: %s"
+
+msgid "Lowest mode: %s"
+msgstr "Lägsta läget: %s"
+
+msgid "The change could not be saved"
+msgstr "Ändringen kunde inte sparas"
+
+msgid "DLSS preset keys apply while the game runs DLSS"
+msgstr "DLSS-presettangenterna gäller medan spelet kör DLSS"
+
+msgid "RR preset: %s"
+msgstr "RR-preset: %s"
+
+msgid "SR preset: %s"
+msgstr "SR-preset: %s"
+
+msgid "the menu key"
+msgstr "menytangenten"
+
+msgid "%s is already used by %s"
+msgstr "%s används redan av %s"
+
+msgid "Moved from %s"
+msgstr "Flyttad från %s"
+
+msgid "The frame generation in use has no such mode."
+msgstr "Den Frame Generation som används har inget sådant läge."
+
+msgid "Steps through the modes the Mode list offers."
+msgstr "Stegar ett i taget genom lägena i lägeslistan."
+
+msgid "Steps through the presets of the DLSS the game runs: Super Resolution's (J, K, L, M) or, while Ray Reconstruction runs, Ray Reconstruction's (D, E, F). After the last one it starts again."
+msgstr "Stegar genom presets för den DLSS spelet kör: Super Resolutions (J, K, L, M) eller, medan Ray Reconstruction körs, Ray Reconstructions (D, E, F). Efter den sista börjar den om."
+
+msgid "Also used by %s"
+msgstr "Används även av %s"
+
+msgid "Keys work with the menu open or closed, and still reach the game."
+msgstr "Tangenterna fungerar med menyn öppen eller stängd och når fortfarande spelet."
+
+msgid "To bind a combination, hold Ctrl, Shift or Alt and press the key. A combination avoids the game's own keys."
+msgstr "Håll ned Ctrl, Shift eller Alt och tryck på tangenten för att binda en kombination. En kombination undviker spelets egna tangenter."
+
+msgid "Frame generation is set in OptiScaler's menu, so its keys are not offered here."
+msgstr "Frame Generation ställs in i OptiScalers meny, så dess tangenter finns inte här."
+
+msgid "Now applies to %s"
+msgstr "Gäller nu %s"
+
+msgid "Show a note when a key changes a setting"
+msgstr "Visa en notis när en tangent ändrar en inställning"
+
+msgid "The keybinds work for this session, but could not be saved."
+msgstr "Tangenterna gäller den här sessionen men kunde inte sparas."
+
+msgid "Waiting for status"
+msgstr "Väntar på status"
 
 msgid "Not connected"
 msgstr "Inte ansluten"
@@ -1319,9 +1714,6 @@ msgstr "Den integrerade kärnan är inte tillgänglig. Kontrollera startloggen o
 
 msgid "Paused"
 msgstr "Pausad"
-
-msgid "Live"
-msgstr "Aktiv"
 
 msgid "The game changed graphics adapters. Restart the game to select a new GPU."
 msgstr "Spelet har bytt grafikkort. Starta om spelet så att det nya grafikkortet används."
@@ -1359,6 +1751,9 @@ msgid ""
 msgstr ""
 "”Följ spelet” använder spelets egen Frame Generation-inställning.\n"
 "”Dynamisk” anpassar Frame Generation mot ett FPS-mål; det är ingen hård FPS-gräns."
+
+msgid "DLSS frame generation could not start on this GPU, so it stays off for this session. Restart the game to try again."
+msgstr "DLSS Frame Generation kunde inte starta på det här grafikkortet, så den är avstängd den här sessionen. Starta om spelet för att försöka igen."
 
 msgid "Frame generation stays under the game's control. This wrapper has no verified MFG override support."
 msgstr "Frame Generation styrs fortfarande av spelet. Den här wrappern saknar verifierat stöd för MFG-override."
@@ -1460,11 +1855,17 @@ msgstr "%.1f verkliga, DLSS ej tillgängligt"
 msgid "DLSS FG off"
 msgstr "DLSS FG av"
 
-msgid "Diagnostics"
-msgstr "Diagnostik"
+msgid "Latency unavailable"
+msgstr "Latens ej tillgänglig"
 
-msgid "Status is temporarily unavailable; controls are paused."
-msgstr "Status är tillfälligt otillgänglig; kontrollerna är pausade."
+msgid "Latency %.1f ms | 1%% high %.1f"
+msgstr "Latens %.1f ms | sämsta 1%% %.1f"
+
+msgid "Latency: needs Reflex"
+msgstr "Latens: kräver Reflex"
+
+msgid "Latency --"
+msgstr "Latens --"
 
 msgid "FPS status unavailable"
 msgstr "FPS-status ej tillgänglig"
@@ -1489,163 +1890,3 @@ msgstr "Dynamisk (ej tillgänglig)"
 
 msgid "Dynamic (checking...)"
 msgstr "Dynamisk (kontrollerar...)"
-
-#~ msgid "DLSS 5 Neural Rendering"
-#~ msgstr "DLSS 5 neural rendering"
-
-#~ msgid "Faster"
-#~ msgstr "Snabbare"
-
-#~ msgid "Full"
-#~ msgstr "Full"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation (not available yet)."
-#~ msgstr ""
-#~ "Rendering bearbetar DLSS-indata i renderingsupplösning, före DLSS SR, DLAA eller Ray Reconstruction.\n"
-#~ "Uppskalad bearbetar DLSS-utdata efter rekonstruktionen.\n"
-#~ "Presentation bearbetar swapchain-bilden innan den visas (inte tillgängligt än)."
-
-#~ msgid ""
-#~ "Auto treats the DLSS input and output as linear BT.709.\n"
-#~ "Other choices override the encoding of the processed image."
-#~ msgstr ""
-#~ "Auto behandlar DLSS-indata och -utdata som linjär BT.709.\n"
-#~ "Andra val åsidosätter kodningen av den bearbetade bilden."
-
-#~ msgid "Auto and Off leave the provider's UI correction off for DLSS input and output. On enables it."
-#~ msgstr "Auto och Av lämnar leverantörens UI-korrigering avstängd för DLSS-indata och -utdata. På aktiverar den."
-
-#~ msgid "Render"
-#~ msgstr "Rendering"
-
-#~ msgid "Upscaled"
-#~ msgstr "Uppskalad"
-
-#~ msgid ""
-#~ "Render processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "Upscaled processes the DLSS output after reconstruction.\n"
-#~ "Present processes the swapchain image before presentation and frame generation."
-#~ msgstr ""
-#~ "Rendering bearbetar DLSS-indata i renderingsupplösning, före DLSS SR, DLAA eller Ray Reconstruction.\n"
-#~ "Uppskalad bearbetar DLSS-utdata efter rekonstruktionen.\n"
-#~ "Presentation bearbetar swapchain-bilden innan den visas och före Frame Generation."
-
-#~ msgid "Overall Intensity"
-#~ msgstr "Total intensitet"
-
-#~ msgid "Character Intensity"
-#~ msgstr "Karaktärsintensitet"
-
-#~ msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Render or Upscaled still work."
-#~ msgstr "Spelets swapchain kan inte använda hookmetoden Presentation; loggen anger orsaken. Rendering och Uppskalad fungerar fortfarande."
-
-#~ msgid "Detects skin and faces so that Character Intensity applies to them."
-#~ msgstr "Upptäcker hud och ansikten så att karaktärsintensiteten gäller dem."
-
-#~ msgid ""
-#~ "Before upscaling processes the DLSS input at render resolution, before DLSS SR, DLAA or Ray Reconstruction.\n"
-#~ "After upscaling processes the DLSS output after reconstruction.\n"
-#~ "Present processes the final image, game UI included, before presentation and frame generation."
-#~ msgstr ""
-#~ "Före uppskalning bearbetar DLSS-indata i renderingsupplösning, före DLSS SR, DLAA eller Ray Reconstruction.\n"
-#~ "Efter uppskalning bearbetar DLSS-utdata efter rekonstruktionen.\n"
-#~ "Presentation bearbetar den färdiga bilden, med spelets UI, innan den visas och före Frame Generation."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25."
-#~ msgstr ""
-#~ "Andel av hookmetodens upplösning som nätverket bearbetar.\n"
-#~ "100 är inbyggd, lägre är snabbare, upp till 200 översamplar. Värden under 25 blir 25."
-
-#~ msgid "Active preset"
-#~ msgstr "Aktiv preset"
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Edges of fast-moving objects can show the original image for one frame."
-#~ msgstr ""
-#~ "Kör nätverket varannan bildruta och för dess resultat längs spelets rörelsevektorer till bildrutorna däremellan.\n"
-#~ "Ungefär halva GPU-kostnaden. Kanter på snabbt rörliga objekt kan visa originalbilden under en bildruta."
-
-#~ msgid "XeSS multi-frame generation needs OptiScaler, with XeFG as its frame generation output. Without it the game's XeSS frame generation runs at Intel's standard 2x."
-#~ msgstr "XeSS Multi-Frame Generation kräver OptiScaler med XeFG som FG-output. Utan det körs spelets XeSS Frame Generation i Intels vanliga 2x-läge."
-
-#~ msgid "Local detail and structure enhancement."
-#~ msgstr "Förstärkning av lokala detaljer och struktur."
-
-#~ msgid "Local tone and contrast enhancement."
-#~ msgstr "Förstärkning av lokal ton och kontrast."
-
-#~ msgid ""
-#~ "RGB residual adds the network's change to the full-resolution image.\n"
-#~ "Processed image uses the upscaled network output directly."
-#~ msgstr ""
-#~ "RGB-residual lägger till nätverkets ändring i bilden med full upplösning.\n"
-#~ "Bearbetad bild använder nätverkets uppskalade utdata direkt."
-
-#~ msgid "Boost"
-#~ msgstr "Boost"
-
-#~ msgid "Boost is not available on Vulkan or with the Present hook method yet."
-#~ msgstr "Boost är ännu inte tillgängligt med Vulkan eller med hookmetoden Presentation."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Boost is on."
-#~ msgstr ""
-#~ "Kör nätverket varannan bildruta och för dess resultat längs spelets rörelsevektorer till bildrutorna däremellan.\n"
-#~ "Ungefär halva GPU-kostnaden. Animerade ytor som vatten, och partiklar, behåller spelets egen bild medan Boost är på."
-
-#~ msgid "Place a compatible nvngx_dlssnr.dll beside the game executable or MFGUnlocker."
-#~ msgstr "Placera en kompatibel nvngx_dlssnr.dll bredvid spelets körbara fil eller MFGUnlocker."
-
-#~ msgid ""
-#~ "Runs the network on every other frame and carries its result along the game's motion vectors on the frames between.\n"
-#~ "About half the GPU cost. Animated surfaces such as water, and particles, keep the game's own image while Half rate is on."
-#~ msgstr ""
-#~ "Kör nätverket varannan bildruta och för dess resultat längs spelets rörelsevektorer till bildrutorna däremellan.\n"
-#~ "Ungefär halva GPU-kostnaden. Animerade ytor som vatten, och partiklar, behåller spelets egen bild medan Halv takt är på."
-
-#~ msgid ""
-#~ "How much a surface may change between frames and still keep the carried result.\n"
-#~ "Strict shows the game's image on more moving surfaces (less smear); Loose carries more detail."
-#~ msgstr ""
-#~ "Hur mycket en yta får ändras mellan bildrutor och ändå behålla det överförda resultatet.\n"
-#~ "Strikt visar spelets bild på fler rörliga ytor (mindre utsmetning); Tolerant för över mer detaljer."
-
-#~ msgid ""
-#~ "Share of the hook method's resolution that the network processes.\n"
-#~ "100 is native, lower is faster, up to 200 supersamples. Values below 25 use 25.\n"
-#~ "Auto lowers it when DLSS 5 takes more than about a third of each rendered frame, and raises it again with headroom, never above the slider."
-#~ msgstr ""
-#~ "Andel av hookmetodens upplösning som nätverket bearbetar.\n"
-#~ "100 är inbyggd, lägre är snabbare, upp till 200 översamplar. Värden under 25 blir 25.\n"
-#~ "Auto sänker den när DLSS 5 tar mer än ungefär en tredjedel av varje renderad bild och höjer den igen när det finns marginal, aldrig över reglaget."
-
-#~ msgid ""
-#~ "Sets Intensity, Model, Structure, Tone and Faces & skin together.\n"
-#~ "Subtle halves the change, Balanced is the default and Strong is clearly visible.\n"
-#~ "Pass Count under Advanced strengthens any look further, at extra GPU cost."
-#~ msgstr ""
-#~ "Ställer in Intensitet, Modell, Struktur, Ton och Ansikten och hud tillsammans.\n"
-#~ "Diskret halverar effekten, Balanserad är standard och Kraftig syns tydligt.\n"
-#~ "Antal pass under Avancerat förstärker valfritt utseende ytterligare, till en extra GPU-kostnad."
-
-#~ msgid "follows Structure"
-#~ msgstr "följer Struktur"
-
-#~ msgid "Follows Structure. Change it under Advanced."
-#~ msgstr "Följer Struktur. Ändras under Avancerat."
-
-#~ msgid "Structure enhancement on detected skin and faces."
-#~ msgstr "Strukturförstärkning på upptäckt hud och ansikten."
-
-#~ msgid "Faces & skin follows Structure"
-#~ msgstr "Ansikten och hud följer Struktur"
-
-#~ msgid "Faces & skin takes the Structure strength, the provider's own default."
-#~ msgstr "Ansikten och hud får strukturintensiteten, leverantörens eget standardval."

@@ -8,9 +8,8 @@
 #include <cstring>
 
 // DLSS Super Resolution and Ray Reconstruction detection and live preset
-// switching (V1.6.0, standalone). The NGX runtime route (D3D12, and Vulkan since
-// V1.6.2 vkpreset.1) sees every SuperSampling and RayReconstruction Create,
-// Evaluate and Release. A selected
+// switching (standalone). The NGX runtime route (D3D12 and Vulkan) sees every
+// SuperSampling and RayReconstruction Create, Evaluate and Release. A selected
 // preset reaches the provider through the six *.Hint.Render.Preset.* keys of its
 // feature on the game's parameter object at each Create (restored after the call).
 //
@@ -18,7 +17,7 @@
 // NGXDLAA / NGXDLSSD ReadValuesFromDRS), and a value found there (an NVIDIA app
 // override) outranks every later hint. With a preset selected at that read, the
 // read answers "not set", so the hints decide for the whole session. With
-// game/driver selected, the driver's answer passes. srpreset.3 preserves that
+// game/driver selected, the driver's answer passes. dlss_sr_override.h preserves that
 // answer on structurally supported RTX 40 routes and temporarily suppresses the
 // effective cached word inside the provider's own preset selector, serialized
 // with its cache readers/writer. It restores the original value before returning
@@ -152,8 +151,8 @@ enum class Unavailable : uint32_t
     eCreateFailed = 2,
     // Too many replaced handles are still waiting for release.
     eCapacity = 3,
-    // The NGX runtime route of this graphics API is not covered (D3D12 and,
-    // since V1.6.2 vkpreset.1, Vulkan are).
+    // The NGX runtime route of this graphics API is not covered (D3D12 and
+    // Vulkan are).
     eGraphicsApi = 4,
     // The provider cached an NVIDIA app preset override at its initialization.
     eDriverOverride = 5,
@@ -166,7 +165,7 @@ inline constexpr uint64_t kRetireMs = 250;
 // A feature counts as running while the game evaluated it this recently.
 inline constexpr uint64_t kRunningMs = 1000;
 
-// The NGX runtime entry of a Create (V1.6.2 vkpreset.1): a live re-create
+// The NGX runtime entry of a Create: a live re-create
 // enters the same one as the game's Create.
 enum class CreateApi : uint8_t { eD3D12, eVulkan, eVulkan1 };
 

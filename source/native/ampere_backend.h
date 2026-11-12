@@ -52,12 +52,11 @@ enum class FeatureCreatePendingState : uint8_t { eNone, eCurrent, eReadBusy, eIn
 FeatureCreatePendingState FeatureCreatePendingStatus(uint64_t token) noexcept;
 bool FeatureCreatePendingCurrent(uint64_t token) noexcept;
 // Frame-generation feature lifetime on the NGX runtime D3D12 route, RTX 40 and
-// RTX 30 (V1.6.0 live preset switching), and its Vulkan route (V1.6.2
-// vkpreset.1, RTX 20-50). A live feature keeps the preset it was
-// created with, so a new selection may be latched only while no FG Create is in
-// flight and no FG feature lives. The tracker is inexact for the process once a
-// successful Create cannot be recorded or a provider FG Create runs outside a
-// tracked runtime Create.
+// RTX 30 (live preset switching), and its Vulkan route (RTX 20-50). A live
+// feature keeps the preset it was created with, so a new selection may be
+// latched only while no FG Create is in flight and no FG feature lives. The
+// tracker is inexact for the process once a successful Create cannot be
+// recorded or a provider FG Create runs outside a tracked runtime Create.
 fg_lifetime::Snapshot ReadFrameGenerationLiveness() noexcept;
 // Nonblocking: no FG Create in flight, no tracked live FG feature, tracker exact.
 bool FrameGenerationQuiescent() noexcept;
@@ -76,11 +75,11 @@ bool Ready() noexcept;
 uint32_t FailureCode() noexcept;
 ampere_diagnostics::Snapshot Diagnostics() noexcept;
 bool EarlyInitObserved() noexcept;
-// admitoff.1: a finished startup failed admission, or the boundary is fatal, so
+// A finished startup failed admission, or the boundary is fatal, so
 // every FrameGeneration Create is refused (120) before the provider.
 bool AdmissionUnavailable() noexcept;
 uint64_t PresetQueries() noexcept;
-// V1.6.2 alpha.11: the prepared provider whose DLSS-G preset read (or legacy
+// The prepared provider whose DLSS-G preset read (or legacy
 // Create) this route recorded last; null before one. Prepared providers stay
 // pinned for the process, so the status may read it after the feature ends.
 HMODULE PresetProvider() noexcept;
@@ -94,7 +93,7 @@ uint32_t NativeMaximumReadResult() noexcept;
 uint32_t StartupMaximumGeneratedFrames() noexcept;
 uint32_t PresentationBuffers() noexcept;
 uint32_t CertifiedMaximumGeneratedFrames() noexcept;
-// ringcap.1: generated frames of the ring the last accepted Create certified on
+// Generated frames of the ring the last accepted Create certified on
 // the active wrapper generation (0 = none yet). It caps what the game is offered.
 uint32_t RingMaximumGeneratedFrames() noexcept;
 void ObserveActiveWrapper(HMODULE, uint64_t generation) noexcept;
@@ -120,12 +119,18 @@ void ObserveModule(HMODULE, const wchar_t*, uint64_t generation,
 bool InstallRoute(HMODULE, const wchar_t*, uint64_t generation, bool runtime,
     entry_detour::ForwardPreCall beforeCreate,
     entry_detour::ForwardPreCall beforeEvaluate) noexcept;
+// nrouter.1: OptiScaler's own D3D12 NGX Create/Evaluate/Release exports (the caller identified the module as the
+// OptiScaler host). DLSS 5 then runs on the game's DLSS calls into OptiScaler, after OptiScaler returns, so outside
+// OptiScaler's upscaler timer; the runtime route under such a call skips it. Waits (installs nothing) until NVIDIA's
+// D3D12 NGX runtime route is ours, whose entries DLSS 5 uses for its own feature.
+enum class OptiScalerNgxRoute : uint8_t { eWaiting, eInstalled, eFailed };
+OptiScalerNgxRoute InstallOptiScalerNgxRoute(HMODULE optiscaler) noexcept;
 
 // One patcher-owned NGX Vulkan Create/Create1/Evaluate forwarding entry. For a
 // runtime entry the rejected target becomes this route's thunk: the patcher's
 // gate returns false on RTX 30 to divert there, and the thunk rejects every
 // call (FeatureNotSupported, as `rejected`) when RTX 30 is not selected, except
-// the RTX 40/50 calls DivertNativeVulkanCall armed (vkpreset.1).
+// the RTX 40/50 calls DivertNativeVulkanCall armed.
 // A provider entry keeps `rejected`; its RTX 30 half is VulkanProviderGate.
 bool InstallVulkanEntry(HMODULE owner, uint64_t generation, bool runtime, entry_detour::Kind kind,
     void* target, entry_detour::ForwardPreCall preCall, entry_detour::ForwardGate gate, void* rejected,
@@ -133,10 +138,10 @@ bool InstallVulkanEntry(HMODULE owner, uint64_t generation, bool runtime, entry_
 // RTX 30 systems only (ampere_provider_arch::Armed): NVSDK_NGX_VULKAN_ReleaseFeature
 // on the provider and runtime, and the runtime's Vulkan requirements and
 // capability-parameter thunks. Returns whether every present export is covered.
-// V1.6.2 vkpreset.1: with RTX 40 or RTX 50 selected, the runtime's Vulkan
+// With RTX 40 or RTX 50 selected, the runtime's Vulkan
 // Release only (native pass-through that records FG and SR/RR releases).
 bool InstallVulkanRoute(HMODULE, const wchar_t*, uint64_t generation, bool runtime) noexcept;
-// vkpreset.1, RTX 40/50: whether the patcher's gate should divert this runtime
+// RTX 40/50: whether the patcher's gate should divert this runtime
 // Vulkan Create/Create1 (FG, SR or RR) or Evaluate (while SR/RR is tracked) to
 // its route's thunk instead of forwarding. That needs the route's own Vulkan
 // Release, so every handle a diverted Create returns has its release recorded.
@@ -146,10 +151,10 @@ bool DivertNativeVulkanCall(entry_detour::Handle entry, bool create, uintptr_t f
 // A provider-entry FG Create on RTX 40/50 (the Vulkan one, from the patcher's
 // gate): outside a tracked runtime Create it makes the lifetime tracker inexact.
 void ObserveProviderFrameGenerationCreate() noexcept;
-// ngxforward.1: logs, once per entry kind, an entry another hook's jump covers
+// Logs, once per entry kind, an entry another hook's jump covers
 // (entry_detour::Snapshot::overlaid) and the module that jump leads to.
 void ReportOverlaidEntry(const entry_detour::Snapshot& state) noexcept;
-// vkpreset.1: FG features created through the runtime's Vulkan entries are
+// FG features created through the runtime's Vulkan entries are
 // tracked: its Vulkan Release hook and one Create entry are current (RTX 30,
 // RTX 40 and RTX 50). D3D12 needs no such check: its route hooks all three.
 bool VulkanLifetimeCovered() noexcept;

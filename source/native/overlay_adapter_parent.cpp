@@ -4,6 +4,7 @@
 #include "overlay_dxgi_proxy.h"
 #include "overlay_native.h"
 #include "overlay_platform.h"
+#include "overlay_graphics_api.h"
 #include <MinHook.h>
 #include <intrin.h>
 #include <array>
@@ -72,9 +73,8 @@ template<size_t... I> auto Entries(std::index_sequence<I...>) {
     return std::array<Parent,sizeof...(I)>{&GetParent<I>...};
 }
 const auto entries=Entries(std::make_index_sequence<4>{});
-}
 
-void Observe(IUnknown* object) noexcept {
+void ObserveAdapter(IUnknown* object,const wchar_t* armed) noexcept {
     if (!object||gInsideOverlay||native::InsideLoader()||!single_module::OwnsBackend()) return;
     InternalScope internal;
     // No probing, adapter enumeration, replacement adapter, or native vtable
@@ -120,6 +120,35 @@ void Observe(IUnknown* object) noexcept {
     if(!protected_pointer::ProtectionMatches(reinterpret_cast<uintptr_t>(target),protection,8)
         ||!PublishedTo(binding,trampoline,entries[index]))return;
     binding.active.store(true,std::memory_order_release);
-    single_module::Log(L"MFG_PROXY_UI adapter-parent entry armed from application D3D12 adapter; caller=main-executable adapterReplacement=0 nativeTableWrites=0");
+    single_module::Log(armed);
+}
+}
+
+void Observe(IUnknown* object) noexcept {
+    ObserveAdapter(object,L"MFG_PROXY_UI adapter-parent entry armed from application D3D12 adapter; caller=main-executable adapterReplacement=0 nativeTableWrites=0");
+}
+
+void ObserveD3D11(IUnknown* device) noexcept {
+    if (!device||gInsideOverlay||native::InsideLoader()||!single_module::OwnsBackend()) return;
+    // Never in a D3D12 or Vulkan application, whichever API came first: its adapter-parent route stays as it was.
+    if (!graphics_api::D3D11Application()) {
+        static std::atomic<bool> logged{false};
+        if (!logged.exchange(true)) {
+            wchar_t line[200]{};
+            swprintf_s(line,L"MFG_PROXY_UI adapter-parent entry not armed from a D3D11 device: D3D12 or Vulkan application (step=application_api seen=0x%X first=0x%X)",
+                graphics_api::Seen(),graphics_api::First());
+            single_module::Log(line);
+        }
+        return;
+    }
+    ComPtr<IDXGIAdapter> adapter;
+    {
+        // The device's own adapter, through its public IDXGIDevice: the one GetParent gives the game's factory.
+        InternalScope internal;
+        ComPtr<IDXGIDevice> dxgi;
+        if (!native::PinInterface(device,2)||FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi)))||!dxgi
+            ||!native::PinInterface(dxgi.Get(),11)||FAILED(dxgi->GetAdapter(&adapter))||!adapter) return;
+    }
+    ObserveAdapter(adapter.Get(),L"MFG_PROXY_UI adapter-parent entry armed from application D3D11 device adapter; caller=main-executable adapterReplacement=0 nativeTableWrites=0");
 }
 }

@@ -15,7 +15,7 @@
 // NVAPI interface is forwarded unchanged.
 //
 // Flip-metering path ([Compatibility] Rtx30FlipMetering in RTX40MFG-UI.ini;
-// on by default in test builds, kOnByDefault; =0 turns it off): both
+// on by default, kOnByDefault; =0 turns it off): both
 // interfaces are forwarded, SetFlipConfig through an observer. In flip-metering
 // mode the wrapper runs frame generation on its pacer command context, so each
 // generated frame is presented before the next index writes the shared output;
@@ -80,7 +80,6 @@ bool ImageQueriesCaps(void* module) noexcept; // executable sections of a loaded
 enum class Setting : uint8_t { eDefault, eOff, eOn, eInvalid };
 inline constexpr wchar_t kSection[] = L"Compatibility";
 inline constexpr wchar_t kKey[] = L"Rtx30FlipMetering";
-// Test builds (rtx30flip.2+): the flip-metering path is on unless turned off.
 inline constexpr bool kOnByDefault = true;
 
 // Missing file or key is eDefault; 0, false and off are off; 1, true and on are
