@@ -7,6 +7,11 @@ body:
   - type: markdown
     attributes:
       value: |
+        > [!IMPORTANT]
+        > **Log files are required. Reports without them are closed without investigation.**
+        > Attach the actual `RTXMFG-*.log` and `RTXMFG-Universal.status.json` files from a run that shows the problem. Screenshots and video are very welcome too, but they go alongside the logs, not instead of them. Copied lines or "n/a" do not count.
+        > If no `RTXMFG-*.log` was written beside the game's executable or in `%TEMP%`, the mod is not loading: fix the filename using the compatibility page before you report.
+
         Use one report per game. First check the [Game compatibility](https://github.com/dashdogy/MFG-Unlocker/blob/main/docs/compatibility.md) page for the filename that works in your game. For DLSS MFG, confirm that the game has native DLSS Frame Generation before testing the mod. Do not upload NVIDIA or game DLL files.
 
   - type: input
@@ -118,21 +123,39 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Logs and supporting evidence
+      label: Log files (required)
       description: >-
+        Drag the files themselves into this box, or zip them first. Reports without the files are
+        closed, and pasted excerpts do not replace them.
         Attach `RTXMFG-<game>-<path-hash>.log`, `RTXMFG-<game>-<path-hash>.previous.log` and
         `RTXMFG-Universal.status.json` from the game folder, beside the game's executable, plus
         `RTXMFG-<game>-<path-hash>-intervals.csv` if there is one. If the game folder cannot be written,
         the logs are in `%TEMP%` instead. With OptiScaler, also attach `OptiScaler.log`.
-        Redact personal path information if needed. Add a short video for visual or pacing problems.
+        Keep **Write log file** ticked under **Diagnostics** in the menu, and attach the logs from
+        the run that shows the problem. You may redact your user name in paths.
+      placeholder: Drag and drop RTXMFG-*.log, RTXMFG-*.previous.log and RTXMFG-Universal.status.json here.
     validations:
       required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots and video
+      description: >-
+        Strongly encouraged. Add screenshots of the problem and of the menu's Debug panel, and a short
+        video for visual or pacing problems. They help a lot, but they go with the log files above,
+        not in place of them.
+      placeholder: Drag and drop screenshots or a short video here.
+    validations:
+      required: false
 
   - type: checkboxes
     id: checks
     attributes:
       label: Final checks
       options:
+        - label: I attached the actual RTXMFG log and status files from a run that shows the problem. Screenshots are welcome as well, but not instead. I understand that reports without the logs are closed.
+          required: true
         - label: I reproduced the issue after a full game restart.
           required: true
         - label: I removed older MFG Unlocker and RTX40MFG files before testing (see Upgrade in the install guide).
