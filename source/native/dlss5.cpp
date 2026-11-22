@@ -292,13 +292,13 @@ float ExposureBase(){
  if(mode!=0&&(flags&4)){
   float e=ex.Load(int3(0,0,0)).r;
   if(preExposure>0)e/=preExposure;
-  if(!(e>0)||!isfinite(e))e=1;
+  e=(e>0&&abs(e)<3e38)?e:1;
   game=mode==2?1/e:e;
  }
- float f=exposure*game;return f>0&&isfinite(f)?f:0;
+ float f=exposure*game;return f>0&&abs(f)<3e38?f:0;
 }
 // x the adaptive exposure gain (1 when off).
-float ExposureFactor(){float f=ExposureBase()*adaptiveGain;return f>0&&isfinite(f)?f:0;}
+float ExposureFactor(){float f=ExposureBase()*adaptiveGain;return f>0&&abs(f)<3e38?f:0;}
 float3 SourceTap(int2 p,float f){
  p=clamp(p,int2(origin),int2(origin+size)-1);
  return ToDomain(DecodeInput(a.Load(int3(p,0)).rgb)*f);
@@ -453,7 +453,7 @@ float3 HaloCorrection(uint2 id,float3 inL,float3 nrL,float g,float white){
    r=pow(saturate(v),2.2)*white;
   }
   float4 written=source;
-  if(f>0&&all(isfinite(r)))written=float4(EncodeOutput(r),source.a);
+  if(f>0&&all(abs(r)<3e38))written=float4(EncodeOutput(r),source.a);
   // Compare: the original left of the split (right of it with Swap sides), and a divider on it.
   bool left=float(id.x)<split;
   if((flags&32)&&((flags&128)?!left:left))written=source;
@@ -526,7 +526,7 @@ float2 Source(uint2 e,Texture2D<float4> motion){
  int2 m=motionOrigin+clamp(int2(at),0,int2(motionSize)-1);
  return float2(e)+0.5+motion.Load(int3(m,0)).xy*motionScale*float2(extent)/float2(motionSize);
 }
-bool Inside(float2 q){return all(isfinite(q))&&all(q>=0)&&all(q<float2(extent));}
+bool Inside(float2 q){return all(abs(q)<3e38)&&all(q>=0)&&all(q<float2(extent));}
 float Luma(float3 c){return dot(c,float3(0.2126,0.7152,0.0722));}
 float Bin(float3 c){return saturate(Luma(c))*float(bins-1);}
 float4 Bilinear(Texture2D<float4> t,float2 q){
@@ -664,7 +664,7 @@ float3 Look(float3 x,float2 q){
  float2 now=t0s.Load(int3(motionOrigin+int2(id.xy),0)).xy;
  float2 q=float2(id.xy)+0.5+now*motionScale;
  float2 before=now;
- if(all(isfinite(q))&&all(q>=0)&&all(q<float2(motionSize)))before=t1s.Load(int3(int2(q),0)).xy;
+ if(all(abs(q)<3e38)&&all(q>=0)&&all(q<float2(motionSize)))before=t1s.Load(int3(int2(q),0)).xy;
  dst[id.xy]=float4(now+before,0,0);
 }
 )";
@@ -904,7 +904,9 @@ DXGI_FORMAT DepthViewFormat(DXGI_FORMAT format) noexcept {
 // viewed: we create a shader view of it (stage color, exposure), so its format
 // needs a typed view. The provider alone reads depth and motion vectors, whose
 // formats (e.g. a depth-stencil typeless depth buffer) it handles itself.
-// anyMips: the stage color may carry a mip chain; our views and barriers only touch mip 0.
+// anyMips: the texture may carry a mip chain. The stage color: our views and barriers only touch mip 0. Depth and
+// motion vectors (issue 171, MSFS 2024: R32_FLOAT depth with 11 mips): we put no barrier on them, our Present-stage
+// copy reads mip 0 through its own view, and the provider takes the resource as the game's DLSS does.
 bool TextureOnDevice(ID3D12Resource* resource,ID3D12Device* device,const Rect& rect,D3D12_RESOURCE_DESC& desc,bool viewed,bool anyMips=false) noexcept {
     __try {
         ID3D12Device* owner=nullptr;
@@ -958,10 +960,10 @@ bool ValidateResources(const Slot& slot,Frame& frame,Stage stage,D3D12_RESOURCE_
             Log(message);
         }
     }
-    if(!TextureOnDevice(reinterpret_cast<ID3D12Resource*>(frame.depth),slot.device.Get(),frame.depthRect,depth,false)){
+    if(!TextureOnDevice(reinterpret_cast<ID3D12Resource*>(frame.depth),slot.device.Get(),frame.depthRect,depth,false,true)){
         InputsRefused(L"depth",depth,frame.depthRect);return false;
     }
-    if(!TextureOnDevice(reinterpret_cast<ID3D12Resource*>(frame.motion),slot.device.Get(),frame.motionRect,motion,false)){
+    if(!TextureOnDevice(reinterpret_cast<ID3D12Resource*>(frame.motion),slot.device.Get(),frame.motionRect,motion,false,true)){
         InputsRefused(L"motion vectors",motion,frame.motionRect);return false;
     }
     if(MotionCaptureFormat(ViewFormat(motion.Format))==DXGI_FORMAT_UNKNOWN){
@@ -1944,11 +1946,11 @@ void CaptureForPresent(Slot& slot,const Api& api,ID3D12GraphicsCommandList* cmd,
     }
     auto* depth=reinterpret_cast<ID3D12Resource*>(frame.depth);auto* motion=reinterpret_cast<ID3D12Resource*>(frame.motion);
     D3D12_RESOURCE_DESC depthDesc{},motionDesc{};
-    if(!TextureOnDevice(depth,slot.device.Get(),frame.depthRect,depthDesc,false) || DepthViewFormat(depthDesc.Format)==DXGI_FORMAT_UNKNOWN){
+    if(!TextureOnDevice(depth,slot.device.Get(),frame.depthRect,depthDesc,false,true) || DepthViewFormat(depthDesc.Format)==DXGI_FORMAT_UNKNOWN){
         InputsRefused(L"Present-stage depth",depthDesc,frame.depthRect);return;
     }
     // The copy reads the game's view (.xy of an RGBA source) into a two-channel texture of ours.
-    const DXGI_FORMAT motionView=TextureOnDevice(motion,slot.device.Get(),frame.motionRect,motionDesc,false)
+    const DXGI_FORMAT motionView=TextureOnDevice(motion,slot.device.Get(),frame.motionRect,motionDesc,false,true)
         ? ViewFormat(motionDesc.Format) : DXGI_FORMAT_UNKNOWN;
     const DXGI_FORMAT motionFormat=MotionCaptureFormat(motionView);
     if(motionFormat==DXGI_FORMAT_UNKNOWN){

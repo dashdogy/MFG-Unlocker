@@ -154,9 +154,10 @@ if(MFG_AMPERE_EMBEDDED_KERNELS)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/ampere_kernels.rc" "${resource}")
     string(APPEND kernel_table "};\n")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/ampere_kernel_resources.inc" "${kernel_table}")
-    # slim.1: the kernels ship as one packed resource; ampere_native_cache.cpp reads them through embedded_payload.
+    # The kernels are payload group ampere_kernels (each its own resource, uncompressed since V1.7.2 nolzma.1);
+    # ampere_native_cache.cpp reads them through embedded_payload.
     include("${CMAKE_CURRENT_LIST_DIR}/embedded_payload.cmake")
-    mfg_pack_payloads("${CMAKE_CURRENT_BINARY_DIR}/generated/ampere_kernels.rc" ampere_kernels 0 3900
+    mfg_pack_payloads("${CMAKE_CURRENT_BINARY_DIR}/generated/ampere_kernels.rc" ampere_kernels 0
         "${CMAKE_CURRENT_BINARY_DIR}/generated" MFG_AMPERE_KERNEL_RESOURCE)
 endif()
 add_compile_definitions(MFG_AMPERE_EMBEDDED_KERNELS=$<BOOL:${MFG_AMPERE_EMBEDDED_KERNELS}>)

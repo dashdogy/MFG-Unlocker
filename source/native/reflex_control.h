@@ -93,11 +93,22 @@ enum class Observation : uint32_t
 // owned Reflex plugin with loaded version 2.7-2.14 (any patch) is eligible.
 // Filenames are not feature identity; OTA and renamed plugins use the same
 // module-owned resolver/entry checks as a game-local sl.reflex.dll.
-// The resolver and installed code entries are pinned for process lifetime.
+// The route and its installed code entries hold loader references on the
+// plug-in until the host's slShutdown (RetireModule, entry_detour::RetireOwner).
 // A refusal is reported once per module generation; version receives the
 // plug-in's file version when one was read (zeros otherwise).
 Observation ObserveModule(HMODULE module, const wchar_t* path,
     uint64_t generation, std::array<uint32_t, 4>* version = nullptr) noexcept;
+
+// slshutdown.1: before the host's slShutdown. The plug-in's route turns
+// pass-through (no override or replay), no new route is published for it, and
+// the route's loader reference is released. True when the module had a route.
+bool RetireModule(HMODULE module) noexcept;
+
+// After the host's slShutdown. stillMapped (the same image, kept loaded by
+// another reference): the route takes its reference back and routes again.
+// Otherwise the route is freed for a plug-in loaded by a later session.
+void ReturnModule(HMODULE module, bool stillMapped) noexcept;
 
 // Applied reports an accepted options call, not measured FPS or presentation.
 Snapshot ReadSnapshot() noexcept;

@@ -214,7 +214,7 @@ VkAccelerationStructureKHR Structure(uint64_t value)
 }
 
 // A hair BLAS build of `segments` LSS segments into `dst`.
-void HairBuild(Rig& rig, VkAccelerationStructureKHR dst, uint32_t segments,
+DotsBuilderVk::BuildResult HairBuild(Rig& rig, VkAccelerationStructureKHR dst, uint32_t segments,
     VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR)
 {
     const VkAccelerationStructureGeometryKHR g = LssGeometry();
@@ -228,11 +228,11 @@ void HairBuild(Rig& rig, VkAccelerationStructureKHR dst, uint32_t segments,
     info.scratchData.deviceAddress = 0x30000000;
     const VkAccelerationStructureBuildRangeInfoKHR range{segments, 0, 0, 0};
     const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = {&range};
-    rig.builder.CmdBuild(CmdBuild, rig.list, 1, &info, ranges, VK_NULL_HANDLE);
+    return rig.builder.CmdBuild(CmdBuild, rig.list, 1, &info, ranges, VK_NULL_HANDLE);
 }
 
 // A scene build of `instances` instances into `dst`.
-void SceneBuild(Rig& rig, VkAccelerationStructureKHR dst, uint32_t instances)
+DotsBuilderVk::BuildResult SceneBuild(Rig& rig, VkAccelerationStructureKHR dst, uint32_t instances)
 {
     VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
     g.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
@@ -246,7 +246,7 @@ void SceneBuild(Rig& rig, VkAccelerationStructureKHR dst, uint32_t instances)
     info.pGeometries = &g;
     const VkAccelerationStructureBuildRangeInfoKHR range{instances, 0, 0, 0};
     const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = {&range};
-    rig.builder.CmdBuild(CmdBuild, rig.list, 1, &info, ranges, VK_NULL_HANDLE);
+    return rig.builder.CmdBuild(CmdBuild, rig.list, 1, &info, ranges, VK_NULL_HANDLE);
 }
 
 bool NoLssReachedTheDriver()
@@ -287,7 +287,10 @@ int main()
     {
         // Three ribbons: 6 triangles a segment, vertices in our buffer, no LSS at the driver.
         Rig rig;
-        HairBuild(rig, Structure(0xA1), 1000);
+        const auto scene = SceneBuild(rig, Structure(0x71), 10);
+        Check(!scene.recordedHair && !scene.error, "ordinary scene build leaves hair activity unchanged");
+        const auto hair = HairBuild(rig, Structure(0xA1), 1000);
+        Check(hair.recordedHair && !hair.error, "a successful LSS conversion reports recorded hair");
         const auto& b = gBuilds.back();
         Check(b.geometries.size() == 1 && b.geometries[0].geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR && b.ranges[0].primitiveCount == 6000,
             "1000 LSS segments become 6000 DOTS triangles");
@@ -352,7 +355,7 @@ int main()
         // No vertex buffer: an empty triangle build, never LSS at the driver.
         Rig rig;
         gFailAllocations = true;
-        HairBuild(rig, Structure(0xD1), 1000);
+        const auto blocked = HairBuild(rig, Structure(0xD1), 1000);
         gFailAllocations = false;
         const auto& b = gBuilds.back();
         Check(NoLssReachedTheDriver(), "a hair build without a vertex buffer sends no LSS geometry to the driver");
@@ -360,6 +363,10 @@ int main()
                 && b.info.mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR && b.geometries[0].geometry.triangles.vertexData.deviceAddress != 0,
             "it is a full build of no triangles at a valid address");
         Check(rig.builder.Stats().failures == 1, "and counts as a failure");
+        Check(!blocked.recordedHair && blocked.error && std::strcmp(blocked.error, "DOTS vertex buffer allocation failed") == 0,
+            "an inactive fallback reports its failure reason");
+        const auto recovered = HairBuild(rig, Structure(0xD1), 1000);
+        Check(recovered.recordedHair && !recovered.error, "a successful retry reports recovered hair activity");
     }
     {
         // Ribbons=2 and FastBuild=1.

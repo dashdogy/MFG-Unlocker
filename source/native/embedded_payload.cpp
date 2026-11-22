@@ -2,11 +2,10 @@
 #include "sha256_util.h"
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <new>
-// Last: 7zTypes.h defines True and False as macros.
-#include "third_party/lzma/LzmaDec.h"
 
 namespace embedded_payload
 {
@@ -16,20 +15,14 @@ struct Slot
 {
     std::once_flag once;
     HMODULE module = nullptr;
-    uint32_t resource = 0;
-    std::unique_ptr<uint8_t[]> bytes;
+    Group group{};
+    std::span<const Item> items;
+    std::unique_ptr<const uint8_t*[]> data; // Each item's resource bytes; null unless the whole group matched.
 };
 Slot gSlots[kSlots];
 std::atomic<LogFunction> gLog{nullptr};
 
-void* Allocate(ISzAllocPtr, size_t bytes) { return ::operator new(bytes, std::nothrow); }
-void Release(ISzAllocPtr, void* address) { ::operator delete(address); }
-const ISzAlloc kAllocator{Allocate, Release};
-
-// .lzma header: LZMA_PROPS_SIZE property bytes, then the 8-byte size, which the packer leaves unknown.
-constexpr size_t kHeaderBytes = LZMA_PROPS_SIZE + 8;
-
-// Compares without allocating (Decode is noexcept).
+// Compares without allocating (Check is noexcept).
 bool MatchesHex(const sha256_util::Digest& digest, const char* hex) noexcept
 {
     const auto nibble = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
@@ -41,73 +34,88 @@ bool MatchesHex(const sha256_util::Digest& digest, const char* hex) noexcept
     return hex[2 * digest.size()] == '\0';
 }
 
-// The decoded group, or null with the reason in `why`. Nothing is returned unless every byte matched.
-std::unique_ptr<uint8_t[]> Decode(HMODULE module, const Group& group, wchar_t (&why)[160]) noexcept
+// Every item's resource bytes, or null with the reason in `why`. Nothing is returned unless every item is present at
+// its size and offset and the joined bytes match the group's size and SHA-256.
+std::unique_ptr<const uint8_t*[]> Check(HMODULE module, const Group& group, std::span<const Item> items,
+    wchar_t (&why)[160]) noexcept
 {
-    const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(group.resource), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
-    const HGLOBAL loaded = resource ? LoadResource(module, resource) : nullptr;
-    const auto* packed = loaded ? static_cast<const uint8_t*>(LockResource(loaded)) : nullptr;
-    const DWORD size = resource ? SizeofResource(module, resource) : 0;
-    if (!packed)
+    if (items.empty() || !group.rawBytes)
     {
-        swprintf_s(why, L"resource missing");
+        swprintf_s(why, L"empty table");
         return {};
     }
-    if (size != group.packedBytes || size <= kHeaderBytes || !group.rawBytes)
+    std::unique_ptr<const uint8_t*[]> data(new (std::nothrow) const uint8_t*[items.size()]);
+    if (!data)
     {
-        swprintf_s(why, L"packed size %lu, expected %u", size, group.packedBytes);
+        swprintf_s(why, L"no memory for %zu entries", items.size());
         return {};
     }
-    std::unique_ptr<uint8_t[]> raw(new (std::nothrow) uint8_t[group.rawBytes]);
-    if (!raw)
+    sha256_util::Hasher hasher;
+    uint64_t joined = 0;
+    for (size_t i = 0; i < items.size(); ++i)
     {
-        swprintf_s(why, L"no memory for %u bytes", group.rawBytes);
-        return {};
+        const Item& item = items[i];
+        const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(item.id), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
+        const HGLOBAL loaded = resource ? LoadResource(module, resource) : nullptr;
+        const auto* bytes = loaded ? static_cast<const uint8_t*>(LockResource(loaded)) : nullptr;
+        const DWORD size = resource ? SizeofResource(module, resource) : 0;
+        if (!bytes)
+        {
+            swprintf_s(why, L"payload %u missing", item.id);
+            return {};
+        }
+        if (size != item.bytes || item.offset != joined)
+        {
+            swprintf_s(why, L"payload %u is %lu bytes at %llu, expected %u at %u", item.id, size,
+                static_cast<unsigned long long>(joined), item.bytes, item.offset);
+            return {};
+        }
+        if (!hasher.Update(bytes, size))
+        {
+            swprintf_s(why, L"SHA-256 unavailable");
+            return {};
+        }
+        data[i] = bytes;
+        joined += size;
     }
-    SizeT rawBytes = group.rawBytes, packedBytes = size - kHeaderBytes;
-    ELzmaStatus status = LZMA_STATUS_NOT_SPECIFIED;
-    const SRes result = LzmaDecode(raw.get(), &rawBytes, packed + kHeaderBytes, &packedBytes, packed, LZMA_PROPS_SIZE,
-        LZMA_FINISH_END, &status, &kAllocator);
-    if (result != SZ_OK || rawBytes != group.rawBytes
-        || (status != LZMA_STATUS_FINISHED_WITH_MARK && status != LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK))
+    if (joined != group.rawBytes)
     {
-        swprintf_s(why, L"LZMA decode result %d, status %d, %zu of %u bytes", result, static_cast<int>(status),
-            static_cast<size_t>(rawBytes), group.rawBytes);
+        swprintf_s(why, L"%llu bytes in all, expected %u", static_cast<unsigned long long>(joined), group.rawBytes);
         return {};
     }
     sha256_util::Digest digest{};
-    if (!sha256_util::Compute(raw.get(), rawBytes, digest) || !MatchesHex(digest, group.rawSha256))
+    if (!hasher.Finish(digest) || !MatchesHex(digest, group.rawSha256))
     {
-        swprintf_s(why, L"decoded SHA-256 differs from the build's");
+        swprintf_s(why, L"SHA-256 differs from the build's");
         return {};
     }
-    return raw;
+    return data;
 }
 }
 
 std::span<const uint8_t> Find(HMODULE module, const Group& group, std::span<const Item> items, uint32_t id) noexcept
 {
-    // A null module never claims the slot, so a later call with the real module still decodes the group.
-    if (!module || group.slot >= kSlots) return {};
+    // A null module never claims the slot, so a later call with the real module still checks the group.
+    if (!module || group.slot >= kSlots || !group.rawSha256) return {};
     Slot& slot = gSlots[group.slot];
     std::call_once(slot.once, [&]() noexcept {
         slot.module = module;
-        slot.resource = group.resource;
+        slot.group = group;
+        slot.items = items;
         wchar_t why[160]{};
-        slot.bytes = Decode(module, group, why);
-        if (slot.bytes) return;
+        slot.data = Check(module, group, items, why);
+        if (slot.data) return;
         wchar_t line[320]{};
-        swprintf_s(line, L"Embedded payloads: group %hs (resource %u) refused: %ls; its payloads stay unavailable",
-            group.name, group.resource, why);
+        swprintf_s(line, L"Embedded payloads: group %hs refused: %ls; its payloads stay unavailable",
+            group.name ? group.name : "?", why);
         if (const LogFunction log = gLog.load(std::memory_order_acquire)) log(line);
     });
-    if (!slot.bytes || slot.module != module || slot.resource != group.resource) return {};
-    for (const Item& item : items)
-    {
-        if (item.id != id) continue;
-        if (item.offset > group.rawBytes || item.bytes > group.rawBytes - item.offset) return {};
-        return {slot.bytes.get() + item.offset, item.bytes};
-    }
+    // A slot belongs to the group that first used it: same module, table and digest.
+    if (!slot.data || slot.module != module || slot.items.data() != items.data() || slot.items.size() != items.size()
+        || slot.group.rawBytes != group.rawBytes || std::strcmp(slot.group.rawSha256, group.rawSha256) != 0)
+        return {};
+    for (size_t i = 0; i < items.size(); ++i)
+        if (items[i].id == id) return {slot.data[i], items[i].bytes};
     return {};
 }
 

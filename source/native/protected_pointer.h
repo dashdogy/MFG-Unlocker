@@ -80,13 +80,44 @@ inline bool QueryProtection(uintptr_t address, DWORD& protection,
     return true;
 }
 
+// cowtwin.1 (issues 170 and 172, Wine/Proton): the writable protection an image page reads back as depends on
+// whether the page is still shared with the file. A request for READWRITE can read back as WRITECOPY and the
+// reverse, and the same holds for the executable pair; Wine answers WRITECOPY where Windows answers READWRITE.
+// Both members of a pair are writable and private on write, so either one satisfies a request for the other.
+// Read-only and execute-read have no twin: a restore is still verified exactly. 0 = no twin.
+inline DWORD CopyOnWriteTwin(DWORD protection) noexcept
+{
+    switch (protection & 0xFFu)
+    {
+    case PAGE_READWRITE: return PAGE_WRITECOPY;
+    case PAGE_WRITECOPY: return PAGE_READWRITE;
+    case PAGE_EXECUTE_READWRITE: return PAGE_EXECUTE_WRITECOPY;
+    case PAGE_EXECUTE_WRITECOPY: return PAGE_EXECUTE_READWRITE;
+    default: return 0;
+    }
+}
+
+inline bool ImageMemory(uintptr_t address) noexcept
+{
+    MEMORY_BASIC_INFORMATION memory{};
+    return address
+        && VirtualQuery(reinterpret_cast<const void*>(address), &memory, sizeof(memory)) == sizeof(memory)
+        && memory.State == MEM_COMMIT && memory.Type == MEM_IMAGE;
+}
+
+// Sets a protection and verifies it by reading it back. On image memory the copy-on-write twin of a writable
+// request counts as set (see CopyOnWriteTwin). ProtectionMatches itself stays exact: audits use it.
 inline bool SetAndVerifyProtection(void* address, size_t size,
     DWORD protection, ProtectMemoryFn protectMemory) noexcept
 {
     DWORD ignored = 0;
     protectMemory(address, size, protection, &ignored);
-    return ProtectionMatches(
-        reinterpret_cast<uintptr_t>(address), protection, size);
+    const uintptr_t location = reinterpret_cast<uintptr_t>(address);
+    if (ProtectionMatches(location, protection, size))
+        return true;
+    const DWORD twin = CopyOnWriteTwin(protection);
+    return twin != 0 && ImageMemory(location)
+        && ProtectionMatches(location, twin | (protection & ~0xFFu), size);
 }
 
 inline bool RestoreProtectionWithRetry(void* address, size_t size,

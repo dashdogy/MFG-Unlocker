@@ -67,6 +67,9 @@ enum class Kind : uint32_t
     eNgxRuntimeD3D11Create = 47,
     eNgxRuntimeD3D11Evaluate = 48,
     eNgxRuntimeD3D11Release = 49,
+    // slshutdown.1: the game's interposer slShutdown (relocation path), where
+    // our references on Streamline plug-ins end.
+    eSlShutdown = 50,
     eCount,
 };
 
@@ -99,8 +102,9 @@ enum class Failure : uint32_t
     eForwardRelayFailed = 17,
 };
 
-// Handles remain valid for the lifetime of the process. Installed entries pin
-// their owner because already-cached function pointers may outlive discovery.
+// Handles remain valid for the lifetime of the process. Installed entries hold
+// a reference on their owner because already-cached function pointers may
+// outlive discovery; RetireOwner releases it when the owner's host unloads it.
 struct Handle
 {
     uint32_t slot = UINT32_MAX;
@@ -204,6 +208,21 @@ Snapshot ReadSnapshot(Kind kind) noexcept;
 // Owner-scoped aggregate used to pair Create/Evaluate entries from the same
 // provider or runtime module before the first Evaluate call occurs.
 Snapshot ReadSnapshot(Kind kind, HMODULE owner) noexcept;
+
+// slshutdown.1: a Streamline host's slShutdown unloads its plug-ins, sl.common
+// last. Before it runs, the entries installed in one plug-in are retired: they
+// report neither installed nor current (their target bytes are not read again),
+// new entries for that owner are refused, and the owner references they hold
+// are released, so the host's FreeLibrary is the final one. Patches, hooks and
+// trampolines stay as they are: a mapped image keeps forwarding through them,
+// and an unloaded one cannot reach them. Returns the entries retired.
+size_t RetireOwner(HMODULE owner) noexcept;
+
+// After the host's shutdown returned. stillMapped (the same image, kept loaded
+// by another reference): the references are taken back and the entries report
+// again. Otherwise only the install refusal ends, so an image mapped later at
+// the same base can be hooked. Returns the entries returned.
+size_t ReturnOwner(HMODULE owner, bool stillMapped) noexcept;
 
 size_t RegistryCapacity() noexcept;
 const char* MethodName(Method method) noexcept;

@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -539,6 +540,7 @@ struct CreateDeviceTag
         VkResult result = original(physical, rtx_hair::vk::EditedInfo(hair.get(), used), allocator, output);
         if (result != VK_SUCCESS && (edit || hair))
         {
+            if (hair) rtx_hair::vk::DeviceCreationFailed(result);
             // apisetgpa.1: logged, since a device that refuses the edit is otherwise silent.
             single_module::Log((L"MFG_PROXY_UI edited vkCreateDevice failed (" + std::to_wstring(static_cast<int>(result))
                 + L"); creating the game's own device, provider edit=" + (edit ? L"1" : L"0")
@@ -1117,12 +1119,15 @@ FARPROC Resolve(HMODULE module, LPCSTR name, FARPROC original) noexcept
     // Establish the public loader ABI in its exact image. All downstream
     // layer/driver functions still come from that loader's GIPA/GDPA chain.
     // Bind(false) pins each returned callable and never changes its code.
-    wchar_t path[32768]{};
-    const DWORD length = module ? GetModuleFileNameW(module, path, 32768) : 0;
+    // Renderers may resolve Vulkan from engine threads with small stacks.
+    std::unique_ptr<wchar_t[]> path(new(std::nothrow) wchar_t[32768]);
+    if (!path) return original;
+    const DWORD length = module ? GetModuleFileNameW(module, path.get(), 32768) : 0;
     if (!length || length >= 32768) return original;
-    const wchar_t* leaf = wcsrchr(path, L'\\');
-    if (_wcsicmp(leaf ? leaf+1 : path, L"vulkan-1.dll")
-        || !slots::ImageEntry(module, reinterpret_cast<void*>(original))) return original;
+    const wchar_t* leaf = wcsrchr(path.get(), L'\\');
+    if (_wcsicmp(leaf ? leaf+1 : path.get(), L"vulkan-1.dll")
+        || !slots::ImageEntry(module, reinterpret_cast<void*>(original))
+        || GetProcAddress(module,name)!=original) return original;
     for (const char* symbol : {"vkGetInstanceProcAddr", "vkGetDeviceProcAddr",
             "vkCreateInstance", "vkEnumeratePhysicalDevices", "vkCreateDevice"})
         if (!slots::ImageEntry(module, reinterpret_cast<void*>(GetProcAddress(module, symbol))))

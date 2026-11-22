@@ -96,6 +96,12 @@ uint32_t CertifiedMaximumGeneratedFrames() noexcept;
 // Generated frames of the ring the last accepted Create certified on
 // the active wrapper generation (0 = none yet). It caps what the game is offered.
 uint32_t RingMaximumGeneratedFrames() noexcept;
+// genswap30.1: XeFG can stand in for the translated program's frame generation feature behind the game's Streamline
+// (xess/streamline_provider_policy.h TranslatedRoute): RTX 30/20, startup admission complete, a wrapper ring of 6x.
+bool XefgStandInAvailable() noexcept;
+// genswap30.1: the generated frames the wrapper's ring holds for XeFG's feature on RTX 30/20: what XeFG's last Create
+// read, else the startup maximum (0 when neither is known, and on every other GPU).
+uint32_t XefgRingMaximum() noexcept;
 void ObserveActiveWrapper(HMODULE, uint64_t generation) noexcept;
 int32_t LastCreateCount() noexcept;
 uint64_t CreatedFeatures() noexcept;
@@ -116,6 +122,13 @@ bool BeforeFirstFeatureCreate() noexcept;
 void EndStartup(bool accepted) noexcept;
 void ObserveModule(HMODULE, const wchar_t*, uint64_t generation,
     bool wrapper, bool provider, bool runtime) noexcept;
+// slshutdown.2: before the host's slShutdown. Releases the loader references
+// the backend holds on a Streamline DLSS-G wrapper (its layout and availability
+// patch) and takes no new one; returns the references released.
+size_t RetireWrapper(HMODULE) noexcept;
+// After the host's slShutdown. stillMapped (kept loaded by another reference):
+// the references come back. Otherwise the wrapper's routes forget the image.
+void ReturnWrapper(HMODULE, bool stillMapped) noexcept;
 bool InstallRoute(HMODULE, const wchar_t*, uint64_t generation, bool runtime,
     entry_detour::ForwardPreCall beforeCreate,
     entry_detour::ForwardPreCall beforeEvaluate) noexcept;

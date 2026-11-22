@@ -38,6 +38,8 @@ struct DeviceEditDeleter
 using DeviceEditPtr = std::unique_ptr<DeviceEdit, DeviceEditDeleter>;
 DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* info) noexcept;
 const VkDeviceCreateInfo* EditedInfo(const DeviceEdit* edit, const VkDeviceCreateInfo* original) noexcept;
+// The driver rejected a device creation forwarded with a hair edit.
+void DeviceCreationFailed(VkResult result) noexcept;
 void DeviceCreated(DeviceEditPtr edit, VkDevice device) noexcept;
 // vkDestroyDevice, before the driver's: the device is idle (the game's obligation), so everything of ours goes.
 void DeviceDestroyed(VkDevice device) noexcept;

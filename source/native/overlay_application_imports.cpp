@@ -27,6 +27,9 @@ bool FactoryName(const char* name) noexcept {
     return !strcmp(name,"CreateDXGIFactory") || !strcmp(name,"CreateDXGIFactory1")
         || !strcmp(name,"CreateDXGIFactory2");
 }
+bool GraphicsEntry(const char* name) noexcept {
+    return (name[0]=='v' && name[1]=='k') || FactoryName(name);
+}
 template<size_t I> __declspec(noinline) FARPROC WINAPI Resolve(HMODULE module,LPCSTR name) {
     const auto original=bindings[I].original.load(std::memory_order_acquire);
     if (!original) return nullptr;
@@ -35,10 +38,11 @@ template<size_t I> __declspec(noinline) FARPROC WINAPI Resolve(HMODULE module,LP
             _ReturnAddress(),module,name,result)) result=original(module,name);
     const DWORD error=GetLastError();
     if (result && name && reinterpret_cast<uintptr_t>(name)>0xffff) {
-        // Resolve a renderer's dependencies before returning their exports to
-        // the caller. Only the three factory names are redirected here.
+        // Arm the renderer and use the same verified graphics gateways as
+        // the main executable for exports which it resolves dynamically.
         ArmModule(module);
-        if (FactoryName(name)) result=single_overlay::ResolveProc(module,name,result);
+        if (GraphicsEntry(name) && GetProcAddress(module,name)==result)
+            result=single_overlay::ResolveProc(module,name,result);
     }
     SetLastError(error);
     return result;
@@ -96,8 +100,8 @@ bool SystemExport(void* entry,const wchar_t* leaf,const char* symbol) noexcept {
         && !_wcsicmp(actual,expected)
         && reinterpret_cast<void*>(GetProcAddress(module,symbol))==entry;
 }
-FARPROC FactoryReplacement(const char* name,void* value) noexcept {
-    if (!value || !FactoryName(name)) return nullptr;
+FARPROC GraphicsReplacement(const char* name,void* value) noexcept {
+    if (!value) return nullptr;
     HMODULE owner=nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
             reinterpret_cast<LPCWSTR>(value),&owner)) return nullptr;
@@ -113,8 +117,8 @@ bool Inspect(HMODULE module,size_t index,slots::Batch& batch,bool& graphics) noe
     return slots::VisitImports(module,[&](const char* name,void** slot) {
         void* value=protected_pointer::ReadPointer(reinterpret_cast<uintptr_t>(slot));
         if (!strcmp(name,"D3D12CreateDevice") && SystemExport(value,L"d3d12.dll",name)) graphics=true;
-        if (FactoryName(name)) {
-            if (const auto replacement=FactoryReplacement(name,value)) {
+        if (GraphicsEntry(name)) {
+            if (const auto replacement=GraphicsReplacement(name,value)) {
                 graphics=true;
                 return batch.Add(module,slot,value,reinterpret_cast<void*>(replacement));
             }

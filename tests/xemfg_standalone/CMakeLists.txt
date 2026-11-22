@@ -33,6 +33,15 @@ target_include_directories(XemfgTakeoverHarness PRIVATE "${NATIVE}" "${CMAKE_CUR
 target_compile_definitions(XemfgTakeoverHarness PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(XemfgTakeoverHarness PRIVATE d3d12 dxgi user32)
 enable_testing()
+# D3D12 compute pipeline cache with a fake driver and no GPU or SDK fixtures.
+add_executable(XemfgPipelineBlobCacheTests pipeline_blob_cache_tests.cpp)
+target_compile_features(XemfgPipelineBlobCacheTests PRIVATE cxx_std_20)
+target_include_directories(XemfgPipelineBlobCacheTests PRIVATE "${NATIVE}")
+target_compile_definitions(XemfgPipelineBlobCacheTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(XemfgPipelineBlobCacheTests PRIVATE bcrypt)
+foreach(case hits misses lifetime)
+    add_test(NAME xemfg-pipeline-blob-cache-${case} COMMAND XemfgPipelineBlobCacheTests ${case})
+endforeach()
 add_test(NAME xemfg-frame-ids COMMAND XemfgStandalonePolicyTests ids)
 add_test(NAME xemfg-present-anchor COMMAND XemfgStandalonePolicyTests anchor)
 add_test(NAME xemfg-sources COMMAND XemfgStandalonePolicyTests sources)
@@ -54,6 +63,10 @@ add_test(NAME xemfg-module-list COMMAND XemfgStandalonePolicyTests modules)
 # ngxprov.1: the Nvngx replacement provider's batch rule, OptiScaler's custom DLSSG DLL choice and the D3D12 formats.
 add_test(NAME xemfg-ngx-provider COMMAND XemfgStandalonePolicyTests provider)
 # pluginprov.2: Chromium-family helpers (CEF: BeamNG.drive's --type=renderer) get proxy forwarding only.
+# genswap.1: where XeMFG standalone runs on D3D12 and its live switch behind the game's Streamline.
+add_test(NAME xemfg-generator-swap COMMAND XemfgStandalonePolicyTests genswap)
+# takeover.1: which refusals of a live swap-chain move are tried again, and for how long (xess/live_move_policy.h).
+add_test(NAME xemfg-live-move COMMAND XemfgStandalonePolicyTests livemove)
 add_test(NAME xemfg-chromium-helper COMMAND XemfgStandalonePolicyTests chromium)
 # hostport.1: OptiScaler's own XeFG publishes the port on a tracked route's idle unlock (a game's own XeFG probe first).
 add_test(NAME xemfg-host-port COMMAND XemfgStandalonePolicyTests hostport)

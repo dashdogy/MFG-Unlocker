@@ -79,7 +79,8 @@ void HoldForMove(uint32_t generation, bool first) noexcept;
 // The game's DLSS-G is applied On at the provider (the last DlssgApplied).
 bool DlssgOn() noexcept;
 // Before a running game's chain is released for XeFG: the takeover's refusals for its description and window, and
-// the player's XeSS pair (loaded here when the switch was off at launch). False with the reason.
+// the player's XeSS pair once its load was tried (takeover.1: it loads on BeginLivePrepare's worker, never in a
+// Present; until then EnsureLivePrepared's result says the same). False with the reason.
 bool LivePreflight(HWND window, const DXGI_SWAP_CHAIN_DESC1& desc, std::string& reason) noexcept;
 // A ResizeBuffers on a proxy whose chain should move (before anything is released; the resize thread waits for it),
 // and how the move ended: `refused` null when the chain moved, else why it stayed (logged and shown in the menu).
@@ -107,6 +108,47 @@ bool DlssgReleased() noexcept;
 // xemfglive.9: the process's video memory on the adapter of `queue` (the game's creation queue): local and non-local
 // usage and the local budget, logged as d3d12_live_move_vram at a live move's steps (`point`).
 void LogVideoMemory(IUnknown* queue, const char* point) noexcept;
+
+// takeover.1: XeFG's context for a live move is made before the game's chain is released, so what can fail there fails
+// with the chain untouched, and on a worker, so the game presents meanwhile (the player's pair loads there too: no
+// Present waits for it). BeginLivePrepare starts the worker for the creation queue's device, once (the proxy asks when
+// the switch turned on); LivePrepareRunning while it works. EnsureLivePrepared, right before the old chain goes: waits
+// for the worker, or makes the context here when none ran. False with the reason: the game keeps its chain.
+// CreateSwapChainLive then starts from that context. One that is never used goes when the switch turns off.
+void BeginLivePrepare(IUnknown* queue) noexcept;
+bool LivePrepareRunning() noexcept;
+bool EnsureLivePrepared(IUnknown* queue, std::string& reason) noexcept;
+// A refusal that passes by itself (xess/live_move_policy.h): the move is tried again, the menu keeps "switching" and
+// the game's DLSS-G stays held. `tries`: refusals of this move so far.
+void MoveRetry(Move move, const char* refused, uint32_t tries, uint32_t generation) noexcept;
+// The window's nudge once more for this position of the switch, after such a refusal in the game's resize. False while
+// the last nudge is still under way (the proxy asks again at its next Present).
+bool RequestResizeAgain(HWND window, uint32_t generation) noexcept;
+// How long a move's parts took, in milliseconds (d3d12_live_move_timing). `waited`: from the ask to the move itself,
+// while the game presented. Inside the move: `drained` (the GPU's reads of the proxy's back buffers), `prepared`
+// (XeFG's context, when the worker had not made it), `released` (the menu's session and the old chain), `created`
+// (the new chain) and `adopted` (the proxy's state on it). `route`: "present" or "resize".
+struct MoveTimes { uint32_t waited = 0, drained = 0, prepared = 0, released = 0, created = 0, adopted = 0; };
+void MoveTiming(Move move, const char* route, const MoveTimes& times, bool moved) noexcept;
+
+// genswap.1: XeMFG runs, or is about to, as the game's own DLSS-G feature behind its Streamline
+// (xess/streamline_provider.h): the switch is on, the game drives Streamline's DLSS-G on RTX 40/50 and XeFG has not
+// refused. The host then takes no chain at its creation, moves none live and leaves the game's DLSS-G requests alone;
+// the switch works by re-creating that feature (patcher.cpp). False once the host owns a chain: it keeps it until
+// switched off. Lock-free: every Present and every DLSS-G options call asks.
+bool BehindStreamline() noexcept;
+// The menu proxy over the game's main chain, at its first Present after the switch changed (`queue`: the chain's
+// creation queue): while the route is in charge, the provider prepares on the game's device now, on the thread a live
+// takeover loads the pair on. A refusal ends the route, and the proxy's WantedMove that follows moves the chain.
+void PrepareRoute(IUnknown* queue) noexcept;
+// The route changed under a running game (XeFG refused a feature, or the game turned out not to drive DLSS-G): the
+// menu proxies ask again, as after the switch itself, so a native chain now moves to XeFG the way it did before.
+void RouteChanged(const char* why) noexcept;
+// genswap.2: the player's libxess_fg for the D3D12 provider behind the game's Streamline (xess/d3d12_provider.cpp):
+// the pair this host loads, from its folders in its order. The provider and a takeover that follows its refusal then
+// drive one pair (the route admits one per process), and a game's own older copy beside its EXE stays the game's.
+// Null with the reason.
+HMODULE ProviderRuntime(std::string& reason) noexcept;
 
 // While the host runs (or may still take a chain over), the game's DLSS Frame Generation is held at Off and its
 // on/off request switches XeMFG instead.
@@ -140,6 +182,7 @@ struct Snapshot
     bool restartNeeded = false;    // switched on after the game's chain was created natively, and it did not move
     bool moving = false;           // xemfglive.1: a live move was asked for and is awaited
     bool dlssgRetired = false;     // xemfglive.5: the game's DLSS-G is held at Off until a restart
+    bool behindStreamline = false; // genswap.1: XeMFG runs as the game's DLSS-G feature (BehindStreamline)
     bool gameFrameGeneration = false, dlssgSeen = false, fsrFrameGeneration = false;
     uint32_t frames = 0;           // XeFG's presented frames per base frame (generated + 1) once applied
     uint32_t source = 0;           // xemfg_standalone::Source of the last frame

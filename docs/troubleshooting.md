@@ -41,6 +41,22 @@ back to the V1.5.0 pacing, set `Rtx30FlipMetering=0` under `[Compatibility]` in
 MFG Unlocker is not supported in games with anti-cheat, so don't install it in
 them; see [Games with anti-cheat](compatibility.md#games-with-anti-cheat).
 
+## Antivirus warnings
+
+Windows Defender and some other antivirus programs flagged V1.7.1's DLL as a
+trojan and removed it from game folders. MFG Unlocker loads under a system
+DLL's name and hooks the game, which antivirus heuristics can mistake for
+malware, and V1.7.1 also unpacked its GPU programs at run time. V1.7.2 ships
+those programs uncompressed again, which is why the file is bigger.
+
+Download MFG Unlocker only from
+[GitHub Releases](https://github.com/dashdogy/MFG-Unlocker/releases), and
+compare its SHA-256 with `SHA256SUMS.txt` from the same release, for example
+with `Get-FileHash .\MFGUnlocker.dll` in PowerShell (renaming the DLL does not
+change it). If the values match and your antivirus still removes the file,
+report it to the vendor as a false positive, for Defender through Microsoft's
+[file submission page](https://www.microsoft.com/wdsi/filesubmission).
+
 ## Reporting a bug
 
 Open a [bug report](https://github.com/dashdogy/MFG-Unlocker/issues) with:

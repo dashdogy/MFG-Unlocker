@@ -1,4 +1,5 @@
 #include "caller_scoped_import.h"
+#include "overlay_slots.h"
 #include "process_mitigations.h"
 #include "single_module.h"
 #include "protected_pointer.h"
@@ -22,7 +23,7 @@ struct Entry {
     bool installed = false;
     std::array<unsigned char,5> published{};
 };
-std::array<Entry, 12> entries; // Resolver, five input APIs, three DXGI and three interposer factories.
+std::array<Entry, 15> entries; // Resolver, five input APIs, and three factories each for DXGI, ReShade and Streamline.
 std::mutex mutex;
 // Second caller range read by a relay at each call. Empty (begin above end)
 // until published; every partially published state is empty or exact.
@@ -110,17 +111,25 @@ bool DeclaredDataImport(HMODULE image, void** slot, const char* name, size_t siz
 }
 bool PublicTarget(void* target, const char* name, HMODULE& owner) noexcept {
     const wchar_t* leaf=OwnerName(name);
-    if (!leaf) return false;
-    owner=GetModuleHandleW(leaf);
+    if (!leaf || !target
+        || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(target),&owner)) return false;
     wchar_t actual[MAX_PATH]{},system[MAX_PATH]{};
-    if (!owner || !GetModuleFileNameW(owner,actual,MAX_PATH) || !GetSystemDirectoryW(system,MAX_PATH)
-        || wcscat_s(system,L"\\") || wcscat_s(system,leaf) || _wcsicmp(actual,system)
-        || reinterpret_cast<void*>(GetProcAddress(owner,name))!=target) return false;
-    MEMORY_BASIC_INFORMATION memory{};
-    return VirtualQuery(target,&memory,sizeof(memory))==sizeof(memory)
-        && memory.AllocationBase==owner && memory.Type==MEM_IMAGE && memory.State==MEM_COMMIT
-        && !(memory.Protect&(PAGE_GUARD|PAGE_NOACCESS))
-        && (memory.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY));
+    const DWORD length=GetModuleFileNameW(owner,actual,MAX_PATH);
+    const DWORD systemLength=GetSystemDirectoryW(system,MAX_PATH);
+    if (!length || length>=MAX_PATH || !systemLength || systemLength>=MAX_PATH
+        || wcscat_s(system,L"\\") || wcscat_s(system,leaf)
+        || reinterpret_cast<void*>(GetProcAddress(owner,name))!=target
+        || !single_overlay::slots::ImageEntry(owner,target)) return false;
+    if (!_wcsicmp(actual,system)) return true;
+    // MSFS 2024 has four-byte-aligned factory imports. Keep those imports
+    // intact and relay only the main executable's call to its local ReShade.
+    if (wcscmp(leaf,L"dxgi.dll")) return false;
+    wchar_t local[MAX_PATH]{};
+    const DWORD count=GetModuleFileNameW(nullptr,local,MAX_PATH);
+    auto* slash=count && count<MAX_PATH?wcsrchr(local,L'\\'):nullptr;
+    return slash && !wcscpy_s(slash+1,MAX_PATH-static_cast<size_t>(slash+1-local),leaf)
+        && !_wcsicmp(actual,local) && single_overlay::slots::ReShadeFactoryExports(owner);
 }
 // A loaded Streamline interposer's own exported factory entry, identified by
 // the module that owns the code, its leaf name, the export table and the

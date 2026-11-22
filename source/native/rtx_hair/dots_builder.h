@@ -53,8 +53,9 @@ public:
     nvapi::Status Prebuild(const nvapi::BuildInputsEx& inputs, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO& info);
     // `restore` re-binds the caller's compute root signature, root arguments and pipeline
     // on `list`; it runs once after the converter dispatches, before the triangle build.
+    // `recordedHair` receives whether the build successfully recorded a nonempty hair conversion.
     nvapi::Status Build(ID3D12GraphicsCommandList4* list, const nvapi::BuildParams& params,
-        const std::function<void(ID3D12GraphicsCommandList4*)>& restore);
+        const std::function<void(ID3D12GraphicsCommandList4*)>& restore, bool* recordedHair = nullptr);
     // Without the converter, for a list whose compute bindings cannot be restored: a new
     // BLAS is built from inactive (NaN) triangles, valid and never hit; an update leaves
     // the BLAS as it is. Updates of a BLAS built this way are skipped until its next full

@@ -14,6 +14,8 @@
 #include "xess/vulkan/vk_host.h"
 #include "xess/vulkan/vk_provider.h"
 #include "xess/d3d12_host.h"
+#include "xess/streamline_provider.h"
+#include "xess/streamline_provider_policy.h"
 #include "xess/sdk_pacing.h"
 #include "xess/ngx_provider.h"
 #include "xess/ngx_provider_policy.h"
@@ -160,6 +162,11 @@ std::atomic<uint64_t> gSlUpgradeInterfaceCalls{0};
 std::atomic<uint64_t> gSlUpgradeInterfaceWrapped{0};
 std::atomic<PFun_slSetD3DDevice*> gOriginalSlSetD3DDeviceEntry{nullptr};
 entry_detour::Handle gSlSetD3DDeviceEntryHandle{};
+// slshutdown.1: the game's slShutdown, by resolver and by its interposer entry.
+std::atomic<PFun_slShutdown*> gOriginalSlShutdown{nullptr};
+std::atomic<PFun_slShutdown*> gOriginalSlShutdownEntry{nullptr};
+entry_detour::Handle gSlShutdownEntryHandle{};
+std::atomic<uint64_t> gSlShutdownCalls{0};
 // RTX 30 systems: the interposer's Vulkan device setup entries.
 std::atomic<PFun_slSetVulkanInfoAbi*> gOriginalSlSetVulkanInfoEntry{nullptr};
 entry_detour::Handle gSlSetVulkanInfoEntryHandle{};
@@ -180,6 +187,8 @@ std::atomic<bool> gOptiScalerSlSetD3DDeviceArmedAtLoad{false};
 std::atomic<bool> gOptiScalerPrivateAmpereAdmitted{false};
 // The game's sl.interposer.dll; the Streamline entry hooks serve only it.
 std::atomic<HMODULE> gHostInterposer{nullptr};
+// sl1pass.1: a Streamline 1.x interposer was seen in this process (see StreamlineOneInterposer).
+std::atomic<bool> gStreamlineOneHost{false};
 using GetProcAddressFn = FARPROC (WINAPI*)(HMODULE, LPCSTR);
 using LoadLibraryAFn = HMODULE (WINAPI*)(LPCSTR);
 using LoadLibraryWFn = HMODULE (WINAPI*)(LPCWSTR);
@@ -330,9 +339,14 @@ std::atomic<bool> gModuleInventoryDirty{true};
 // across that slShutdown is never unloaded, so the next slInit reuses its
 // first-session state: NVIDIA's plug-ins skip slOnPluginLoad once loaded and
 // then start on the previous session's freed parameter interface. Work which
-// retains a Streamline plug-in (entry detours, pins) therefore waits until the
+// retains a Streamline plug-in (entry detours, references) therefore waits until the
 // host's session has a device: slSetD3DDevice, slSetVulkanInfo or the first
 // slGetFeatureFunction, which Streamline only allows after the device is set.
+// slshutdown.1: retention ends at the host's slShutdown, which releases every
+// reference we hold on a plug-in first (HookSlShutdown). Kept past it, a plug-in
+// ran its static destructors at ExitProcess after sl.common had been unloaded:
+// Cyberpunk 2077's exit crash in sl.dlss_g (read ...6540, sl.common's
+// _Ref_count_obj2<chi::HashedResourceData> vtable).
 std::atomic<bool> gStreamlinePluginRetention{false};
 std::atomic<bool> gLiveHookInstalled{false};
 std::atomic<bool> gSetOptionsResolverFallbackActive{false};
@@ -453,6 +467,10 @@ struct ControlConfig
     // sapacing.1 (V1.7.1): XeMFG standalone's flip queue (xess_mod.h SetStandaloneFlipQueue), no menu row: 0 auto (on for
     // the D3D12 host, off for the Vulkan host), 1 on, 2 off. A restart applies a change.
     uint32_t xemfgFlipQueue = 0;
+    // genswap.1: XeMFG standalone behind the game's own Streamline on D3D12 (xess/streamline_provider.h), no menu row:
+    // 0 auto and 1 on (wherever the route can run), 2 off (XeMFG standalone always takes the swap chain over). Applies
+    // live, with the switch.
+    uint32_t xemfgStreamline = 0;
     // latency.1: low-latency pacing for XeMFG on D3D12 (xess/sdk_pacing.h SetLatencyPacing): 0 auto (on), 1 on, 2 off.
     // Applies live, under OptiScaler too.
     uint32_t latencyPacing = 0;
@@ -579,6 +597,7 @@ struct ControlRouteRecord
     std::atomic<PFun_slFreeResources*> freeResourcesOriginal{nullptr};
     std::atomic<bool> publicSetResolverFallback{false};
     std::atomic<bool> publicGetResolverFallback{false};
+    std::atomic<bool> foreignEntryReported{false};
     std::atomic<bool> lifecycleInstallAttempted{false};
 
     std::atomic<uint32_t> activeSetterPath{
@@ -594,6 +613,11 @@ struct ControlRouteRecord
     std::atomic<bool> frameGenerationOffAccepted{false};
     std::atomic<bool> releaseObserved{false};
     std::atomic<uint64_t> releaseCalls{0};
+    // slshutdown.1: the loader reference behind published typed forwarding
+    // (ResolvedDlssgControlRoute), released before the host's slShutdown.
+    // unloaded: the wrapper image is gone; the route is never served again.
+    std::atomic<HMODULE> retainedWrapper{nullptr};
+    std::atomic<bool> unloaded{false};
 };
 
 using UiInputSnapshot = ui_input_coherence::Snapshot;
@@ -654,6 +678,7 @@ bool InstallControlRouteLifecycleEntry(uint32_t routeSlot);
 bool TryInstallSlInitEntryDetour(HMODULE interposer, void* resolvedTarget);
 bool TryInstallSlUpgradeInterfaceEntryDetour(HMODULE interposer, void* resolvedTarget);
 bool TryInstallSlSetD3DDeviceEntryDetour(HMODULE interposer);
+bool TryInstallSlShutdownEntryDetour(HMODULE interposer);
 bool TryInstallSlVulkanEntryDetours(HMODULE interposer);
 bool TryInstallOptiScalerSlSetD3DDeviceEntryDetour(HMODULE interposer, const std::wstring& path);
 void* MappedExportAddress(HMODULE module, const char* expected) noexcept;
@@ -910,12 +935,16 @@ bool AmpereReplacementOwnsFrameGeneration() noexcept
     return owns;
 }
 
+bool XefgOwnsFrameGeneration() noexcept;
+
 // RTX 30/20 whose DLSS-G options and live re-enables go through the Ampere policy (the certified ring, startup
 // admission, the retained translated feature). Not while a replacement provider owns frame generation: then the
-// options follow the game as on RTX 40.
+// options follow the game as on RTX 40. genswap30.1: nor while XeFG behind the game's Streamline owns the game's
+// feature or will own its next one (live ownership; the counters above cannot tell a swap back to NVIDIA's provider).
 bool AmpereOptionsApply() noexcept
 {
-    return UseAmpere() && !AmpereReplacementOwnsFrameGeneration();
+    return UseAmpere() && ampere_policy::OptionsApply(true, AmpereReplacementOwnsFrameGeneration(),
+        XefgOwnsFrameGeneration());
 }
 
 // GitHub issue 149 (AION 2, RTX 4070 SUPER, the game's DLSS-G 310.6.0.0): the provider has no count/index check to
@@ -1409,7 +1438,8 @@ void RecordDlssgStateResult(
     gDlssgStatus.store(static_cast<uint32_t>(state.status), std::memory_order_relaxed);
     if (state.structVersion >= sl::kStructVersion2)
         gNumFramesToGenerateMax.store(
-            UseAmpere() ? std::min(state.numFramesToGenerateMax, AmpereAdvertisedMaximum())
+            UseAmpere() ? ampere_policy::ReportedGeneratedFrames(AmpereReplacementOwnsFrameGeneration(),
+                              state.numFramesToGenerateMax, AmpereAdvertisedMaximum())
                 : state.numFramesToGenerateMax, std::memory_order_relaxed);
     bool dynamicChanged = false;
     if (state.structVersion < sl::kStructVersion4)
@@ -1795,6 +1825,9 @@ bool TryParseControl(const char* data, size_t size, ControlConfig& control)
         && !TryParseUnsigned(content, "xemfgStandalone", 0, 1, xemfgStandalone))
         return false;
     parsed.xemfgStandalone = xemfgStandalone != 0;
+    if (FindJsonValue(content, "xemfgStreamline", xessOffset)
+        && !TryParseUnsigned(content, "xemfgStreamline", 0, 2, parsed.xemfgStreamline))
+        return false;
     if (FindJsonValue(content, "xemfgFrames", xessOffset)
         && !TryParseUnsigned(content, "xemfgFrames", 2, 6, parsed.xemfgFrames))
         return false;
@@ -2170,6 +2203,10 @@ void ConfigureXemfg(const ControlConfig& control) noexcept
     // Under OptiScaler its XeFG outputs host XeMFG (a saved switch from a session without it stays inert).
     xess_vulkan::Configure(control.xessVulkan, control.xemfgStandalone && !optiscaler_host::Detected(),
         control.xemfgFrames ? XemfgFrames(control) : XessVulkanFrames(control));
+    // genswap.1: the switch reaches the Streamline route first (under OptiScaler its own provider route hosts XeMFG);
+    // the D3D12 host then asks it whether XeMFG runs as the game's DLSS-G feature or on a chain the host takes over
+    // (xess_d3d12::BehindStreamline).
+    xess_streamline_provider::Configure(control.xemfgStandalone && !optiscaler_host::Detected(), control.xemfgStreamline);
     xess_d3d12::Configure(control.xemfgStandalone, XemfgFrames(control));
     // The menu's Reflex FPS limit. The game's frames sleep in XeLL while XeMFG generates, where the driver's
     // Reflex limit does not reach them; the hosts apply it to XeFG's presented frames as XeLL's interval.
@@ -2215,7 +2252,9 @@ std::string XemfgStatus(const ControlConfig& control)
     std::string state = useVulkan ? vulkan.state : d3d12.state;
     if (useVulkan && control.xemfgStandalone && vulkan.restartNeeded) state = "restart";
     if (useVulkan && optiscaler_host::Detected()) state = "optiscaler";
+    // genswap.1: "dlssg" while XeMFG runs as the game's DLSS-G feature behind its Streamline.
     const char* source = useVulkan ? (vulkan.inputFrames ? "dlss" : "none")
+        : d3d12.behindStreamline && d3d12.source == 1 ? "dlssg"
         : d3d12.source == 1 ? "streamline" : d3d12.source == 2 ? "dlss" : d3d12.source == 3 ? "xess"
         : d3d12.source == 4 ? "fsr" : "none";
     return std::string(",\"xemfgStandalone\":") + (control.xemfgStandalone ? "true" : "false")
@@ -2532,7 +2571,8 @@ void DiscoverReflexModule()
 {
     // This function is called only by the normal worker, after loader discovery
     // has returned. Never install this transport from a LoadLibrary callback.
-    // Its entries pin sl.reflex, which a Streamline restart must still unload.
+    // Its route and entries hold sl.reflex until the host's slShutdown, which
+    // must still unload it (HookSlShutdown).
     if (!gStreamlinePluginRetention.load(std::memory_order_acquire))
         return;
     std::vector<ModuleRecord> modules;
@@ -3447,8 +3487,11 @@ bool IsSupportedStateVersion(size_t version) noexcept
 
 ControlRouteRecord* ControlRouteAt(uint32_t slot) noexcept
 {
+    // An unloaded wrapper's typed forwarding answers eErrorNotInitialized
+    // rather than calling into the freed image (slshutdown.1).
     if (slot >= gControlRoutes.size()
-        || !gControlRoutes[slot].claimed.load(std::memory_order_acquire))
+        || !gControlRoutes[slot].claimed.load(std::memory_order_acquire)
+        || gControlRoutes[slot].unloaded.load(std::memory_order_acquire))
         return nullptr;
     return &gControlRoutes[slot];
 }
@@ -3761,6 +3804,13 @@ void RecordAcceptedSetOptionsLifecycleLocked(ControlRouteRecord& route,
                 gAcceptedOffEvidence = {gRetainedFrameGenerationFeature,
                     routeSlot, static_cast<uint32_t>(viewport),
                     gDesiredRevision.load(std::memory_order_acquire)};
+            }
+            else if (xess_streamline_provider::Live() || XefgOwnsFrameGeneration())
+            {
+                // genswap30.1: the game's feature is XeFG's (or its next one will be), which the lifetime tracker
+                // follows exactly; no translated feature is retained, and the translated program's next feature, if
+                // the switch goes back, is a fresh Create. Nothing here needs a restart.
+                gAcceptedOffEvidence = {};
             }
             else
             {
@@ -5355,6 +5405,16 @@ void BeforeNgxCreateFeatureForRoute(NgxDispatchRoute route,
         }
     }
 #endif
+    if (firstPipelineCreate && gpu_dispatch::IsAda() && !ready)
+    {
+        dlssg_provider_policy::VersionTriplet version{};
+        dlssg_provider_policy::ReadProviderVersion(path.c_str(), version);
+        Log(L"MFG_CREATE Ada admission deferred: adapterVerified=%d countGateReady=%d midpointFailure=%u "
+            L"providerVersion=%u.%u.%u providerGeneration=%llu path=%s",
+            adapterVerified, deviceGateReady, midpoint_fix::FailureCode(),
+            version.major, version.minor, version.build,
+            static_cast<unsigned long long>(providerGeneration), path.c_str());
+    }
     gBackportReadyAtCreate.store(ready, std::memory_order_release);
     if (firstPipelineCreate)
         gFirstCreateMidpointReady.store(ready, std::memory_order_release);
@@ -6146,6 +6206,191 @@ sl::Result PassPublicSetBeforeControl(ControlRouteRecord& route,
     return PassPublicSet(route, viewport, options);
 }
 
+// genswap.1: XeMFG standalone behind the game's Streamline (xess/streamline_provider.h). The switch names the generator
+// the game's DLSS-G feature should belong to; a live feature of the other one is released exactly and created again
+// (streamline_provider_policy.h DecideSwap). Under gStreamlineCallMutex.
+struct GeneratorSwap
+{
+    bool holding = false;         // Off is being submitted until the other generator's features are released
+    uint64_t startTick = 0;
+    bool wantedXefg = false;      // the generator the last decision was made for
+    bool attempted = false;       // a swap toward it already ran
+    bool forcedOff = false;       // a state call submitted the Off itself (a game that sets its options only on change)
+    uint32_t appliedFrames = 0;   // the XeMFG frame count last submitted while XeFG owns the feature
+};
+GeneratorSwap gGeneratorSwap;
+
+xess_streamline_provider::SwapInputs GeneratorSwapInputs() noexcept
+{
+    const auto liveness = ampere_backend::ReadFrameGenerationLiveness();
+    xess_streamline_provider::SwapInputs in;
+    // genswap30.1: RTX 30/20 too; BehindStreamline admits their translated program (ampere_backend::XefgStandInAvailable).
+    in.wantedXefg = xess_streamline_provider::Wanted() && xess_streamline_provider::Prepared()
+        && xess_d3d12::BehindStreamline();
+    in.gameWantsOn = gGameFrameGenerationOn.load(std::memory_order_acquire);
+    in.liveXefg = xess_streamline_provider::Live();
+    in.liveTotal = liveness.liveFeatures;
+    in.createsInFlight = liveness.createsInFlight != 0;
+    in.exact = liveness.exact;
+    in.sinceXefgReleaseMs = xess_streamline_provider::SinceReleaseMs();
+    return in;
+}
+
+// A live frame-generation feature belongs to the generator the switch no longer names.
+bool WrongGeneratorLive() noexcept
+{
+    return xess_streamline_provider::WrongGenerator(GeneratorSwapInputs());
+}
+
+// XeFG owns the game's DLSS-G feature, or will own the next one: the menu's XeMFG frame count is DLSS-G's count.
+bool XefgOwnsFrameGeneration() noexcept
+{
+    const auto in = GeneratorSwapInputs();
+    return in.wantedXefg && in.liveTotal <= in.liveXefg;
+}
+
+// Advances the swap; true while the game's DLSS-G must reach Streamline as Off without resource retention.
+bool GeneratorSwapHolds() noexcept
+{
+    using namespace xess_streamline_provider;
+    GeneratorSwap& swap = gGeneratorSwap;
+    SwapInputs in = GeneratorSwapInputs();
+    if (swap.wantedXefg != in.wantedXefg)
+    {
+        swap.wantedXefg = in.wantedXefg;
+        swap.attempted = false;
+    }
+    const uint64_t now = GetTickCount64();
+    in.holding = swap.holding;
+    in.attempted = swap.attempted;
+    in.heldMs = swap.holding && now >= swap.startTick ? now - swap.startTick : 0;
+    const wchar_t* generator = in.wantedXefg ? L"XeMFG" : L"DLSS-G";
+    const SwapAction action = DecideSwap(in);
+    switch (action)
+    {
+    case SwapAction::eBegin:
+        swap.holding = true;
+        swap.attempted = true;
+        swap.startTick = now;
+        Log(L"XeMFG generator swap: frame generation -> %s; DLSS-G Off without resource retention until the other "
+            L"generator's feature(s) are released (live=%u, XeMFG's=%u)", generator, in.liveTotal, in.liveXefg);
+        break;
+    case SwapAction::eDone:
+        swap.holding = false;
+        Log(L"XeMFG generator swap: released after %llu ms; the game's frame generation is %s's from its next feature",
+            static_cast<unsigned long long>(in.heldMs), generator);
+        break;
+    case SwapAction::eGiveUp:
+        swap.holding = false;
+        Log(L"XeMFG generator swap: not released within %llu ms (live=%u, XeMFG's=%u, creates in flight=%u); the "
+            L"current generator stays until the game re-creates its frame generation",
+            static_cast<unsigned long long>(in.heldMs), in.liveTotal, in.liveXefg, in.createsInFlight ? 1u : 0u);
+        break;
+    case SwapAction::ePause:
+        // The game turned frame generation off itself; its next On starts again.
+        swap.holding = false;
+        swap.attempted = false;
+        break;
+    case SwapAction::eUnavailable:
+        swap.attempted = true;
+        Log(L"XeMFG generator swap: a release cannot be proven in this session (lifetime tracker inexact); %s takes "
+            L"over when the game re-creates its frame generation", generator);
+        break;
+    default:
+        break;
+    }
+    const bool stuck = !swap.holding && swap.attempted && WrongGenerator(in);
+    NoteSwap(swap.holding || action == SwapAction::eWait, stuck);
+    return swap.holding;
+}
+
+// The game's options as XeMFG's while XeFG owns the feature: generation On at the menu's XeMFG frame count, within
+// what the wrapper takes (a wrapper whose maximum was not lifted keeps the game's own count).
+sl::DLSSGOptions BuildXemfgStreamlineOptions(const sl::DLSSGOptions& source, const ControlRouteRecord& route,
+    bool preserveNext)
+{
+    const ControlSnapshot snapshot = ReadControlSnapshot();
+    sl::DLSSGOptions adjusted = CopyKnownOptions(source, preserveNext);
+    uint32_t wrapperMaximum = route.wrapperPatched.load(std::memory_order_acquire) ? ngx_provider::kMaxGenerated : 0u;
+    // genswap30.1: RTX 30/20 keep the wrapper's own clamp; the count stays within the ring it allocated for XeFG.
+    if (UseAmpere())
+        wrapperMaximum = std::min(wrapperMaximum, ampere_backend::XefgRingMaximum());
+    adjusted.mode = sl::DLSSGMode::eOn;
+    adjusted.numFramesToGenerate = xess_streamline_provider::GeneratedFrames(
+        XemfgFrames(snapshot.control), wrapperMaximum, source.numFramesToGenerate);
+    if (snapshot.control.generatedOnlyDebug)
+    {
+        adjusted.flags = static_cast<sl::DLSSGFlags>(static_cast<uint32_t>(adjusted.flags)
+            | static_cast<uint32_t>(sl::DLSSGFlags::eShowOnlyInterpolatedFrame));
+    }
+    return adjusted;
+}
+
+void StripResourceRetention(sl::DLSSGOptions& options) noexcept
+{
+    options.flags = static_cast<sl::DLSSGFlags>(static_cast<uint32_t>(options.flags)
+        & ~static_cast<uint32_t>(sl::DLSSGFlags::eRetainResourcesWhenOff));
+}
+
+// A game that sets its DLSS-G options only when they change never carries the swap's Off, the options after it or a
+// new XeMFG frame count; its state calls do (as AdvancePresetSwitch's submit).
+void DriveGeneratorSwap(const sl::ViewportHandle& viewport)
+{
+    GeneratorSwap& swap = gGeneratorSwap;
+    const bool holds = GeneratorSwapHolds();
+    if (!gControlReady.load(std::memory_order_acquire)
+        || gGameFrameGenerationViewport.load(std::memory_order_acquire) != static_cast<uint32_t>(viewport))
+        return;
+    ControlRouteRecord* route = ActiveControlRoute();
+    sl::DLSSGOptions source{};
+    if (!route || !ReadLastGameOptions(viewport, source))
+        return;
+    if (holds)
+    {
+        if (swap.forcedOff)
+            return;
+        sl::DLSSGOptions off = CopyKnownOptions(source, false);
+        off.mode = sl::DLSSGMode::eOff;
+        StripResourceRetention(off);
+        const sl::Result result = CallRouteSetOptions(*route, viewport, off);
+        gLastSetOptionsResult.store(static_cast<int32_t>(result), std::memory_order_relaxed);
+        RecordSetOptionsLifecycle(*route, viewport, false, result);
+        swap.forcedOff = IsAcceptedControlResult(result);
+        return;
+    }
+    const bool owns = XefgOwnsFrameGeneration();
+    const sl::DLSSGOptions xemfg = owns ? BuildXemfgStreamlineOptions(source, *route, false) : sl::DLSSGOptions{};
+    const bool recount = owns && swap.appliedFrames && swap.appliedFrames != xemfg.numFramesToGenerate + 1u;
+    if (!swap.forcedOff && !recount)
+        return;
+    swap.forcedOff = false;
+    if (!gGameFrameGenerationOn.load(std::memory_order_acquire))
+        return;
+    sl::Result result = sl::Result::eErrorNotInitialized;
+    if (owns)
+    {
+        result = CallRouteSetOptions(*route, viewport, xemfg);
+        gLastSetOptionsResult.store(static_cast<int32_t>(result), std::memory_order_relaxed);
+        RecordSetOptionsLifecycle(*route, viewport, true, result);
+        if (IsAcceptedControlResult(result))
+            swap.appliedFrames = xemfg.numFramesToGenerate + 1u;
+    }
+    else if (BridgeReady())
+        result = SubmitAdjustedOptions(*route, viewport, source, ReadControlSnapshot(), false);
+    else
+    {
+        // genswap30.1: back on RTX 30/20's translated program, its own options (the certified ring, startup admission)
+        // apply again, as PassPublicSet's.
+        const sl::DLSSGOptions submitted = UseAmpere() ? AmpereFixedOptions(source, false) : source;
+        result = CallRouteSetOptions(*route, viewport, submitted);
+        gLastSetOptionsResult.store(static_cast<int32_t>(result), std::memory_order_relaxed);
+        RecordSetOptionsLifecycle(*route, viewport, submitted.mode != sl::DLSSGMode::eOff, result);
+    }
+    if (!IsAcceptedControlResult(result))
+        Log(L"XeMFG generator swap: the game's frame generation options after the swap were refused: result=%d",
+            static_cast<int>(result));
+}
+
 sl::Result HandlePublicSetOptions(uint32_t routeSlot,
     ControlEntryPath path, const sl::ViewportHandle& viewport,
     const sl::DLSSGOptions& options)
@@ -6189,22 +6434,23 @@ sl::Result HandlePublicSetOptions(uint32_t routeSlot,
         || options.mode == sl::DLSSGMode::eAuto
         || options.mode == sl::DLSSGMode::eDynamic;
     RecordGameFrameGenerationIntent(viewport, enabled);
+    // genswap.1: behind Streamline, a feature of the generator the switch no longer names is released first.
+    const bool swapHolds = GeneratorSwapHolds();
     // XeMFG standalone replaces the game's DLSS Frame Generation. The game's switch (recorded above)
     // turns XeMFG on and off, and DLSS-G itself gets Off, so two frame generators never stack.
-    if (enabled && XemfgReplacesDlssg())
+    if (enabled && (swapHolds || XemfgReplacesDlssg()))
     {
         sl::DLSSGOptions off{};
         if (!CopySupportedOptions(&options, off, true))
             return PassPublicSet(*route, viewport, options);
         off.mode = sl::DLSSGMode::eOff;
         // xemfglive.6: a live move to XeMFG waits for the exact release of DLSS-G's feature, as a live preset
-        // switch's drain does (ApplyPresetSwitchOff): Off without resource retention.
-        if (xess_d3d12::DlssgReleaseWanted())
-            off.flags = static_cast<sl::DLSSGFlags>(static_cast<uint32_t>(off.flags)
-                & ~static_cast<uint32_t>(sl::DLSSGFlags::eRetainResourcesWhenOff));
+        // switch's drain does (ApplyPresetSwitchOff): Off without resource retention. genswap.1: so does the swap.
+        if (swapHolds || xess_d3d12::DlssgReleaseWanted())
+            StripResourceRetention(off);
         gSetOptionsSeen.store(true, std::memory_order_release);
         static std::atomic<bool> logged{false};
-        if (!logged.exchange(true, std::memory_order_relaxed))
+        if (!swapHolds && !logged.exchange(true, std::memory_order_relaxed))
             Log(L"XeMFG standalone: the game's DLSS Frame Generation is held at Off; its switch turns XeMFG on and off");
         // Straight to the provider: PassPublicSet's RTX 30 options would follow the fixed multiplier instead.
         ScopedInternalControlBypass bypass;
@@ -6217,12 +6463,12 @@ sl::Result HandlePublicSetOptions(uint32_t routeSlot,
     {
         gSetOptionsSeen.store(true, std::memory_order_release);
         // xemfglive.6: the game's own Off releases DLSS-G's feature too while a live move waits for that release.
+        // genswap.1: and a feature of the generator the switch no longer names, so the game's next On creates it anew.
         sl::DLSSGOptions released{};
-        const bool release = xess_d3d12::DlssgReleaseWanted()
+        const bool release = (xess_d3d12::DlssgReleaseWanted() || WrongGeneratorLive())
             && CopySupportedOptions(&options, released, true);
         if (release)
-            released.flags = static_cast<sl::DLSSGFlags>(static_cast<uint32_t>(released.flags)
-                & ~static_cast<uint32_t>(sl::DLSSGFlags::eRetainResourcesWhenOff));
+            StripResourceRetention(released);
         const sl::Result result = PassPublicSet(*route, viewport, release ? released : options);
         gLastSetOptionsResult.store(static_cast<int32_t>(result),
             std::memory_order_relaxed);
@@ -6232,6 +6478,21 @@ sl::Result HandlePublicSetOptions(uint32_t routeSlot,
 
     CaptureGameOptions(viewport, options);
     AdvancePresetSwitch(viewport, false);
+    // slprov.1 / genswap.1: with XeFG behind this Streamline no NVIDIA provider is created, so the control path never
+    // reports ready; the game's request becomes XeMFG's (the menu's XeMFG frame count). Once NVIDIA's provider owns the
+    // feature (XeFG refused it, or the switch is off) the normal path below runs.
+    if (XefgOwnsFrameGeneration() && gControlReady.load(std::memory_order_acquire))
+    {
+        const sl::DLSSGOptions adjusted = BuildXemfgStreamlineOptions(options, *route, true);
+        ScopedInternalControlBypass bypass;
+        const sl::Result result = original(viewport, adjusted);
+        gSetOptionsSeen.store(true, std::memory_order_release);
+        gLastSetOptionsResult.store(static_cast<int32_t>(result), std::memory_order_relaxed);
+        RecordSetOptionsLifecycle(*route, viewport, true, result);
+        if (IsAcceptedControlResult(result))
+            gGeneratorSwap.appliedFrames = adjusted.numFramesToGenerate + 1u;
+        return HostControlResult(result);
+    }
     if (!gControlReady.load(std::memory_order_acquire)
         || !BridgeReady())
     {
@@ -6292,7 +6553,9 @@ sl::Result HandlePublicGetState(uint32_t routeSlot, ControlEntryPath path,
             const auto result = original(viewport, state, options ? &query : nullptr);
             if (DlssgStateAvailable(result) && state.structVersion >= sl::kStructVersion2)
             {
-                state.numFramesToGenerateMax = std::min(state.numFramesToGenerateMax, AmpereAdvertisedMaximum());
+                // rtx30optimax.1: a replacement provider keeps the wrapper's own maximum.
+                state.numFramesToGenerateMax = ampere_policy::ReportedGeneratedFrames(
+                    AmpereReplacementOwnsFrameGeneration(), state.numFramesToGenerateMax, AmpereAdvertisedMaximum());
             }
             if (record) RecordDlssgStateResult(result, state);
             return result;
@@ -6354,6 +6617,7 @@ sl::Result HandlePublicGetState(uint32_t routeSlot, ControlEntryPath path,
             1, std::memory_order_release);
     }
     AdvancePresetSwitch(viewport, true);
+    DriveGeneratorSwap(viewport);   // genswap.1
     ReapplyPendingControl(viewport);
     ScopedInternalControlBypass bypass;
     const sl::Result result = passThrough(false);
@@ -6444,11 +6708,14 @@ sl::Result HandleInternalSetData(uint32_t routeSlot,
         || source.mode == sl::DLSSGMode::eAuto
         || source.mode == sl::DLSSGMode::eDynamic;
     RecordGameFrameGenerationIntent(publicViewport, enabled);
+    const bool swapHolds = GeneratorSwapHolds();   // genswap.1, as HandlePublicSetOptions
     // As HandlePublicSetOptions, XeMFG standalone holds DLSS-G at Off (our copy leads the chain).
-    if (enabled && XemfgReplacesDlssg())
+    if (enabled && (swapHolds || XemfgReplacesDlssg()))
     {
         sl::DLSSGOptions off = CopyKnownOptions(source, false);
         off.mode = sl::DLSSGMode::eOff;
+        if (swapHolds)
+            StripResourceRetention(off);
         sl::ViewportHandle viewportCopy{viewportValue};
         viewportCopy.next = &off;
         off.next = const_cast<sl::BaseStructure*>(inputs);
@@ -6474,6 +6741,25 @@ sl::Result HandleInternalSetData(uint32_t routeSlot,
 
     CaptureGameOptions(publicViewport, source);
     AdvancePresetSwitch(publicViewport, false);
+    // genswap.1, as HandlePublicSetOptions: XeFG owns the feature, so the game's request becomes XeMFG's.
+    if (XefgOwnsFrameGeneration() && gControlReady.load(std::memory_order_acquire))
+    {
+        sl::DLSSGOptions adjusted = BuildXemfgStreamlineOptions(source, *route, false);
+        sl::ViewportHandle viewportCopy{viewportValue};
+        viewportCopy.next = &adjusted;
+        adjusted.next = const_cast<sl::BaseStructure*>(inputs);
+        sl::Result result;
+        {
+            ScopedInternalControlBypass bypass;
+            result = original(&viewportCopy, commandBuffer);
+        }
+        gSetOptionsSeen.store(true, std::memory_order_release);
+        gLastSetOptionsResult.store(static_cast<int32_t>(result), std::memory_order_relaxed);
+        RecordSetOptionsLifecycle(*route, publicViewport, true, result);
+        if (IsAcceptedControlResult(result))
+            gGeneratorSwap.appliedFrames = adjusted.numFramesToGenerate + 1u;
+        return HostControlResult(result);
+    }
     // As PassPublicSetBeforeControl: the game's options pass through unchanged.
     const auto passThroughBeforeControl = [&]() {
         return passThrough();
@@ -6536,8 +6822,10 @@ sl::Result HandleInternalGetData(uint32_t routeSlot,
             if (known)
             {
                 auto& state = *const_cast<sl::DLSSGState*>(known);
+                // rtx30optimax.1: beneath OptiScaler's hook too; a replacement keeps the wrapper's maximum.
                 if (DlssgStateAvailable(result) && state.structVersion >= sl::kStructVersion2)
-                    state.numFramesToGenerateMax = std::min(state.numFramesToGenerateMax, AmpereAdvertisedMaximum());
+                    state.numFramesToGenerateMax = ampere_policy::ReportedGeneratedFrames(
+                        AmpereReplacementOwnsFrameGeneration(), state.numFramesToGenerateMax, AmpereAdvertisedMaximum());
                 if (record) RecordDlssgStateResult(result, state);
             }
             return result;
@@ -6599,6 +6887,7 @@ sl::Result HandleInternalGetData(uint32_t routeSlot,
     std::lock_guard callLock(gStreamlineCallMutex);
     const sl::ViewportHandle publicViewport{viewportValue};
     AdvancePresetSwitch(publicViewport, true);
+    DriveGeneratorSwap(publicViewport);   // genswap.1
     ReapplyPendingControl(publicViewport);
     const sl::Result result = passThrough(false);
     auto& mutableState = *const_cast<sl::DLSSGState*>(stateView);
@@ -6774,6 +7063,8 @@ uint32_t EnsureControlRoute(HMODULE wrapper, const std::wstring& path,
 {
     if (!wrapper)
         return UINT32_MAX;
+    // genswap.1: the game may drive Streamline's DLSS-G, so XeMFG standalone can run as that feature.
+    xess_streamline_provider::NoteRouteLoaded();
     std::lock_guard lock(gControlRouteMutex);
     for (uint32_t slot = 0; slot < gControlRoutes.size(); ++slot)
     {
@@ -6804,6 +7095,21 @@ uint32_t EnsureControlRoute(HMODULE wrapper, const std::wstring& path,
     return UINT32_MAX;
 }
 
+bool EntryBelongsToControlWrapper(ControlRouteRecord& route, void* target)
+{
+    if (!target)
+        return false;
+    const HMODULE owner = ModuleFromAddress(target);
+    if (owner == route.wrapper)
+        return true;
+    if (owner && !route.foreignEntryReported.exchange(true, std::memory_order_relaxed))
+    {
+        Log(L"DLSS-G wrapper resolver returned a foreign entry, skipping its detour: "
+            L"wrapper=%s owner=%s", route.path.c_str(), LoadedModulePath(owner).c_str());
+    }
+    return false;
+}
+
 bool InstallControlRouteEntries(uint32_t routeSlot)
 {
     ControlRouteRecord* route = ControlRouteAt(routeSlot);
@@ -6815,8 +7121,6 @@ bool InstallControlRouteEntries(uint32_t routeSlot)
     if (!resolver)
         return false;
 
-    void* publicSet = resolver("slDLSSGSetOptions");
-    void* publicGet = resolver("slDLSSGGetState");
     entry_detour::InstallOptions relocated{};
     relocated.generation = route->generation;
     relocated.allowRelocated = true;
@@ -6831,19 +7135,21 @@ bool InstallControlRouteEntries(uint32_t routeSlot)
     // delayed until a real call selects this wrapper.
     void* trampoline = nullptr;
     bool publicSetCurrent = ControlEntryCurrent(route->publicSetHandle);
-    if (!publicSetCurrent && publicSet)
+    if (!publicSetCurrent)
     {
-        HMODULE owner = ModuleFromAddress(publicSet);
-        if (owner)
+        void* publicSet = resolver("slDLSSGSetOptions");
+        // An OptiScaler resolver can return its own hook for several different DLSS-G plugins.
+        // Patch only the wrapper's entries, then try its internal entry if the public one is foreign.
+        if (EntryBelongsToControlWrapper(*route, publicSet))
         {
             publicSetCurrent = entry_detour::Install(
-                entry_detour::Kind::eDlssgSetOptions, owner, publicSet,
+                entry_detour::Kind::eDlssgSetOptions, route->wrapper, publicSet,
                 reinterpret_cast<void*>(gPublicSetThunks[routeSlot]),
                 trampoline, hotpatch, &route->publicSetHandle);
             if (!publicSetCurrent)
             {
                 publicSetCurrent = entry_detour::Install(
-                    entry_detour::Kind::eDlssgSetOptions, owner, publicSet,
+                    entry_detour::Kind::eDlssgSetOptions, route->wrapper, publicSet,
                     reinterpret_cast<void*>(gPublicSetThunks[routeSlot]),
                     trampoline, relocated, &route->publicSetHandle);
             }
@@ -6862,19 +7168,19 @@ bool InstallControlRouteEntries(uint32_t routeSlot)
 
     trampoline = nullptr;
     bool publicGetCurrent = ControlEntryCurrent(route->publicGetHandle);
-    if (!publicGetCurrent && publicGet)
+    if (!publicGetCurrent)
     {
-        HMODULE owner = ModuleFromAddress(publicGet);
-        if (owner)
+        void* publicGet = resolver("slDLSSGGetState");
+        if (EntryBelongsToControlWrapper(*route, publicGet))
         {
             publicGetCurrent = entry_detour::Install(
-                entry_detour::Kind::eDlssgGetState, owner, publicGet,
+                entry_detour::Kind::eDlssgGetState, route->wrapper, publicGet,
                 reinterpret_cast<void*>(gPublicGetThunks[routeSlot]),
                 trampoline, hotpatch, &route->publicGetHandle);
             if (!publicGetCurrent)
             {
                 publicGetCurrent = entry_detour::Install(
-                    entry_detour::Kind::eDlssgGetState, owner, publicGet,
+                    entry_detour::Kind::eDlssgGetState, route->wrapper, publicGet,
                     reinterpret_cast<void*>(gPublicGetThunks[routeSlot]),
                     trampoline, relocated, &route->publicGetHandle);
             }
@@ -6904,12 +7210,11 @@ bool InstallControlRouteEntries(uint32_t routeSlot)
             publicSetCurrent || setResolverCovered))
     {
         void* internalSet = resolver("slSetData");
-        if (internalSet)
+        if (EntryBelongsToControlWrapper(*route, internalSet))
         {
             trampoline = nullptr;
-            HMODULE owner = ModuleFromAddress(internalSet);
-            internalSetCurrent = owner && entry_detour::Install(
-                entry_detour::Kind::eSlSetData, owner, internalSet,
+            internalSetCurrent = entry_detour::Install(
+                entry_detour::Kind::eSlSetData, route->wrapper, internalSet,
                 reinterpret_cast<void*>(gInternalSetThunks[routeSlot]),
                 trampoline, relocated, &route->internalSetHandle);
             if (internalSetCurrent)
@@ -6929,12 +7234,11 @@ bool InstallControlRouteEntries(uint32_t routeSlot)
             publicGetCurrent || getResolverCovered))
     {
         void* internalGet = resolver("slGetData");
-        if (internalGet)
+        if (EntryBelongsToControlWrapper(*route, internalGet))
         {
             trampoline = nullptr;
-            HMODULE owner = ModuleFromAddress(internalGet);
-            internalGetCurrent = owner && entry_detour::Install(
-                entry_detour::Kind::eSlGetData, owner, internalGet,
+            internalGetCurrent = entry_detour::Install(
+                entry_detour::Kind::eSlGetData, route->wrapper, internalGet,
                 reinterpret_cast<void*>(gInternalGetThunks[routeSlot]),
                 trampoline, relocated, &route->internalGetHandle);
             if (internalGetCurrent)
@@ -7007,11 +7311,10 @@ bool InstallControlRouteLifecycleEntry(uint32_t routeSlot)
     relocated.allowRelocated = true;
     void* trampoline = nullptr;
     bool freeResourcesCurrent = false;
-    if (freeResources)
+    if (EntryBelongsToControlWrapper(*route, freeResources))
     {
-        HMODULE owner = ModuleFromAddress(freeResources);
-        freeResourcesCurrent = owner && entry_detour::Install(
-            entry_detour::Kind::eSlFreeResources, owner, freeResources,
+        freeResourcesCurrent = entry_detour::Install(
+            entry_detour::Kind::eSlFreeResources, route->wrapper, freeResources,
             reinterpret_cast<void*>(gFreeResourcesThunks[routeSlot]),
             trampoline, relocated, &route->freeResourcesHandle);
         if (freeResourcesCurrent)
@@ -7065,15 +7368,6 @@ uint32_t FindControlRouteForTarget(void* target) noexcept
         ControlRouteRecord* route = ControlRouteAt(slot);
         if (!route || route->generation != generation)
             continue;
-        for (entry_detour::Handle handle : {route->publicSetHandle,
-                 route->publicGetHandle, route->internalSetHandle,
-                 route->internalGetHandle, route->freeResourcesHandle})
-        {
-            const entry_detour::Snapshot state =
-                entry_detour::ReadSnapshot(handle);
-            if (state.owner == owner || state.target == target)
-                return slot;
-        }
         if (route->wrapper == owner)
             return slot;
     }
@@ -7129,25 +7423,37 @@ uint32_t ResolvedDlssgControlRoute(void* resolved)
             | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
         || !GetProcAddress(owner, "slGetPluginFunction"))
         return UINT32_MAX;
-    const uint32_t slot = FindControlRouteForTarget(resolved);
-    if (slot != UINT32_MAX)
-        return slot;
-
     // The successful, feature-specific lookup proves callable identity. Its
-    // owner must remain loaded for every published typed forwarding pointer.
-    HMODULE pinned = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
-            | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            reinterpret_cast<LPCWSTR>(resolved), &pinned) || pinned != owner)
+    // owner must remain loaded for every published typed forwarding pointer,
+    // for this Streamline session: the route keeps a loader reference, which
+    // the host's slShutdown releases (slshutdown.1; it was a process pin).
+    HMODULE held = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(resolved), &held) || held != owner)
+    {
+        if (held)
+            FreeLibrary(held);
         return UINT32_MAX;
-    const ModuleRecord discovered = InspectLoadedModule(owner, LoadedModulePath(owner));
-    if (discovered.controlRouteSlot != UINT32_MAX)
-        return discovered.controlRouteSlot;
-    if (!discovered.wrapperExport || !discovered.generation)
-        return UINT32_MAX;
-    // Unknown wrapper layouts get resolver forwarding only: no executable
-    // entry patch, maximum claim, lifecycle patch, or MFG authorization.
-    return EnsureControlRoute(owner, discovered.path, discovered.generation, false, 0);
+    }
+    uint32_t slot = FindControlRouteForTarget(resolved);
+    if (slot == UINT32_MAX)
+    {
+        const ModuleRecord discovered = InspectLoadedModule(owner, LoadedModulePath(owner));
+        slot = discovered.controlRouteSlot;
+        // Unknown wrapper layouts get resolver forwarding only: no executable
+        // entry patch, maximum claim, lifecycle patch, or MFG authorization.
+        if (slot == UINT32_MAX && discovered.wrapperExport && discovered.generation)
+            slot = EnsureControlRoute(owner, discovered.path, discovered.generation, false, 0);
+    }
+    ControlRouteRecord* route = ControlRouteAt(slot);
+    HMODULE expected = nullptr;
+    // One reference per route; the host still holds the plug-in, so a spare
+    // release is never the final one.
+    if (!route || route->wrapper != owner
+        || !route->retainedWrapper.compare_exchange_strong(expected, held,
+            std::memory_order_acq_rel))
+        FreeLibrary(held);
+    return slot;
 }
 
 // The game's latency markers and Reflex sleep, for XeMFG standalone's XeLL (frame ids and pacing). One
@@ -7470,6 +7776,10 @@ sl::Result HookSlSetTag(const sl::ViewportHandle& viewport,
     auto* original = gOriginalSetTag.load(std::memory_order_acquire);
     if (!original)
         return sl::Result::eErrorNotInitialized;
+    // sl1pass.1: a hook placed before a Streamline 1.x interposer was identified (a delay-loaded import) passes
+    // the four arguments on as they came. They are Streamline 1's resource, tag, id and extent, not ours to read.
+    if (gStreamlineOneHost.load(std::memory_order_acquire))
+        return original(viewport, tags, numTags, cmdBuffer);
     if (!numTags)
         return sl::Result::eOk;
     std::vector<sl::ResourceTag> forwarded;
@@ -7525,6 +7835,9 @@ sl::Result HookSlSetConstants(const sl::Constants& values, const sl::FrameToken&
     if (!original)
         return sl::Result::eErrorNotInitialized;
     const sl::Result result = original(values, frame, viewport);
+    // sl1pass.1: Streamline 1.x passes a frame index and a viewport id here, not references.
+    if (gStreamlineOneHost.load(std::memory_order_acquire))
+        return result;
     uint32_t id = 0;
     if (!ReadFrameToken(frame, id))
         NoteUnreadableToken(L"slSetConstants", result);
@@ -7587,6 +7900,225 @@ sl::Result HookSlSetD3DDevice(void* device)
 void PatchRecordedCandidates();
 
 bool OptiScalerPrivateStreamline(const wchar_t* path, size_t length) noexcept;
+
+// slshutdown.1 (Cyberpunk 2077's exit crash, 78 of its 118 crash reports since 20 Oct): the game ends with slShutdown,
+// then ExitProcess. Streamline's slShutdown unloads its plug-ins, sl.common last. The DLSS-G and Reflex plug-ins we
+// kept loaded past it (entry detours, route references, both pinned before) ran their static destructors at
+// ExitProcess instead, after sl.common was gone: sl.dlss_g released a shared_ptr<sl::chi::HashedResourceData> whose
+// control block is sl.common's, and read its unloaded vtable (...6540). Before the host's slShutdown runs, retention
+// ends and every reference we hold on its Streamline plug-ins is released, so Streamline unloads them in its own
+// order. A plug-in still mapped afterwards (another reference keeps it) gets its references and entries back. An
+// unloaded one leaves our inventory and its typed forwarding answers eErrorNotInitialized.
+struct ShutdownWatch
+{
+    std::atomic<uintptr_t> base{0};
+    std::atomic<bool> unloaded{false};
+};
+std::array<ShutdownWatch, 32> gShutdownWatch{};
+std::mutex gShutdownMutex;
+// The worker's inventory pass holds a loader reference on each module it
+// inspects. Held by HookSlShutdown across the host's slShutdown and tried by
+// the worker, so no pass keeps a plug-in loaded past sl.common.
+std::mutex gInventoryPassMutex;
+
+// The loader's unload notification, loader lock held: atomics only.
+void NoteShutdownUnload(uintptr_t base) noexcept
+{
+    if (!base)
+        return;
+    for (ShutdownWatch& watch : gShutdownWatch)
+        if (watch.base.load(std::memory_order_acquire) == base)
+            watch.unloaded.store(true, std::memory_order_release);
+}
+
+void RemoveLoadedModule(const ModuleRecord& expected);
+
+struct PluginRelease
+{
+    struct Plugin
+    {
+        HMODULE module = nullptr;
+        std::wstring path;
+        std::vector<ModuleRecord> records;
+        size_t entries = 0;
+        bool reflex = false;
+        size_t ampere = 0;
+        std::vector<uint32_t> routeReferences;
+        size_t watch = SIZE_MAX;
+    };
+    std::vector<Plugin> plugins;
+    bool retention = false;
+    // The latency wrappers' originals and their plug-ins, before the shutdown.
+    PFun_slPCLSetMarker* pcl = nullptr;
+    HMODULE pclOwner = nullptr;
+    PFun_slReflexSetMarkerLegacy* marker = nullptr;
+    HMODULE markerOwner = nullptr;
+    PFun_slReflexSleep* sleep = nullptr;
+    HMODULE sleepOwner = nullptr;
+    PFun_slReflexSleep* observedSleep = nullptr;
+    HMODULE observedSleepOwner = nullptr;
+};
+
+PluginRelease ReleaseStreamlinePlugins()
+{
+    PluginRelease release;
+    // No new detour or reference until the next session has a device.
+    release.retention = gStreamlinePluginRetention.exchange(false, std::memory_order_acq_rel);
+    const HMODULE interposer = gHostInterposer.load(std::memory_order_acquire);
+    std::vector<ModuleRecord> records;
+    {
+        std::lock_guard lock(gModuleMutex);
+        for (const ModuleRecord& record : gModuleRecords)
+            if (record.wrapperExport && record.module && record.module != interposer)
+                records.push_back(record);
+    }
+    for (const ModuleRecord& record : records)
+    {
+        // The game's plug-ins only: OptiScaler's private Streamline is not this host's to unload.
+        if (OptiScalerPrivateStreamline(record.path.c_str(), record.path.size()))
+            continue;
+        PluginRelease::Plugin* plugin = nullptr;
+        for (PluginRelease::Plugin& known : release.plugins)
+            if (known.module == record.module) plugin = &known;
+        if (!plugin)
+        {
+            plugin = &release.plugins.emplace_back();
+            plugin->module = record.module;
+            plugin->path = record.path;
+        }
+        plugin->records.push_back(record);
+    }
+    // The watch is armed before any reference goes: the host's FreeLibrary is the unload evidence.
+    for (size_t index = 0; index < release.plugins.size() && index < gShutdownWatch.size(); ++index)
+    {
+        gShutdownWatch[index].unloaded.store(false, std::memory_order_release);
+        gShutdownWatch[index].base.store(
+            reinterpret_cast<uintptr_t>(release.plugins[index].module), std::memory_order_release);
+        release.plugins[index].watch = index;
+    }
+    release.pcl = gOriginalPclSetMarker.load(std::memory_order_acquire);
+    release.pclOwner = release.pcl ? ModuleFromAddress(reinterpret_cast<const void*>(release.pcl)) : nullptr;
+    release.marker = gOriginalReflexSetMarker.load(std::memory_order_acquire);
+    release.markerOwner = release.marker ? ModuleFromAddress(reinterpret_cast<const void*>(release.marker)) : nullptr;
+    release.sleep = gOriginalReflexSleep.load(std::memory_order_acquire);
+    release.sleepOwner = release.sleep ? ModuleFromAddress(reinterpret_cast<const void*>(release.sleep)) : nullptr;
+    release.observedSleep = gObservedReflexSleep.load(std::memory_order_acquire);
+    release.observedSleepOwner = release.observedSleep
+        ? ModuleFromAddress(reinterpret_cast<const void*>(release.observedSleep)) : nullptr;
+    for (PluginRelease::Plugin& plugin : release.plugins)
+    {
+        // Entries first: once the references go, nothing may read the image.
+        plugin.entries = entry_detour::RetireOwner(plugin.module);
+        plugin.reflex = reflex_control::RetireModule(plugin.module);
+        // slshutdown.2: RTX 30/20, the Ampere backend's wrapper layout and availability patch.
+        plugin.ampere = ampere_backend::RetireWrapper(plugin.module);
+        for (uint32_t slot = 0; slot < gControlRoutes.size(); ++slot)
+        {
+            ControlRouteRecord& route = gControlRoutes[slot];
+            if (!route.claimed.load(std::memory_order_acquire) || route.wrapper != plugin.module)
+                continue;
+            if (HMODULE held = route.retainedWrapper.exchange(nullptr, std::memory_order_acq_rel))
+            {
+                plugin.routeReferences.push_back(slot);
+                FreeLibrary(held);
+            }
+        }
+    }
+    return release;
+}
+
+template <class Fn>
+void ForgetUnloadedOriginal(std::atomic<Fn*>& slot, Fn* value, HMODULE owner,
+    const std::vector<HMODULE>& unloaded) noexcept
+{
+    // The next session's slGetFeatureFunction wraps its own function.
+    if (value && owner && std::find(unloaded.begin(), unloaded.end(), owner) != unloaded.end())
+        slot.compare_exchange_strong(value, nullptr, std::memory_order_acq_rel);
+}
+
+void FinishStreamlinePluginRelease(const PluginRelease& release, sl::Result result)
+{
+    std::vector<HMODULE> unloaded;
+    size_t entries = 0, routes = 0, reflex = 0, ampere = 0;
+    for (const PluginRelease::Plugin& plugin : release.plugins)
+    {
+        entries += plugin.entries;
+        routes += plugin.routeReferences.size();
+        reflex += plugin.reflex ? 1u : 0u;
+        ampere += plugin.ampere;
+        const bool unloadSeen = plugin.watch != SIZE_MAX
+            && gShutdownWatch[plugin.watch].unloaded.load(std::memory_order_acquire);
+        HMODULE current = nullptr;
+        const bool mapped = !unloadSeen
+            && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                    | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(plugin.module), &current)
+            && current == plugin.module
+            && _wcsicmp(LoadedModulePath(plugin.module).c_str(), plugin.path.c_str()) == 0;
+        entry_detour::ReturnOwner(plugin.module, mapped);
+        reflex_control::ReturnModule(plugin.module, mapped);
+        ampere_backend::ReturnWrapper(plugin.module, mapped);
+        if (mapped)
+        {
+            for (uint32_t slot : plugin.routeReferences)
+            {
+                HMODULE held = nullptr;
+                HMODULE expected = nullptr;
+                if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                        reinterpret_cast<LPCWSTR>(plugin.module), &held) && held == plugin.module
+                    && gControlRoutes[slot].retainedWrapper.compare_exchange_strong(
+                        expected, held, std::memory_order_acq_rel))
+                    continue;
+                if (held)
+                    FreeLibrary(held);
+            }
+            if (plugin.entries || plugin.reflex || plugin.ampere || !plugin.routeReferences.empty())
+                Log(L"Streamline slShutdown: plug-in still loaded by another reference; our references are back: "
+                    L"path=%s", plugin.path.c_str());
+            continue;
+        }
+        unloaded.push_back(plugin.module);
+        // Inventory and the active route first (RemoveLoadedModule reads the route), then close the routes.
+        for (const ModuleRecord& record : plugin.records)
+            RemoveLoadedModule(record);
+        for (ControlRouteRecord& route : gControlRoutes)
+        {
+            if (route.claimed.load(std::memory_order_acquire) && route.wrapper == plugin.module)
+                route.unloaded.store(true, std::memory_order_release);
+        }
+    }
+    ForgetUnloadedOriginal(gOriginalPclSetMarker, release.pcl, release.pclOwner, unloaded);
+    ForgetUnloadedOriginal(gOriginalReflexSetMarker, release.marker, release.markerOwner, unloaded);
+    ForgetUnloadedOriginal(gOriginalReflexSleep, release.sleep, release.sleepOwner, unloaded);
+    ForgetUnloadedOriginal(gObservedReflexSleep, release.observedSleep, release.observedSleepOwner, unloaded);
+    for (ShutdownWatch& watch : gShutdownWatch)
+    {
+        watch.base.store(0, std::memory_order_release);
+        watch.unloaded.store(false, std::memory_order_release);
+    }
+    gModuleInventoryDirty.store(true, std::memory_order_release);
+    Log(L"Streamline slShutdown: references released first (plug-ins=%zu entries=%zu routes=%zu reflex=%zu "
+        L"ampere=%zu retention=%d); result=%d unloaded=%zu kept=%zu", release.plugins.size(), entries, routes,
+        reflex, ampere, static_cast<int>(release.retention), static_cast<int>(result), unloaded.size(),
+        release.plugins.size() - unloaded.size());
+}
+
+sl::Result HookSlShutdown()
+{
+    static thread_local uint32_t depth = 0;
+    auto* original = RoutedOriginal(depth, EntryOriginal(gOriginalSlShutdownEntry,
+        gSlShutdownEntryHandle), gOriginalSlShutdown.load(std::memory_order_acquire));
+    if (!original || depth != 0 || gStreamlineOneHost.load(std::memory_order_acquire))
+        return original ? original() : sl::Result::eErrorNotInitialized;
+    ReentryScope nested(depth);
+    std::lock_guard shutdownLock(gShutdownMutex);
+    std::lock_guard inventoryLock(gInventoryPassMutex);
+    gSlShutdownCalls.fetch_add(1, std::memory_order_relaxed);
+    const PluginRelease release = ReleaseStreamlinePlugins();
+    const sl::Result result = original();
+    FinishStreamlinePluginRelease(release, result);
+    return result;
+}
 
 // After the private instance's RTX 30 startup its sl.dlss_g is a control route
 // like the game's. OptiScaler resolves slDLSSGSetOptions/GetState through its
@@ -8231,6 +8763,10 @@ sl::Result HookSlInit(const sl::Preferences& preferences,
     auto* original = EntryOriginal(gOriginalSlInit, gSlInitEntryHandle);
     if (!original || original == &HookSlInit)
         return sl::Result::eErrorNotInitialized;
+    // sl1pass.1: Streamline 1.x's preferences have another layout and the second argument is an application id.
+    // A hook placed before that interposer was identified forwards both untouched.
+    if (gStreamlineOneHost.load(std::memory_order_acquire))
+        return original(preferences, sdkVersion);
     // Recheck application factory imports at the existing early boundary.
     // The UI creates no graphics objects and modifies no native/Streamline tables.
     // The entry detour jumps here, so this is the game's slInit call site.
@@ -8280,6 +8816,8 @@ sl::Result HookSlInit(const sl::Preferences& preferences,
         // slSetD3DDevice only through its entry. It identifies the GPU and
         // patches the DLSS-G wrapper before the plugins read their limits.
         TryInstallSlSetD3DDeviceEntryDetour(interposer);
+        // slshutdown.1: our plug-in references end before its slShutdown.
+        TryInstallSlShutdownEntryDetour(interposer);
         // RTX 30 Vulkan hosts: slSetVulkanInfo and the interposer's
         // vkCreateDevice start the plug-ins (detected RTX 30 systems only).
         TryInstallSlVulkanEntryDetours(interposer);
@@ -8427,11 +8965,39 @@ bool OptiScalerPrivateStreamline(const wchar_t* path, size_t length) noexcept
         && _wcsnicmp(path + base, folder, folderLength) == 0;
 }
 
+// sl1pass.1 (Dead Space, A Plague Tale: Requiem): Streamline 1.x ships under the same module name with another
+// ABI. Its slSetTag(resource, tag, id, extent), slSetConstants(values, frameIndex, id) and slInit(preferences,
+// applicationId) reached our Streamline 2 hooks: slSetTag's id of 0 was read as "no tags" and never forwarded, so
+// DLSS had no inputs, and every slSetConstants call faulted reading the frame index as a frame token. Every
+// Streamline 2 interposer exports slGetFeatureFunction and no Streamline 1 interposer does. slInit must be found
+// first, so an export table that cannot be read never looks like Streamline 1. Mapped-image reads only: safe
+// with the loader lock held.
+bool StreamlineOneInterposer(HMODULE interposer) noexcept
+{
+    return interposer && MappedExportAddress(interposer, "slInit")
+        && !MappedExportAddress(interposer, "slGetFeatureFunction");
+}
+
+// The interposer the main executable's static Streamline imports bind to.
+bool LoadedInterposerIsStreamlineOne() noexcept
+{
+    if (!StreamlineOneInterposer(GetModuleHandleW(L"sl.interposer.dll")))
+        return false;
+    gStreamlineOneHost.store(true, std::memory_order_release);
+    return true;
+}
+
 // Binds the first eligible interposer. Loader-lock safe given the mapped path.
+// A Streamline 1.x interposer is never bound: it keeps all of its entries.
 bool HostInterposer(HMODULE interposer, const wchar_t* path, size_t length) noexcept
 {
     if (!interposer || OptiScalerPrivateStreamline(path, length))
         return false;
+    if (StreamlineOneInterposer(interposer))
+    {
+        gStreamlineOneHost.store(true, std::memory_order_release);
+        return false;
+    }
     HMODULE expected = nullptr;
     return gHostInterposer.compare_exchange_strong(expected, interposer,
         std::memory_order_acq_rel) || expected == interposer;
@@ -8590,6 +9156,50 @@ bool TryInstallSlSetD3DDeviceEntryDetour(HMODULE interposer)
     return installed;
 }
 
+// slshutdown.1: the game's slShutdown, wherever it is called from (imports,
+// resolved or cached pointers): our plug-in references end before it runs.
+bool TryInstallSlShutdownEntryDetour(HMODULE interposer)
+{
+    if (!interposer)
+        return false;
+    const std::wstring path = LoadedModulePath(interposer);
+    if (!ModuleFileNameEquals(path, L"sl.interposer.dll")
+        || !HostInterposer(interposer, path))
+        return false;
+    void* target = reinterpret_cast<void*>(
+        GetProcAddress(interposer, "slShutdown"));
+    if (!target || ModuleFromAddress(target) != interposer)
+        return false;
+
+    // No version-dependent entry pattern is known; use the relocation path.
+    entry_detour::InstallOptions options{};
+    options.allowRelocated = true;
+    void* trampoline = nullptr;
+    const bool installed = entry_detour::Install(
+        entry_detour::Kind::eSlShutdown, interposer, target,
+        reinterpret_cast<void*>(&HookSlShutdown), trampoline,
+        options, &gSlShutdownEntryHandle);
+    if (trampoline)
+    {
+        gOriginalSlShutdownEntry.store(
+            reinterpret_cast<PFun_slShutdown*>(trampoline),
+            std::memory_order_release);
+    }
+    static std::atomic<uint32_t> logged{0};
+    const uint32_t outcome = installed ? 1u : 2u;
+    if (logged.exchange(outcome, std::memory_order_acq_rel) != outcome)
+    {
+        const entry_detour::Snapshot state =
+            entry_detour::ReadSnapshot(gSlShutdownEntryHandle);
+        Log(L"Streamline slShutdown entry detour: installed=%d "
+            L"current=%d method=%hs failure=%u targetRva=0x%X path=%s",
+            installed, state.current, entry_detour::MethodName(state.method),
+            static_cast<uint32_t>(state.failure), state.targetRva,
+            path.c_str());
+    }
+    return installed;
+}
+
 // RTX 30 systems: the interposer's slSetVulkanInfo (hosts that resolve its
 // exports themselves) and its vkCreateDevice (interposer-loaded Vulkan hosts,
 // which never call slSetVulkanInfo) are the Vulkan startup brackets.
@@ -8739,10 +9349,15 @@ bool TryInstallSlInitEntryDetour(HMODULE interposer, void* resolvedTarget)
     {
         // OptiScaler's private instance: only its own slSetD3DDevice entry, so
         // Ada's wrapper maximum is patched before its plug-ins start.
-        const bool optiScaler = TryInstallOptiScalerSlSetD3DDeviceEntryDetour(interposer, path);
+        const bool streamlineOne = StreamlineOneInterposer(interposer);
+        const bool optiScaler = !streamlineOne
+            && TryInstallOptiScalerSlSetD3DDeviceEntryDetour(interposer, path);
         static std::atomic<HMODULE> logged{nullptr};
         if (logged.exchange(interposer, std::memory_order_acq_rel) != interposer)
-            Log(optiScaler
+            Log(streamlineOne
+                    ? L"Streamline 1.x interposer: no Streamline hooks installed, the game's Streamline calls "
+                      L"run untouched (XeMFG standalone and the DLSS-G unlock need Streamline 2): path=%s"
+                    : optiScaler
                     ? L"Streamline interposer is OptiScaler's private instance; only its slSetD3DDevice "
                       L"is hooked (not the game's instance): path=%s"
                     : L"Streamline interposer left untouched (not the game's instance): path=%s",
@@ -8751,6 +9366,7 @@ bool TryInstallSlInitEntryDetour(HMODULE interposer, void* resolvedTarget)
     }
     TryInstallSlUpgradeInterfaceEntryDetour(interposer, nullptr);
     TryInstallSlSetD3DDeviceEntryDetour(interposer);
+    TryInstallSlShutdownEntryDetour(interposer);
     void* target = resolvedTarget ? resolvedTarget
         : reinterpret_cast<void*>(GetProcAddress(interposer, "slInit"));
     if (!target || ModuleFromAddress(target) != interposer)
@@ -8858,6 +9474,15 @@ FARPROC WINAPI HookMainGetProcAddress(HMODULE module, LPCSTR functionName)
         auto* candidate = reinterpret_cast<PFun_slSetD3DDevice*>(resolved);
         if (candidate != &HookSlSetD3DDevice) gOriginalSetD3DDevice.store(candidate);
         return reinterpret_cast<FARPROC>(&HookSlSetD3DDevice);
+    }
+
+    // slshutdown.1: hosts that resolve slShutdown themselves (the entry detour
+    // covers imports and cached pointers).
+    if (std::strcmp(functionName, "slShutdown") == 0)
+    {
+        auto* candidate = reinterpret_cast<PFun_slShutdown*>(resolved);
+        if (candidate != &HookSlShutdown) gOriginalSlShutdown.store(candidate, std::memory_order_release);
+        return reinterpret_cast<FARPROC>(&HookSlShutdown);
     }
 
     if (std::strcmp(functionName, "slSetVulkanInfo") == 0)
@@ -8994,6 +9619,9 @@ bool InstallMainResolverDiscovery()
 
 bool InstallSlInitIatFallback()
 {
+    // sl1pass.1: Streamline 1.x's slInit takes another preferences layout and an application id.
+    if (LoadedInterposerIsStreamlineOne())
+        return false;
     void* original = nullptr;
     const bool installed = HookMainExecutableImport("sl.interposer.dll",
         "slInit", reinterpret_cast<void*>(&HookSlInit), original);
@@ -9193,6 +9821,12 @@ bool InstallVulkanInfoHook()
 
 bool InstallUiTagHooks()
 {
+    // sl1pass.1: Streamline 1.x exports slSetTag and slSetConstants with other signatures.
+    if (LoadedInterposerIsStreamlineOne())
+    {
+        gUiTagHookInstalled.store(false, std::memory_order_release);
+        return false;
+    }
     void* legacyOriginal = nullptr;
     const bool legacyInstalled = HookMainExecutableImport("sl.interposer.dll",
         "slSetTag", reinterpret_cast<void*>(&HookSlSetTag), legacyOriginal);
@@ -9945,6 +10579,14 @@ void LogModuleInventory(const ModuleRecord& record)
         record.ngxTemporalPatched, record.ngxRuntimeExport,
         record.ngxRuntimeD3D12Export, record.ngxRuntimeVulkanExport,
         record.path.c_str());
+    if (record.wrapperExport && !record.wrapperCandidate && AmpereWrapperAuditApplies()
+        && ModuleFileNameEquals(record.path, L"sl.dlss_g.dll"))
+    {
+        const auto version = ReadFileVersion(record.path);
+        Log(L"Ampere startup wrapper refused: no recognized allocation layout "
+            L"wrapperVersion=%u.%u.%u.%u path=%s",
+            version.major, version.minor, version.build, version.privatePart, record.path.c_str());
+    }
 }
 
 ModuleRecord InspectLoadedModule(HMODULE module, const std::wstring& suppliedPath)
@@ -10531,6 +11173,8 @@ void CALLBACK OnDllNotification(
     {
         HMODULE unloaded = static_cast<HMODULE>(data->unloaded.dllBase);
         gHostInterposer.compare_exchange_strong(unloaded, nullptr, std::memory_order_acq_rel);
+        // slshutdown.1: a plug-in the host's slShutdown unloaded.
+        NoteShutdownUnload(reinterpret_cast<uintptr_t>(data->unloaded.dllBase));
     }
     // Loader lock held: resource-directory read only, no logging. The worker
     // reports the transition and applies the OptiScaler-mode policy.
@@ -10784,7 +11428,7 @@ DWORD WINAPI PatchWorker(void* context)
         runtime_log_setting::kSection, runtime_log_setting::kKey,
         statusFileEverySecond ? L"second" : L"30 s and on changes",
         temporal_interval_trace::FileEnabled() ? temporal_interval_trace::FilePath() : L"off");
-    Log(L"RTXMFG build=1.7.1 source=v1.5-flipmeter-20261006 base=intel6.6+optiscaler.1+ring2.3+dltb.2+slhost.1+flipmeter.18+hairdiscovery.1.4.2+reflexfg.2+capture.2+optixell.1+optiout.1+optipace.1+model2x.1+mvfill.1+uioff.1+uistable.1+mfgport.1+hudmatch.1+optiport.1+optcapture.1+optiportdefault.1+xefgdiscovery.1+slrestart.1+nvapipin.1+modeltoggle.1+uirefresh.1+noport.1+optiredirect.1+reflexport.1+portback.1+optionly.1+delayload.1+rtx30.3+xellungated.1+specialk.1a+themidaimports.1+modelchoice.1+xefgmodel.1+splat.2+scenechange.1+xellinput.1+rtx30sl2732.1+mfgunlocker.1+presetc.3+rtx30presetc.1+rtx30stable.1+rtx30ota.1+cudawrapped.2+l10n.8+pin.4+turing.1+sm120.1+unet.1+nvlist.1+rtx30nvapi.1+rtx30buffers.1+gpuname.1+arcnative.3+rtx30flip.2+cudaowner.1+dredtable.1+optidlssg.1+xefgflipmeter.2+releaseleak.1+flipkey.1+cap6.1+optirtx30.1+livepreset.2+routegen.1+hitch.1+xefg134.1+rtx30vulkan.1+vkholes.1+vkvsync.1+vkfps.1+srpreset.1+srpreset.2+srpreset.3+srpreset.4+seam.1+scene.1+logpath.1+rtx20dlssg.1+slinitloop.1+lean160.1+xefgrace.1+latency.1+livepresetall.1+rtx50.1+slinitfg.1+slinitfg.2+psorefused.1+ring2.4+flipqueue.2+vsync.1+coupled.1+wine.1+follow.1+prodtarget.1+menucap.1+vkpreset.1+vsync.2+gatepass.1+vkxefg.1+vkxefg.2+vkxefg.3+vkxefg.4+vkxefg.5+hostgate.1+menu16.1+amdkeep.1+rtx30presetstatus.1+vkswapext.1+presentqueue.1+lockin.1+logkeep.1+amdflip.1+amdqueue.1+presenterlead.1+cudafault.1+mailbox.1+stallguard.1+reflexgate.1+slinitfg.3+dlaalabel.1+crashhost.1+ngxforward.1+vkreflex.1+amdcount.1+hdrpq.1+amdlog.1+amdqueue.2+amdqueue.3+heldrate.1+dlss5.1+dlss5queue.1+dlss5tab.1+dlss5inputs.1+dlss5present.1+dlss5layout.1+dlss5auto.1+dlss5autolabel.1+dlss5rgbamv.1+dlss5unwrap.2+dlss5optiui.1+dlss5optichain.2+dlss5optikey.1+dlss5compare.5+dlss5unwrap.3+dlss5inputs.2+vkdlss5.1+xefgmenu.1+dlss5boost.1+dlss5boost.2+dlss5boost.3+dlss5boost.4+dlss5dots.1+diag171.1+ringcap.1+xemfgsa.1+xemfgsa.2+xemfgsa.3+xemfgsa.4+xemfgsa.5+xemfgsa.6+dlss5adv.1+hairshade.1+hairtrans.3+hairbounce.1+hairalbedo.1+hairtrans.4+hairrefl.1+hairdebug.1+hairstencil.1+hairfold.1+dlss5halfrate.1+dlss5gate.1+vkstages.1+xemfghint.1+underlinetabs.1+halfrateoff.1+firstready.1+interopmenu.3+halfgrid.1+menupoll.1+autoscale.1+autoscale.2+outputwait.1+menufallback.1+dlss5owner.1+runtimesearch.1+startwatch.1+seamstats.1+dlss5cost.1+dx11note.1+faultalive.1+exposureoff.1+amd6x.1+bimodal.1+hdrbridge.1+optiuirevert.1+deepheld.1+smallchain.1+factoryhook.1+smallchain.2+flipkeyoff.1+optimenu.1+admitoffmin.1+dlss5noratio.1+menutab.2+menumouse.1+sapacing.2+admitoff.1+oldruntime.1+nvpresent.1+keybinds.2+debloat.1+debloat.2+slim.1+keybinds.3+winemenu.1+menunotes.1+menuout.1+dlssgtab.1+dlssgtab.2+nrouter.1+optinr.1+menuout.2+nrnames.1+dx11nr.1+nrscale.1+latency.2+pacelock.1+idanchor.1+tabdefault.1+clstate.1+latmon.1+xemfglive.1+latmon.2+latmon.3+xemfglive.2+latmon.4+xemfglive.3+xemfglive.4+xemfglive.6+autorect.1+autofps.1+xemfglive.7+xemfglive.8+xemfglive.9+keyrelease.1+pluginabi.1+diskwrites.1+diskwrites.2+diskwrites.3+pacerfix.3+vmemlog.1+privboot.1+heldprobe.1+wrapbuffers.1+metergate.1+hosthandle.1+rejectlog.1+winequeue.1+rejectlog.2+sleepsight.1+optisleep.1+sdkscan.1+optispace.1+dispoll.1+rtxhair.1+rtxhair.2+rtxhair.3+rtxhair.4+rtxhair.5+rtxhair.6+vkprov.1+vkprov.2+vkprov.3+vkprov.4+hairauto.1+nulltoken.1+discordfix.1+hudlatch.1+portstatus.1+pacediag.1+dlss5presets.1+dlss5presets.2+dlss5tab.1+ngxprov.1+fg95prov.1+vkhair.1+apisetgpa.1+beta2fix.1+ngxrect.1+rtx30ngx.1+ghfix.1+vkhairchain.1+ngxcuda.1+ngxcuda.2+hairmem.2+sl212direct.1+beta3fix.1+pluginprov.2+gatehold.1+xmxdefault.1+hostport.1+slim.2" MFG_SESSION_DIAGNOSTICS_LABEL L" outputPullMask=%d occupancyHint=%d "
+    Log(L"RTXMFG build=1.7.2 source=v1.5-flipmeter-20261006 base=intel6.6+optiscaler.1+ring2.3+dltb.2+slhost.1+flipmeter.18+hairdiscovery.1.4.2+reflexfg.2+capture.2+optixell.1+optiout.1+optipace.1+model2x.1+mvfill.1+uioff.1+uistable.1+mfgport.1+hudmatch.1+optiport.1+optcapture.1+optiportdefault.1+xefgdiscovery.1+slrestart.1+nvapipin.1+modeltoggle.1+uirefresh.1+noport.1+optiredirect.1+reflexport.1+portback.1+optionly.1+delayload.1+rtx30.3+xellungated.1+specialk.1a+themidaimports.1+modelchoice.1+xefgmodel.1+splat.2+scenechange.1+xellinput.1+rtx30sl2732.1+mfgunlocker.1+presetc.3+rtx30presetc.1+rtx30stable.1+rtx30ota.1+cudawrapped.2+l10n.8+pin.4+turing.1+sm120.1+unet.1+nvlist.1+rtx30nvapi.1+rtx30buffers.1+gpuname.1+arcnative.3+rtx30flip.2+cudaowner.1+dredtable.1+optidlssg.1+xefgflipmeter.2+releaseleak.1+flipkey.1+cap6.1+optirtx30.1+livepreset.2+routegen.1+hitch.1+xefg134.1+rtx30vulkan.1+vkholes.1+vkvsync.1+vkfps.1+srpreset.1+srpreset.2+srpreset.3+srpreset.4+seam.1+scene.1+logpath.1+rtx20dlssg.1+slinitloop.1+lean160.1+xefgrace.1+latency.1+livepresetall.1+rtx50.1+slinitfg.1+slinitfg.2+psorefused.1+ring2.4+flipqueue.2+vsync.1+coupled.1+wine.1+follow.1+prodtarget.1+menucap.1+vkpreset.1+vsync.2+gatepass.1+vkxefg.1+vkxefg.2+vkxefg.3+vkxefg.4+vkxefg.5+hostgate.1+menu16.1+amdkeep.1+rtx30presetstatus.1+vkswapext.1+presentqueue.1+lockin.1+logkeep.1+amdflip.1+amdqueue.1+presenterlead.1+cudafault.1+mailbox.1+stallguard.1+reflexgate.1+slinitfg.3+dlaalabel.1+crashhost.1+ngxforward.1+vkreflex.1+amdcount.1+hdrpq.1+amdlog.1+amdqueue.2+amdqueue.3+heldrate.1+dlss5.1+dlss5queue.1+dlss5tab.1+dlss5inputs.1+dlss5present.1+dlss5layout.1+dlss5auto.1+dlss5autolabel.1+dlss5rgbamv.1+dlss5unwrap.2+dlss5optiui.1+dlss5optichain.2+dlss5optikey.1+dlss5compare.5+dlss5unwrap.3+dlss5inputs.2+vkdlss5.1+xefgmenu.1+dlss5boost.1+dlss5boost.2+dlss5boost.3+dlss5boost.4+dlss5dots.1+diag171.1+ringcap.1+xemfgsa.1+xemfgsa.2+xemfgsa.3+xemfgsa.4+xemfgsa.5+xemfgsa.6+dlss5adv.1+hairshade.1+hairtrans.3+hairbounce.1+hairalbedo.1+hairtrans.4+hairrefl.1+hairdebug.1+hairstencil.1+hairfold.1+dlss5halfrate.1+dlss5gate.1+vkstages.1+xemfghint.1+underlinetabs.1+halfrateoff.1+firstready.1+interopmenu.3+halfgrid.1+menupoll.1+autoscale.1+autoscale.2+outputwait.1+menufallback.1+dlss5owner.1+runtimesearch.1+startwatch.1+seamstats.1+dlss5cost.1+dx11note.1+faultalive.1+exposureoff.1+amd6x.1+bimodal.1+hdrbridge.1+optiuirevert.1+deepheld.1+smallchain.1+factoryhook.1+smallchain.2+flipkeyoff.1+optimenu.1+admitoffmin.1+dlss5noratio.1+menutab.2+menumouse.1+sapacing.2+admitoff.1+oldruntime.1+nvpresent.1+keybinds.2+debloat.1+debloat.2+slim.1+keybinds.3+winemenu.1+menunotes.1+menuout.1+dlssgtab.1+dlssgtab.2+nrouter.1+optinr.1+menuout.2+nrnames.1+dx11nr.1+nrscale.1+latency.2+pacelock.1+idanchor.1+tabdefault.1+clstate.1+latmon.1+xemfglive.1+latmon.2+latmon.3+xemfglive.2+latmon.4+xemfglive.3+xemfglive.4+xemfglive.6+autorect.1+autofps.1+xemfglive.7+xemfglive.8+xemfglive.9+keyrelease.1+pluginabi.1+diskwrites.1+diskwrites.2+diskwrites.3+pacerfix.3+vmemlog.1+privboot.1+heldprobe.1+wrapbuffers.1+metergate.1+hosthandle.1+rejectlog.1+winequeue.1+rejectlog.2+sleepsight.1+optisleep.1+sdkscan.1+optispace.1+dispoll.1+rtxhair.1+rtxhair.2+rtxhair.3+rtxhair.4+rtxhair.5+rtxhair.6+vkprov.1+vkprov.2+vkprov.3+vkprov.4+hairauto.1+nulltoken.1+discordfix.1+hudlatch.1+portstatus.1+pacediag.1+dlss5presets.1+dlss5presets.2+dlss5tab.1+ngxprov.1+fg95prov.1+vkhair.1+apisetgpa.1+beta2fix.1+ngxrect.1+rtx30ngx.1+ghfix.1+vkhairchain.1+ngxcuda.1+ngxcuda.2+hairmem.2+sl212direct.1+beta3fix.1+pluginprov.2+gatehold.1+xmxdefault.1+hostport.1+slim.2+sl1pass.1+dlss5mips.1+dlss5finite.1+cowtwin.1+cudaheld.1+provkey.1+slprov.1+genswap.1+genswap.2+slshutdown.1+nolzma.1+takeover.1+slshutdown.2+psocache.1+compat.1+genswap30.1+beta2fix.1+hairmenu.1+rtx30optimax.1" MFG_SESSION_DIAGNOSTICS_LABEL L" outputPullMask=%d occupancyHint=%d "
         L"uiInputs=framed-observations uiRecomposition=game-managed",
         MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY,
         MFG_UNLOCK_OUTPUT_PULL_MASK_OCCUPANCY);
@@ -10933,7 +11577,10 @@ DWORD WINAPI PatchWorker(void* context)
         }
 #endif
         ++inventoryTicks;
-        if (gModuleInventoryDirty.exchange(false, std::memory_order_acq_rel))
+        // slshutdown.1: not while the host's slShutdown unloads its plug-ins
+        // (the flag stays set for the next tick).
+        std::unique_lock inventoryPass(gInventoryPassMutex, std::try_to_lock);
+        if (inventoryPass && gModuleInventoryDirty.exchange(false, std::memory_order_acq_rel))
         {
             inventoryTicks = 0;
             InspectAlreadyLoadedModules();
@@ -10942,6 +11589,8 @@ DWORD WINAPI PatchWorker(void* context)
             xess_d3d12::DiscoverUpscalers();   // XeSS SR and FidelityFX API modules
             xessDiscoveryTicks = 0;
         }
+        if (inventoryPass)
+            inventoryPass.unlock();
         // A missed load notification still finds the SDK pair within 5 s.
         if (++xessDiscoveryTicks >= 50)
         {

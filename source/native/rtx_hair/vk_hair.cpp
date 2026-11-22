@@ -20,6 +20,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -136,6 +137,8 @@ struct HairDevice
     void* key{}; // the loader's dispatch table: the first word of the device and of each of its command buffers
     DeviceFunctions functions{};
     DotsBuilderVk builder;
+    std::atomic<const char*> buildError{};
+    std::atomic<uint64_t> lastBuildTick{};
     bool ready{};
 };
 
@@ -146,7 +149,7 @@ struct State
     std::map<VkPhysicalDevice, Admission> admissions;
     std::vector<std::unique_ptr<HairDevice>> devices; // kept until their vkDestroyDevice
     std::string reason;
-    bool seen{}, admitted{}, requested{}, prepared{}, failed{};
+    bool requested{};
 };
 // Never destroyed: wrappers may still run while the process exits.
 State& S()
@@ -156,9 +159,19 @@ State& S()
 }
 
 std::atomic<HairDevice*> gHair{nullptr}; // the converted device (the first LSS device of the process)
-std::atomic<uint64_t> gExtensionReports{}, gFeatureReports{}, gFlagsStripped{}, gRewritten{}, gNeutral{}, gRewriteFailed{}, gHostRefused{}, gLastBuild{};
-std::atomic<uint32_t> gExtensionLogs{}, gFeatureLogs{}, gDeviceLogs{}, gShaderLogs{}, gFlagLogs{}, gBuildLogs{}, gDumps{}, gCensusLogs{}, gPipelineResultLogs{},
+std::atomic<uint64_t> gExtensionReports{}, gFeatureReports{}, gFlagsStripped{}, gRewritten{}, gNeutral{}, gRewriteFailed{}, gHostRefused{};
+std::atomic<uint32_t> gExtensionLogs{}, gFeatureLogs{}, gDeviceLogs{}, gShaderLogs{}, gFlagLogs{}, gDumps{}, gCensusLogs{}, gPipelineResultLogs{},
     gPipelineFailureLogs{};
+
+void ReportDeviceFailure(std::string_view reason) noexcept
+{
+    try
+    {
+        std::lock_guard lock(S().lock);
+        S().reason.assign(reason);
+    }
+    catch (...) {}
+}
 
 HairDevice* Hair(VkDevice device)
 {
@@ -205,7 +218,6 @@ Admission& Admit(VkPhysicalDevice physical)
     a.decided = true;
     auto refuse = [&](std::string why) -> Admission& {
         a.reason = std::move(why);
-        if (s.reason.empty() || !s.admitted) s.reason = a.reason;
         Log("RTX_HAIR universal hair not admitted (Vulkan): " + a.reason);
         return a;
     };
@@ -267,8 +279,6 @@ Admission& Admit(VkPhysicalDevice physical)
         if (!a.budget) a.budget = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(a.gipa(a.instance, "vkGetPhysicalDeviceMemoryProperties2KHR"));
     }
     a.admitted = true;
-    s.admitted = true;
-    s.reason.clear();
     Log("RTX_HAIR universal hair admitted (Vulkan): " + a.name + ", CUDA " + std::to_string(major) + "." + std::to_string(minor)
         + "; the LSS extension is reported to the game on it");
     return a;
@@ -590,17 +600,6 @@ struct BuildSizesTag
     }
 };
 
-void NoteBuild(uint32_t count, const VkAccelerationStructureBuildGeometryInfoKHR* infos)
-{
-    for (uint32_t i = 0; infos && i < count; ++i)
-        if (DotsBuilderVk::HasLss(infos[i]))
-        {
-            gLastBuild.store(GetTickCount64(), std::memory_order_relaxed);
-            if (Below(gBuildLogs, 1)) Log("RTX_HAIR first hair BLAS recorded as DOTS triangles (Vulkan; GPU completion and game image not yet verified)");
-            return;
-        }
-}
-
 struct CmdBuildTag
 {
     static void Call(PFN_vkCmdBuildAccelerationStructuresKHR original, VkCommandBuffer list, uint32_t count,
@@ -608,8 +607,16 @@ struct CmdBuildTag
     {
         HairDevice* d = HairOf(list);
         if (!d) return original(list, count, infos, ranges);
-        NoteBuild(count, infos);
-        d->builder.CmdBuild(original, list, count, infos, ranges, BoundCompute(list));
+        const auto result = d->builder.CmdBuild(original, list, count, infos, ranges, BoundCompute(list));
+        if (result.recordedHair)
+        {
+            const bool first = d->lastBuildTick.exchange(GetTickCount64(), std::memory_order_relaxed) == 0;
+            d->buildError.store(nullptr, std::memory_order_release);
+            if (first)
+                Log("RTX_HAIR first hair BLAS recorded as DOTS triangles (Vulkan; GPU completion and game image not yet verified)");
+        }
+        else if (result.error)
+            d->buildError.store(result.error, std::memory_order_release);
     }
 };
 
@@ -621,8 +628,9 @@ struct CmdBuildIndirectTag
         HairDevice* d = HairOf(list);
         if (!d) return original(list, count, infos, indirect, strides, maxCounts);
         if (Below(gCensusLogs, 8)) Log("RTX_HAIR census: indirect acceleration-structure builds (LSS ones are built from inactive triangles)");
-        NoteBuild(count, infos);
+        const bool hasLss = infos && maxCounts && std::any_of(infos, infos + count, DotsBuilderVk::HasLss);
         d->builder.CmdBuildIndirect(original, list, count, infos, indirect, strides, maxCounts, BoundCompute(list));
+        if (hasLss) d->buildError.store("indirect LSS builds use inactive triangles", std::memory_order_release);
     }
 };
 
@@ -631,11 +639,13 @@ struct HostBuildTag
     static VkResult Call(PFN_vkBuildAccelerationStructuresKHR original, VkDevice device, VkDeferredOperationKHR deferred, uint32_t count,
         const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkAccelerationStructureBuildRangeInfoKHR* const* ranges)
     {
-        if (!Hair(device) || !infos) return original(device, deferred, count, infos, ranges);
+        HairDevice* d = Hair(device);
+        if (!d || !infos) return original(device, deferred, count, infos, ranges);
         for (uint32_t i = 0; i < count; ++i)
             if (DotsBuilderVk::HasLss(infos[i]))
             {
                 ++gHostRefused;
+                d->buildError.store("host LSS builds are unsupported", std::memory_order_release);
                 if (Below(gCensusLogs, 8)) Log("RTX_HAIR census: a host LSS build is refused (not converted)");
                 return VK_ERROR_FEATURE_NOT_PRESENT;
             }
@@ -737,7 +747,6 @@ void InstanceCreated(VkInstance instance, PFN_vkGetInstanceProcAddr gipa) noexce
     try
     {
         std::lock_guard lock(S().lock);
-        S().seen = true;
         S().instances.emplace_back(instance, gipa);
     }
     catch (...)
@@ -762,12 +771,9 @@ void InstanceDestroyed(VkInstance instance) noexcept
 
 DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo* info) noexcept
 {
+    bool requestedHere = false;
     try
     {
-        {
-            std::lock_guard lock(S().lock);
-            S().seen = true;
-        }
         if (!physical || !info || !universal::Requested()) return nullptr;
         bool lss = false, fetch = false;
         std::string names;
@@ -802,11 +808,13 @@ DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo*
         // take its LSS path), so that device is converted as if it were listed. The driver is never asked for LSS.
         const bool chainedOn = lssFeatures && (lssFeatures->linearSweptSpheres || lssFeatures->spheres);
         if (!lss && !chainedOn) return nullptr;
+        requestedHere = true;
         Admission admission;
         {
             std::lock_guard lock(S().lock);
+            S().requested = true;
             admission = Admit(physical);
-            S().requested = S().requested || admission.admitted;
+            if (!admission.admitted) S().reason = admission.reason;
         }
         if (!admission.admitted) return nullptr; // its own LSS (RTX 50), or a GPU it was not reported on
         // The converter reads through buffer device addresses: the game must enable them (every RT game does).
@@ -830,7 +838,6 @@ DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo*
                 lssFeatures->spheres = VK_FALSE;
             }
             std::lock_guard lock(S().lock);
-            S().failed = true;
             S().reason = "conversion could not start: " + refused;
             Log("RTX_HAIR universal hair failed (Vulkan): " + S().reason);
             return nullptr;
@@ -864,6 +871,7 @@ DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo*
     }
     catch (...)
     {
+        if (requestedHere) ReportDeviceFailure("could not prepare the Vulkan LSS device edit");
         return nullptr;
     }
 }
@@ -871,6 +879,13 @@ DeviceEditPtr PrepareDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo*
 const VkDeviceCreateInfo* EditedInfo(const DeviceEdit* edit, const VkDeviceCreateInfo* original) noexcept
 {
     return edit ? &edit->info : original;
+}
+
+void DeviceCreationFailed(VkResult result) noexcept
+{
+    char detail[128]{};
+    std::snprintf(detail, sizeof(detail), "vkCreateDevice with the hair edit failed (VkResult %d)", static_cast<int>(result));
+    ReportDeviceFailure(detail);
 }
 
 void DeviceCreated(DeviceEditPtr edit, VkDevice device) noexcept
@@ -898,7 +913,6 @@ void DeviceCreated(DeviceEditPtr edit, VkDevice device) noexcept
             S().devices.push_back(std::move(d));
             if (!raw->ready)
             {
-                S().failed = true;
                 S().reason = "conversion could not start: " + error;
             }
         }
@@ -915,7 +929,7 @@ void DeviceCreated(DeviceEditPtr edit, VkDevice device) noexcept
         }
         {
             std::lock_guard lock(S().lock);
-            S().prepared = true;
+            S().reason.clear();
         }
         const DotsOptions& options = HairOptions();
         Log("RTX_HAIR universal hair prepared (Vulkan) on " + edit->admission.name
@@ -924,6 +938,7 @@ void DeviceCreated(DeviceEditPtr edit, VkDevice device) noexcept
     }
     catch (...)
     {
+        ReportDeviceFailure("could not initialize the Vulkan LSS converter");
     }
 }
 
@@ -995,14 +1010,14 @@ Status ReadStatus() noexcept
     Status s;
     try
     {
+        HairDevice* d = nullptr;
         {
             std::lock_guard lock(S().lock);
-            s.seen = S().seen;
-            s.admitted = S().admitted;
             s.requested = S().requested;
-            s.prepared = S().prepared && gHair.load(std::memory_order_acquire);
-            s.failed = S().failed;
-            strncpy_s(s.reason, S().reason.c_str(), _TRUNCATE);
+            if (!s.requested) return s;
+            d = gHair.load(std::memory_order_acquire);
+            s.prepared = d != nullptr;
+            if (!d) strncpy_s(s.reason, S().reason.c_str(), _TRUNCATE);
         }
         s.extensionReports = gExtensionReports.load(std::memory_order_relaxed);
         s.featureReports = gFeatureReports.load(std::memory_order_relaxed);
@@ -1011,9 +1026,10 @@ Status ReadStatus() noexcept
         s.shadersNeutral = gNeutral.load(std::memory_order_relaxed);
         s.shadersFailed = gRewriteFailed.load(std::memory_order_relaxed);
         s.hostBuildsRefused = gHostRefused.load(std::memory_order_relaxed);
-        s.lastBuildTick = gLastBuild.load(std::memory_order_relaxed);
-        if (HairDevice* d = gHair.load(std::memory_order_acquire))
+        if (d)
         {
+            if (const char* error = d->buildError.load(std::memory_order_acquire)) strncpy_s(s.reason, error, _TRUNCATE);
+            s.lastBuildTick = d->lastBuildTick.load(std::memory_order_relaxed);
             const DotsStats stats = d->builder.Stats();
             s.sizeQueries = stats.sizeQueries;
             s.builds = stats.builds;

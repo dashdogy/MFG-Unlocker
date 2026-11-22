@@ -264,14 +264,7 @@ bool Eligible(HMODULE module,FARPROC original) noexcept {
     if (!_wcsicmp(leaf,L"dxgi.dll")) {
         if (!GetSystemDirectoryW(system,MAX_PATH)||wcscat_s(system,L"\\dxgi.dll")) return false;
         eligible=!_wcsicmp(path,system);
-        if (!eligible) {
-            // Local ReShade DXGI exposes the same public factory ABI. Bind
-            // only entries owned by this image; never patch its COM methods.
-            eligible=true;
-            for (const char* name:{"CreateDXGIFactory","CreateDXGIFactory1","CreateDXGIFactory2",
-                                  "ReShadeRegisterAddon","ReShadeUnregisterAddon"})
-                eligible=slots::ImageEntry(module,reinterpret_cast<void*>(GetProcAddress(module,name)))&&eligible;
-        }
+        if (!eligible) eligible=slots::ReShadeFactoryExports(module);
     } else if (!_wcsicmp(leaf,L"d3d12.dll")) {
         if (!GetSystemDirectoryW(system,MAX_PATH)||wcscat_s(system,L"\\d3d12.dll")) return false;
         eligible=!_wcsicmp(path,system)
@@ -429,22 +422,28 @@ void ArmFactoryGateway() noexcept {
         void* value=protected_pointer::ReadPointer(reinterpret_cast<uintptr_t>(slot));
         HMODULE owner=nullptr;
         if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(value),&owner)) return false;
+            reinterpret_cast<LPCWSTR>(value),&owner)) return true;
         const auto original=reinterpret_cast<FARPROC>(value);
         const auto replacement=ResolveProc(owner,name,original);
         if (original==replacement) return true;
-        if(!strcmp(name,"D3D12CreateDevice")||D3D11DeviceName(name)) {
-            // DOTS requires this early, aligned import. Do not use the
-            // factory-entry fallback for a different public ABI. The D3D11
-            // device entries (dx11menu.1) likewise: aligned slots only;
-            // GetProcAddress callers reach the same gateways.
-            if(!slots::ImageSlot(executable,slot)) {++deferred;return true;}
-            return batch.Add(executable,slot,value,reinterpret_cast<void*>(replacement));
-        }
+        const bool factory=strcmp(name,"D3D12CreateDevice") && !D3D11DeviceName(name)
+            && !(name[0]=='v' && name[1]=='k');
         // DllMain retains only aligned data publication. Public-entry fallback
         // is retried synchronously at slInit, before application graphics calls.
-        if (loaderCallout && !slots::ImageSlot(executable,slot)) { ++deferred; return true; }
-        return batch.Add(executable,slot,value,reinterpret_cast<void*>(replacement),name,&PublishFactoryOriginal);
+        if (!slots::ImageSlot(executable,slot) && (loaderCallout || !factory)) {
+            if (factory) ++deferred;
+            return true;
+        }
+        if (!batch.Add(executable,slot,value,reinterpret_cast<void*>(replacement),
+                name,factory?&PublishFactoryOriginal:nullptr)) {
+            static std::atomic<unsigned> refused{0};
+            if (!loaderCallout && refused.fetch_add(1,std::memory_order_relaxed)<8) {
+                wchar_t line[160]{};
+                swprintf_s(line,L"MFG_PROXY_UI graphics import refused symbol=%hs; other imports retained",name);
+                single_module::Log(line);
+            }
+        }
+        return true;
     });
     if (!inspected||!batch.Publish()) single_module::Log(L"MFG_PROXY_UI application graphics import publication unavailable; dynamic gateways remain available");
     wchar_t line[160]{};

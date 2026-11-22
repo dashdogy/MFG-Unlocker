@@ -22,12 +22,23 @@ OptiScaler, in DirectX 12 and Vulkan games:
    Unlocker does not include Intel's runtime, and leaves XeMFG off with a
    version it does not recognize (the menu says why).
 2. Open the menu, tick **XeMFG standalone** and choose the **MFG mode** (2x to
-   6x, or **Dynamic**). Restart the game; the mode can change while playing.
+   6x, or **Dynamic**). Both apply while the game runs; when a game needs a
+   restart or a settings change first, the menu says so.
 3. In games with DLSS Frame Generation, turn it on in the game's settings.
    XeMFG replaces it: DLSS Frame Generation itself stays off, and XeMFG uses its
    inputs, including the game's HUD-less image. Other games need DLSS, XeSS or
    FSR 3.1 upscaling (or newer) on; XeMFG uses that upscaler's inputs. Turn off
    the game's own FSR or XeSS frame generation.
+
+**In DirectX 12 games with DLSS Frame Generation**, XeMFG runs as the game's
+own DLSS Frame Generation: the game's Streamline keeps its swap chain,
+presenting, pacing and Reflex, and switching XeMFG on or off only swaps the
+generator behind it, so the game keeps presenting while it switches. This works
+on RTX 50, RTX 40, RTX 30 and RTX 20. There the frame count is fixed: Dynamic
+and the FPS limit do not apply, and the menu says so. Where this route cannot
+run (other games, other GPUs, or XeSS Frame Generation refusing the game's
+inputs), XeMFG takes the game's swap chain over as before. To always use the
+swap chain takeover, set `"xemfgStreamline": 2` in `RTXMFG-Universal.json`.
 
 **Dynamic** changes the frame count every game frame so XeMFG's frame rate
 follows the **Dynamic target** (the FPS limit when one is set, otherwise just

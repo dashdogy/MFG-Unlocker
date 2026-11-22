@@ -21,6 +21,8 @@
 #include "fg_lifetime_tracker.h"
 #include "xess/vulkan/vk_host.h"
 #include "xess/d3d12_host.h"
+#include "xess/streamline_provider.h"
+#include "xess/streamline_provider_policy.h"
 #if MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY
 #include "midpoint_fix.h"
 #endif
@@ -136,6 +138,8 @@ std::atomic<uint64_t> gFailedBatches{0}, gRecoveredBatches{0}, gOutputReuseLatch
 std::atomic<uint64_t> gBufferRefreshes{0};
 std::atomic<uint64_t> gCreateAttempts{0}, gCreateBlockedBeforeProvider{0}, gEvaluateAttempts{0};
 std::atomic<bool> gPipelineCreateObserved{false};
+// genswap30.1: the ring (generated frames) the wrapper had allocated at XeFG's last Create on the translated branch.
+std::atomic<uint32_t> gXefgRing{0};
 std::atomic<uint64_t> gCandidateProviderVersion{0};
 // Live preset switching: FG lifetime on the runtime route.
 fg_lifetime::Tracker<> gFgLifetime;
@@ -393,8 +397,32 @@ struct Route
     };
     std::vector<OtherFeature> otherFeatures;
     uint64_t nextOtherFeatureLifetime = 0;
+    // slshutdown.2: a DLSS-G wrapper route's loader reference (the layout and
+    // availability patch read and patch its image), released before the host's
+    // slShutdown so Streamline unloads the wrapper before sl.common.
+    HMODULE heldWrapper{};
+    bool heldWrapperReleased = false;
 };
 std::array<Route, kRoutes> gRoutes{};
+// Wrappers between RetireWrapper and ReturnWrapper (gInstall): no new reference.
+std::array<HMODULE, kRoutes> gRetiringWrappers{};
+
+// Under gInstall. One loader reference per wrapper route; it was a process pin.
+bool HoldWrapper(Route& route) noexcept
+{
+    if (route.heldWrapper) return true;
+    if (std::find(gRetiringWrappers.begin(), gRetiringWrappers.end(), route.module) != gRetiringWrappers.end())
+        return false;
+    HMODULE held = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(route.module), &held)
+        || held != route.module)
+    {
+        if (held) FreeLibrary(held);
+        return false;
+    }
+    route.heldWrapper = held;
+    return true;
+}
 
 // Create entry kinds of one API; Vulkan hosts may enter either Create or Create1.
 bool RuntimeCreateKind(entry_detour::Kind kind, GraphicsApi api) noexcept
@@ -1384,8 +1412,15 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Create(ID3D12GraphicsCommandList*
             // Ada/unmodified calls must not inherit Ampere's TLS lifecycle lock.
             fault_capture::NgxCall call(entry, _ReturnAddress(), command,
                 static_cast<uintptr_t>(feature), parameters);
+            // slprov.1: XeFG behind the game's Streamline takes this FrameGeneration feature when it can; otherwise
+            // NVIDIA's provider does, as without the key.
+            int32_t xemfgResult = 0;
+            const bool xemfg = frameGeneration
+                && xess_streamline_provider::Offer(xess_streamline_provider::Wanted(), runtimeRoute, gpu_dispatch::UsesNativeProgram())
+                && xess_streamline_provider::TryCreate(command, parameters, output, xemfgResult);
             // DLSS SR/RR on the runtime route: detection and the SR preset selection.
-            const auto result = runtimeOther
+            const auto result = xemfg ? static_cast<NVSDK_NGX_Result>(xemfgResult)
+                : runtimeOther
                 ? CreateDlssSource(I, original, command, feature, parameters, output)
                 : original(command, feature, parameters, output);
             if(runtimeRoute && static_cast<uint32_t>(feature)==dlss5::kFeature && CreatedHandle(result,output))dlss5::ForeignCreated(_ReturnAddress(),routeModule);
@@ -1395,6 +1430,54 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Create(ID3D12GraphicsCommandList*
         }
         // During pre-device startup, retain non-FG handles for Ampere's later
         // independent SR/RR pass-through. No parameter keys are used as identity.
+    }
+    // genswap30.1: on RTX 30/20, XeFG behind the game's Streamline takes this FrameGeneration feature ahead of the
+    // translated program's gates, which belong to NVIDIA's provider: it takes no create token, feature slot, ring
+    // certification or publication there and is not counted as NVIDIA's Create. As that path requires, the Create comes
+    // from the verified adapter and the wrapper's own creation code, and the ring the wrapper allocated holds 6x (the most
+    // XeMFG may set); otherwise the route ends (Decline) and NVIDIA's provider takes the feature as without it. A call
+    // without an output or command list is left to the translated gates, which refuse it. The refusal and XeFG's own
+    // Create run without gCalls held, as on the native branch.
+    if (frameGeneration && runtimeRoute && output && command
+        && xess_streamline_provider::Offer(xess_streamline_provider::Wanted(), runtimeRoute, XefgStandInAvailable()))
+    {
+        bool adapterProven = false;
+        ID3D12Device* device = nullptr;
+        if (SUCCEEDED(command->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&device))) && device)
+        {
+            const LUID luid = device->GetAdapterLuid();
+            device->Release();
+            uint64_t packed = 0; memcpy(&packed, &luid, sizeof(packed));
+            adapterProven = AdapterVerified() && packed == ampere_gpu::AdapterLuid();
+        }
+        const auto* wrapper = ActiveWrapper();
+        ampere_wrapper::Capacity ring{};
+        const bool callerProven = wrapper && ampere_wrapper::CreationOnStack(wrapper->wrapperLayout);
+        const bool ringRead = callerProven && ampere_wrapper::Read(wrapper->wrapperLayout, ring);
+        const char* declined = !adapterProven ? "translated_adapter_unproven"
+            : !callerProven ? "translated_caller_unproven"
+            : !ringRead ? "translated_ring_unreadable"
+            : !xess_streamline_provider::RingHolds(ring.maximumGeneratedFrames) ? "translated_ring_short" : nullptr;
+        if (!declined) gXefgRing.store(ring.maximumGeneratedFrames, std::memory_order_release);
+        const auto entry = gRoutes[I].create;
+        lock.unlock();
+        if (declined) xess_streamline_provider::Decline(declined);
+        else
+        {
+            fault_capture::NgxCall call(entry, _ReturnAddress(), command,
+                static_cast<uintptr_t>(feature), parameters);
+            int32_t xemfgResult = 0;
+            if (xess_streamline_provider::TryCreate(command, parameters, output, xemfgResult))
+            {
+                const auto result = static_cast<NVSDK_NGX_Result>(xemfgResult);
+                call.Complete(static_cast<uint32_t>(result), reinterpret_cast<void* const*>(output));
+                gFgLifetime.Created(I, CreatedHandle(result, output));
+                return result;
+            }
+            // XeFG refused it (logged, final for the process): NVIDIA's provider below, as without the route.
+            call.Complete(static_cast<uint32_t>(kRejected));
+        }
+        lock.lock();
     }
     if (frameGeneration) gCreateAttempts.fetch_add(1, std::memory_order_relaxed);
     if (!original)
@@ -1788,10 +1871,32 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandLis
         const auto nrInput = nr ? dlss5::BeforeEvaluate(I,nrApi,command,handle,parameters) : dlss5::Substitution{};
         fault_capture::NgxCall call(entry, _ReturnAddress(), command,
             reinterpret_cast<uintptr_t>(handle), parameters);
-        const auto result = original(command, target, parameters, callback);
+        // slprov.1: a feature XeFG took at Create never reaches NVIDIA's runtime.
+        int32_t xemfgResult = 0;
+        const bool xemfg = gRoutes[I].runtime && xess_streamline_provider::TryEvaluate(command, handle, parameters, xemfgResult);
+        const auto result = xemfg ? static_cast<NVSDK_NGX_Result>(xemfgResult) : original(command, target, parameters, callback);
         if(nr)dlss5::AfterEvaluate(I,nrApi,command,handle,parameters,result,nrInput);
         call.Complete(static_cast<uint32_t>(result));
         return result;
+    }
+    // genswap30.1: a feature XeFG took at Create never reaches the translated program, whose table refuses it (130).
+    // Asked without gCalls held, as on the native branch.
+    if (gRoutes[I].runtime && xess_streamline_provider::Live())
+    {
+        const auto entry = gRoutes[I].evaluate;
+        lock.unlock();
+        if (xess_streamline_provider::Holds(handle))
+        {
+            fault_capture::NgxCall call(entry, _ReturnAddress(), command,
+                reinterpret_cast<uintptr_t>(handle), parameters);
+            int32_t xemfgResult = 0;
+            // Released by another thread since Holds: still never NVIDIA's handle.
+            const auto result = xess_streamline_provider::TryEvaluate(command, handle, parameters, xemfgResult)
+                ? static_cast<NVSDK_NGX_Result>(xemfgResult) : kRejected;
+            call.Complete(static_cast<uint32_t>(result));
+            return result;
+        }
+        lock.lock();
     }
     const uintptr_t handleValue = reinterpret_cast<uintptr_t>(handle);
     size_t frameGenerationSlot = SIZE_MAX;
@@ -2039,7 +2144,10 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Release(NVSDK_NGX_Handle* handle)
         lock.unlock();
         if (runtimeRoute) {dlss5::BeforeRelease(I,handle);dlss_sr::BeforeRelease(I, original, handle);}
         fault_capture::NgxCall call(entry, _ReturnAddress(), nullptr, handleValue, nullptr);
-        const auto result = original(handle);
+        // slprov.1: a feature XeFG took at Create is released there (the lifetime tracker below counts it the same).
+        int32_t xemfgResult = 0;
+        const bool xemfg = runtimeRoute && xess_streamline_provider::TryRelease(handle, xemfgResult);
+        const auto result = xemfg ? static_cast<NVSDK_NGX_Result>(xemfgResult) : original(handle);
         call.Complete(static_cast<uint32_t>(result));
         if (runtimeRoute) {dlss_sr::AfterRelease(I, handle, result);dlss5::AfterRelease(I,handle,result);}
         if (runtimeRoute && result == NVSDK_NGX_Result_Success) gFgLifetime.Released(I, handleValue);
@@ -2055,6 +2163,25 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Release(NVSDK_NGX_Handle* handle)
             }
         }
         return result;
+    }
+    // genswap30.1: a feature XeFG took at Create is released there. The translated table would refuse it (136), and the
+    // generator swap would wait for a release that never comes. Counted by the lifetime tracker as on the native branch.
+    if (gRoutes[I].runtime && xess_streamline_provider::Live())
+    {
+        const auto entry = gRoutes[I].release;
+        lock.unlock();
+        if (xess_streamline_provider::Holds(handle))
+        {
+            fault_capture::NgxCall call(entry, _ReturnAddress(), nullptr, handleValue, nullptr);
+            int32_t xemfgResult = 0;
+            const bool xemfg = xess_streamline_provider::TryRelease(handle, xemfgResult);
+            // Released by another thread since Holds: still never NVIDIA's handle.
+            const auto result = xemfg ? static_cast<NVSDK_NGX_Result>(xemfgResult) : kRejected;
+            call.Complete(static_cast<uint32_t>(result));
+            if (xemfg && result == NVSDK_NGX_Result_Success) gFgLifetime.Released(I, handleValue);
+            return result;
+        }
+        lock.lock();
     }
     return AmpereRelease(I, lock, original, handle);
 }
@@ -3754,6 +3881,21 @@ GraphicsApi DeviceApi() noexcept
 }
 bool AdapterVerified() noexcept { return ampere_gpu::AdapterVerified(); }
 bool Ready() noexcept { return DeviceConfirmed() && AdapterVerified() && ampere_gpu::Ready() && gStartupComplete.load() && !gFatal.load(); }
+bool XefgStandInAvailable() noexcept
+{
+    if (!gpu_dispatch::UsesTranslatedProgram()) return false;
+    xess_streamline_provider::TranslatedProgram program;
+    program.ready = Ready();
+    program.startupMaximum = gStartupMaximum.load();
+    program.certifiedRing = RingMaximumGeneratedFrames();
+    return xess_streamline_provider::TranslatedRoute(program);
+}
+uint32_t XefgRingMaximum() noexcept
+{
+    if (!gpu_dispatch::UsesTranslatedProgram()) return 0;
+    const uint32_t ring = gXefgRing.load(std::memory_order_acquire);
+    return std::min<uint32_t>(ring ? ring : gStartupMaximum.load(), ampere_policy::kMaximumGeneratedFrames);
+}
 uint32_t FailureCode() noexcept
 {
     if (const auto fatal = gFatalFailure.load()) return fatal;
@@ -3970,7 +4112,7 @@ void ObserveModule(HMODULE module, const wchar_t* path, uint64_t generation,
     bool wrapper, bool provider, bool runtime) noexcept
 {
     // Streamline can probe, unload and replace plugins during slInit, before
-    // the device establishes the GPU family. Pinning a probe wrapper here can
+    // the device establishes the GPU family. Holding a probe wrapper here can
     // preserve its pointers into a common plugin which the host then unloads.
     // Confirm Ampere before claiming routes or retaining any discovery owner.
     // BeginStartup re-inspects the surviving modules after device selection.
@@ -3978,6 +4120,12 @@ void ObserveModule(HMODULE module, const wchar_t* path, uint64_t generation,
     if (!module || !generation || (!wrapper && !provider && !runtime) || gFatal.load()) return;
     std::lock_guard callLock(gCalls);
     std::lock_guard lock(gInstall);
+    // slshutdown.2: the host's slShutdown is unloading this wrapper.
+    if (wrapper && std::find(gRetiringWrappers.begin(), gRetiringWrappers.end(), module) != gRetiringWrappers.end())
+    {
+        wrapper = false;
+        if (!provider && !runtime) return;
+    }
     Image image{};
     if (!image.Open(module)) return;
     Route* route = FindRoute(module, generation);
@@ -4002,7 +4150,7 @@ void ObserveModule(HMODULE module, const wchar_t* path, uint64_t generation,
     {
         route->wrapperInspected = true;
         ampere_wrapper::Layout layout{};
-        if (ampere_wrapper::Discover(module, layout) && Pin(module))
+        if (ampere_wrapper::Discover(module, layout) && HoldWrapper(*route))
         {
             route->wrapperLayout = layout;
             Report(layout.maximumGeneratedFrames == 1
@@ -4073,13 +4221,95 @@ void ObserveModule(HMODULE module, const wchar_t* path, uint64_t generation,
             kAmpereSlDlssgAvailabilityLegacyPattern.size(), kAmpereSlDlssgAvailabilityLegacyBranchOffset);
         if ((modern != 0) != (legacy != 0))
         {
-            if (!Pin(module)) return;
+            if (!HoldWrapper(*route)) return;
             route->availability = {(modern ? modern + kAmpereSlDlssgAvailabilityBranchOffset
                 : legacy + kAmpereSlDlssgAvailabilityLegacyBranchOffset), kAmpereSlDlssgAvailabilityOriginal};
         }
     }
     if (gStartupDepth && DeviceConfirmed() && AdapterVerified() && route->availability.address)
         route->availability.Set(true);
+}
+
+size_t RetireWrapper(HMODULE module) noexcept
+{
+    if (!module) return 0;
+    std::array<HMODULE, kRoutes> released{};
+    size_t count = 0;
+    {
+        std::lock_guard callLock(gCalls);
+        std::lock_guard lock(gInstall);
+        if (std::find(gRetiringWrappers.begin(), gRetiringWrappers.end(), module) == gRetiringWrappers.end())
+            if (const auto free = std::find(gRetiringWrappers.begin(), gRetiringWrappers.end(), nullptr);
+                free != gRetiringWrappers.end())
+                *free = module;
+        for (auto& route : gRoutes)
+        {
+            if (route.module != module || !route.heldWrapper) continue;
+            released[count++] = route.heldWrapper;
+            route.heldWrapper = nullptr;
+            route.heldWrapperReleased = true;
+        }
+    }
+    // The host still holds the wrapper here, so none of these is the final release.
+    for (size_t index = 0; index < count; ++index) FreeLibrary(released[index]);
+    return count;
+}
+
+void ReturnWrapper(HMODULE module, bool stillMapped) noexcept
+{
+    if (!module) return;
+    std::array<HMODULE, kRoutes> spare{};
+    size_t spares = 0;
+    {
+        std::lock_guard callLock(gCalls);
+        std::lock_guard lock(gInstall);
+        std::replace(gRetiringWrappers.begin(), gRetiringWrappers.end(), module, static_cast<HMODULE>(nullptr));
+        for (auto& route : gRoutes)
+        {
+            if (route.module != module) continue;
+            if (stillMapped)
+            {
+                if (!route.heldWrapperReleased) continue;
+                route.heldWrapperReleased = false;
+                HMODULE held = nullptr;
+                if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(module), &held)
+                    && held == module)
+                    route.heldWrapper = held;
+                else if (held)
+                    spare[spares++] = held;
+                continue;
+            }
+            // The image is gone: its layout, availability patch and active-wrapper
+            // evidence must never be read or patched again (a later session's
+            // wrapper gets its own route, even at the same base).
+            const uintptr_t base = reinterpret_cast<uintptr_t>(module);
+            if (gActiveWrapper.load(std::memory_order_acquire) == base
+                && gActiveWrapperGeneration.load(std::memory_order_acquire) == route.generation
+                && !gWrapperWriter.test_and_set(std::memory_order_acquire))
+            {
+                gCertifiedMaximum.store(0, std::memory_order_release);
+                gPresentationBuffers.store(0, std::memory_order_release);
+                gActiveWrapperGeneration.store(0, std::memory_order_release);
+                gActiveWrapper.store(0, std::memory_order_release);
+                gWrapperWriter.clear(std::memory_order_release);
+            }
+            const bool entries = route.create || route.evaluate || route.release || route.requirements
+                || route.parameters || route.preset || route.vkCreate || route.vkCreate1 || route.vkEvaluate
+                || route.vkRelease || route.vkRequirements || route.vkParameters || route.d3d11Create
+                || route.d3d11Evaluate || route.d3d11Release;
+            if (!entries && !route.runtime && !route.prepared)
+            {
+                route = Route{}; // a wrapper-only route: FindRoute may claim the slot again
+                continue;
+            }
+            route.wrapperInspected = false;
+            route.wrapperLayout = {};
+            route.availability = {};
+            route.heldWrapper = nullptr;
+            route.heldWrapperReleased = false;
+        }
+    }
+    for (size_t index = 0; index < spares; ++index) FreeLibrary(spare[index]);
 }
 
 bool InstallRoute(HMODULE module, const wchar_t* path, uint64_t generation, bool runtime,

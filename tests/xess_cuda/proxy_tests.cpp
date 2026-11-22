@@ -81,6 +81,63 @@ int main(int argc, char** argv)
             if (seen.size() <= 256) throw std::runtime_error("pipeline fixture did not create more than 256 identities");
             std::printf("PROXY_TOKENS_PASS distinct=%zu contexts=20\n", seen.size()); return 0;
         }
+        if (test == "tokens-offthread") {
+            // cudaheld.1 (issue 174): XeFG builds a context's pipelines on its own threads, where no PipelineScope is
+            // open. They must still belong to the context opened last, and go when that context is forgotten:
+            // before the fix they stayed under token 0 and the table filled after nine contexts.
+            size_t distinct = 0;
+            for (int context = 0; context < 24; ++context) {
+                const auto token = xefg_cuda::NewPipelineToken();
+                std::vector<ComPtr<ID3D12PipelineState>> made;
+                std::string failure;
+                const auto build = [&] {
+                    try {
+                        for (auto& [name, p] : programs) {
+                            D3D12_COMPUTE_PIPELINE_STATE_DESC desc{}; desc.pRootSignature = p.root.Get(); desc.CS = {p.dxil.data(), p.dxil.size()};
+                            ComPtr<ID3D12PipelineState> pipeline;
+                            Check(g.device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)), "off-thread pipeline");
+                            made.push_back(pipeline);
+                        }
+                    } catch (const std::exception& error) { failure = error.what(); }
+                };
+                {
+                    xefg_cuda::PipelineScope scope(token);   // the provider's thread, around the context's creation
+                    std::thread(build).join();               // XeFG's thread, inside the scope's lifetime
+                }
+                const size_t inScope = made.size();
+                std::thread(build).join();                   // and a late compile, after the scope closed
+                if (!failure.empty()) throw std::runtime_error(failure);
+                for (const auto& pipeline : made)
+                    if (!xefg_cuda::LayerOf(pipeline.Get())) throw std::runtime_error("off-thread pipeline unrecognized (table full?)");
+                distinct += made.size();
+                const ComPtr<ID3D12PipelineState> early = made.front(), late = made.back();
+                if (inScope == 0 || inScope == made.size()) throw std::runtime_error("off-thread fixture made no pipelines");
+                xefg_cuda::ForgetPipelines(token);
+                if (xefg_cuda::LayerOf(early.Get()) || xefg_cuda::LayerOf(late.Get()))
+                    throw std::runtime_error("off-thread pipelines survived their context");
+            }
+            for (auto& [name, p] : programs)
+                if (!xefg_cuda::LayerOf(p.routed.Get())) throw std::runtime_error("an unscoped pipeline was forgotten with a context");
+            if (distinct <= 256) throw std::runtime_error("off-thread fixture did not create more than 256 identities");
+            std::printf("PROXY_TOKENS_OFFTHREAD_PASS distinct=%zu contexts=24\n", distinct); return 0;
+        }
+        if (test == "tokens-reclaim") {
+            // cudaheld.1: pipelines no context owns (the XeFG output route opens no scope) whose creator released
+            // them. Once the table is full they are reclaimed instead of refusing every later pipeline.
+            size_t created = 0;
+            for (int round = 0; round < 24; ++round)
+                for (auto& [name, p] : programs) {
+                    D3D12_COMPUTE_PIPELINE_STATE_DESC desc{}; desc.pRootSignature = p.root.Get(); desc.CS = {p.dxil.data(), p.dxil.size()};
+                    ComPtr<ID3D12PipelineState> pipeline;
+                    Check(g.device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)), "reclaim pipeline");
+                    if (!xefg_cuda::LayerOf(pipeline.Get())) throw std::runtime_error("pipeline unrecognized once the table filled");
+                    ++created;   // released here: only the route still holds it
+                }
+            for (auto& [name, p] : programs)
+                if (!xefg_cuda::LayerOf(p.routed.Get())) throw std::runtime_error("a pipeline still in use was reclaimed");
+            if (created <= 256) throw std::runtime_error("reclaim fixture did not create more than 256 pipelines");
+            std::printf("PROXY_TOKENS_RECLAIM_PASS created=%zu\n", created); return 0;
+        }
         xefg_cuda::ProviderList proxy, wrapper;
         void** const table = *reinterpret_cast<void***>(g.list.Get());
         const auto tableSnapshot = std::vector<void*>(table, table + 67);

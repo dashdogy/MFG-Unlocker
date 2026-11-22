@@ -9,7 +9,6 @@
 #include "vk_hair_status.h"                // vkhair.4: the Vulkan side
 
 #include "../dlss5.h"
-#include "../overlay_graphics_api.h"
 #include "../overlay_native.h"
 #include "../single_module.h"
 #include "../witcher_dots/gpu_runtime.h"
@@ -23,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -120,8 +120,9 @@ std::unordered_map<uint64_t, std::shared_ptr<const Rewritten>>& ShaderResults()
     return *results;
 }
 
-std::atomic<uint64_t> capsAnswered{}, opsAnswered{}, optionsStripped{}, prebuilds{}, builds{}, inactiveBuilds{}, shadersRewritten{},
+std::atomic<uint64_t> capsAnswered{}, opsAnswered{}, optionsStripped{}, prebuilds{}, inactiveBuilds{}, shadersRewritten{},
     shadersRefused{}, lookShaders{}, lookFailures{};
+std::atomic<bool> lssRequested{};
 
 // hairauto.1: outside Witcher 3 the shader pass waits for the game's LSS capability query or
 // ENABLE_LSS_SUPPORT option (NVAPI requires both before any LSS pipeline), so ray-traced games
@@ -167,6 +168,28 @@ std::atomic<uint64_t> lastBuildTick{};
 std::atomic<bool> failed{};
 std::mutex reasonLock;
 std::string reasonText; // the latest not-admitted or failure reason (reasonLock)
+std::atomic<bool> conversionFailed{};
+char conversionError[256]{}; // reasonLock
+
+void ReportConversionFailure(std::string_view detail) noexcept
+{
+    try
+    {
+        std::lock_guard lock(reasonLock);
+        const size_t size = std::min(detail.size(), sizeof(conversionError) - 1);
+        std::memcpy(conversionError, detail.data(), size);
+        conversionError[size] = '\0';
+        conversionFailed.store(true, std::memory_order_release);
+    }
+    catch (...) {}
+}
+
+void ReportNvapiFailure(const char* action, nvapi::Status status) noexcept
+{
+    char detail[128]{};
+    std::snprintf(detail, sizeof(detail), "%s failed (NVAPI status %d)", action, status);
+    ReportConversionFailure(detail);
+}
 
 void Log(const std::wstring& text) noexcept
 {
@@ -283,6 +306,11 @@ bool RewriteShader(const void* code, size_t size, std::vector<std::byte>& output
             else error = "no NVAPI LSS op";
         }
         if (rewritten && !applied.empty()) lookShaders.fetch_add(1, std::memory_order_relaxed);
+        if (report.ops)
+        {
+            lssRequested.store(true, std::memory_order_release);
+            if (!rewritten && !error.empty()) ReportConversionFailure(error);
+        }
         if (!lookError.empty() || !applied.empty())
         {
             wchar_t line[640]{};
@@ -364,12 +392,15 @@ nvapi::Status __cdecl Options(ID3D12Device5* device, const PipelineOptions* stat
     if (!real) return nvapi::kError;
     if (state && (state->flags & nvapi::kPipelineEnableLss) && admitted.load(std::memory_order_acquire) && witcher_dots::TrackedDevice(device))
     {
+        lssRequested.store(true, std::memory_order_release);
         WantLss(L"ENABLE_LSS_SUPPORT");   // before forwarding: the pipelines it covers come after it
         PipelineOptions copy = *state;
         copy.flags &= ~nvapi::kPipelineEnableLss;
         if (optionsStripped.fetch_add(1, std::memory_order_relaxed) == 0)
             single_module::Log(L"RTX_HAIR pipeline option ENABLE_LSS_SUPPORT left out (hair shaders are rewritten to triangle position fetch)");
-        return real(device, &copy);
+        const nvapi::Status status = real(device, &copy);
+        if (status != nvapi::kOk) ReportNvapiFailure("LSS pipeline setup", status);
+        return status;
     }
     return real(device, state);
 }
@@ -381,8 +412,11 @@ nvapi::Status __cdecl Prebuild(ID3D12Device5* device, nvapi::PrebuildParams* par
     if (!params || !params->pDesc || !params->pInfo || (params->version & 0xFFFF) < sizeof(nvapi::PrebuildParams)
         || !admitted.load(std::memory_order_acquire) || !DotsBuilder::HasLss(*params->pDesc) || !witcher_dots::TrackedDevice(device))
         return real(device, params);
+    lssRequested.store(true, std::memory_order_release);
     prebuilds.fetch_add(1, std::memory_order_relaxed);
-    return Builder().Prebuild(*params->pDesc, *params->pInfo);
+    const nvapi::Status status = Builder().Prebuild(*params->pDesc, *params->pInfo);
+    if (status != nvapi::kOk) ReportNvapiFailure("LSS prebuild", status);
+    return status;
 }
 
 nvapi::Status __cdecl Build(ID3D12GraphicsCommandList4* list, const nvapi::BuildParams* params)
@@ -410,24 +444,33 @@ nvapi::Status __cdecl Build(ID3D12GraphicsCommandList4* list, const nvapi::Build
     const D3D12_GPU_VIRTUAL_ADDRESS destination = params->pDesc->destAccelerationStructureData;
     auto& builder = Builder();
     nvapi::Status status = nvapi::kError;
+    bool recordedHair = false;
     std::string error;
     const bool injected = witcher_dots::InjectCompute(list,
         [&](ID3D12GraphicsCommandList4* native, const std::function<void()>& restore) {
-            status = builder.Build(native, *params, [&](ID3D12GraphicsCommandList4*) { restore(); });
+            lssRequested.store(true, std::memory_order_release);
+            status = builder.Build(native, *params, [&](ID3D12GraphicsCommandList4*) { restore(); }, &recordedHair);
         },
         error);
     if (injected)
     {
         if (status == nvapi::kOk)
         {
-            lastBuildTick.store(GetTickCount64(), std::memory_order_relaxed);
+            if (recordedHair)
+            {
+                const bool first = lastBuildTick.exchange(GetTickCount64(), std::memory_order_relaxed) == 0;
+                conversionFailed.store(false, std::memory_order_release);
+                if (first)
+                    single_module::Log(L"RTX_HAIR first hair BLAS recorded as DOTS triangles (GPU completion and game image not yet verified)");
+            }
             HairBlas(destination);
         }
-        const uint64_t count = builds.fetch_add(1, std::memory_order_relaxed);
-        if (count == 0 && status == nvapi::kOk)
-            single_module::Log(L"RTX_HAIR first hair BLAS recorded as DOTS triangles (GPU completion and game image not yet verified)");
-        if (status != nvapi::kOk && buildLogs.fetch_add(1, std::memory_order_relaxed) < 24)
-            Log(L"RTX_HAIR hair BLAS build failed: " + Wide(builder.LastError()));
+        else
+        {
+            ReportNvapiFailure("LSS build conversion", status);
+            if (buildLogs.fetch_add(1, std::memory_order_relaxed) < 24)
+                Log(L"RTX_HAIR hair BLAS build failed: " + Wide(builder.LastError()));
+        }
         return status;
     }
     // BuildInactive reads a buffer of the prepared device: only on that device's lists.
@@ -438,6 +481,8 @@ nvapi::Status __cdecl Build(ID3D12GraphicsCommandList4* list, const nvapi::Build
             Log(L"RTX_HAIR hair BLAS on a list of another device: passed to the driver unchanged (" + Wide(error) + L")");
         return real(list, params);
     }
+    lssRequested.store(true, std::memory_order_release);
+    ReportConversionFailure(error.empty() ? "LSS converter could not run on the game's command list" : error.c_str());
     inactiveBuilds.fetch_add(1, std::memory_order_relaxed);
     if (buildLogs.fetch_add(1, std::memory_order_relaxed) < 24)
         Log(L"RTX_HAIR hair BLAS built without hair (the converter could not run on this list: " + Wide(error) + L")");
@@ -731,12 +776,12 @@ void ObserveDevice(IUnknown* device) noexcept
         std::string error;
         const Outcome outcome = Prepare(device, error);
         if (outcome == Outcome::Prepared) return;
-        if (outcome == Outcome::Failed) failed.store(true, std::memory_order_release);
         bool changed = false;
         {
             std::lock_guard reason(reasonLock);
             changed = reasonText != error;
             reasonText = error;
+            if (outcome == Outcome::Failed) failed.store(true, std::memory_order_release);
         }
         // A reason repeated by a later device is not logged again.
         static std::atomic<uint32_t> logs{};
@@ -765,44 +810,40 @@ Snapshot ReadSnapshot() noexcept
     try
     {
         if (!Requested()) return s;
-        // vkhair.4: a Vulkan game's conversion, while no D3D12 device was seen. Prepared once the LSS
-        // extension is reported on an admitted GPU (as D3D12's caps answer), Active once its hair is built.
-        namespace api = single_overlay::graphics_api;
-        if (!admitted.load(std::memory_order_acquire) && !(api::Seen() & api::kD3D12))
+        // Select the backend that has seen a game LSS request. Auxiliary graphics devices can coexist.
+        s.lssRequested = lssRequested.load(std::memory_order_acquire);
+        if (!s.lssRequested)
         {
             const vk::Status v = vk::ReadStatus();
-            if (v.prepared || v.failed || v.admitted || (v.seen && v.reason[0]))
-            {
-                s.state = v.failed ? State::Failed : (v.prepared || v.admitted) ? State::Prepared : State::NotAdmitted;
-                if (s.state != State::Prepared) strncpy_s(s.reason, v.reason, _TRUNCATE);
-                s.capsAnswered = v.extensionReports + v.featureReports;
-                s.optionsStripped = v.pipelineFlagsStripped;
-                s.shadersRewritten = v.shadersRewritten;
-                s.shadersRefused = v.shadersNeutral + v.shadersFailed;
-                s.prebuilds = v.sizeQueries;
-                s.builds = v.builds;
-                s.updates = v.updates;
-                s.inactiveBuilds = v.invalidGeometries + v.indirectBuilds;
-                s.failures = v.failures + v.hostBuildsRefused;
-                s.poolBuffers = v.poolBuffers;
-                s.poolBytes = v.poolBytes;
-                s.evictions = v.evictions;
-                s.rebuilds = v.rebuilds;
-                s.hairBlas = v.hairBlas;
-                s.topLevelPatched = v.topLevelPatched;
-                s.instanceCopyBytes = v.topLevelCopyBytes; // hairmem.1: held now (it was a running total)
-                s.vulkan = true;
-                s.ribbons = v.ribbons;
-                s.spareBytes = v.spareBytes;
-                s.retiredBytes = v.retiredBytes;
-                s.reuses = v.reuses;
-                s.gameHairBlasBytes = v.gameHairBlasBytes;
-                if (v.lastBuildTick) s.lastBuildAgeMs = GetTickCount64() - v.lastBuildTick;
-                if (v.lastError[0]) strncpy_s(s.lastError, v.lastError, _TRUNCATE);
-                else if (s.state == State::Prepared && !v.requested)
-                    strncpy_s(s.lastError, "Vulkan: LSS is reported; the game has not enabled it (yet)", _TRUNCATE);
-                return s;
-            }
+            if (!v.requested) return s;
+            s.lssRequested = true;
+            s.state = v.reason[0] ? State::Failed : v.prepared ? State::Prepared : State::Waiting;
+            strncpy_s(s.reason, v.reason, _TRUNCATE);
+            s.capsAnswered = v.extensionReports + v.featureReports;
+            s.optionsStripped = v.pipelineFlagsStripped;
+            s.shadersRewritten = v.shadersRewritten;
+            s.shadersRefused = v.shadersNeutral + v.shadersFailed;
+            s.prebuilds = v.sizeQueries;
+            s.builds = v.builds;
+            s.updates = v.updates;
+            s.inactiveBuilds = v.invalidGeometries + v.indirectBuilds;
+            s.failures = v.failures + v.hostBuildsRefused;
+            s.poolBuffers = v.poolBuffers;
+            s.poolBytes = v.poolBytes;
+            s.evictions = v.evictions;
+            s.rebuilds = v.rebuilds;
+            s.hairBlas = v.hairBlas;
+            s.topLevelPatched = v.topLevelPatched;
+            s.instanceCopyBytes = v.topLevelCopyBytes; // bytes currently held
+            s.vulkan = true;
+            s.ribbons = v.ribbons;
+            s.spareBytes = v.spareBytes;
+            s.retiredBytes = v.retiredBytes;
+            s.reuses = v.reuses;
+            s.gameHairBlasBytes = v.gameHairBlasBytes;
+            if (v.lastBuildTick) s.lastBuildAgeMs = GetTickCount64() - v.lastBuildTick;
+            strncpy_s(s.lastError, v.lastError, _TRUNCATE);
+            return s;
         }
         s.state = admitted.load(std::memory_order_acquire) ? State::Prepared
             : failed.load(std::memory_order_acquire)       ? State::Failed
@@ -811,6 +852,11 @@ Snapshot ReadSnapshot() noexcept
             std::lock_guard lock(reasonLock);
             if (s.state == State::Waiting && !reasonText.empty()) s.state = State::NotAdmitted;
             if (s.state != State::Prepared) strncpy_s(s.reason, reasonText.c_str(), _TRUNCATE);
+            else if (conversionFailed.load(std::memory_order_acquire))
+            {
+                s.state = State::Failed;
+                strncpy_s(s.reason, conversionError, _TRUNCATE);
+            }
         }
         s.capsAnswered = capsAnswered.load(std::memory_order_relaxed);
         s.optionsStripped = optionsStripped.load(std::memory_order_relaxed);

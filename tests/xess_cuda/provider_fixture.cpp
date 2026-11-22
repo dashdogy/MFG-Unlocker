@@ -139,6 +139,38 @@ int wmain(int argc,wchar_t** argv)
             }
             NgxCheck(api->D3D12ReleaseFeature(feature),"D3D12ReleaseFeature");
         }
+        // provkey.1 (Dying Light 2, Dying Light: The Beast): the game hands over a motion texture of another format
+        // from one frame to the next, two frames of each. XeFG's context must stay (the candidate logs
+        // d3d12_provider_inputs with "context_kept":true, checked by provider_fixture.py) and every evaluation
+        // must still succeed.
+        {
+            Parameters parameters;void* feature{};NgxCheck(api->D3D12CreateFeature(g.list.Get(),&parameters,&feature),"D3D12CreateFeature (alternating inputs)");
+            const uint32_t width=640,height=360,count=2;
+            for(uint32_t frame=0;frame<8;++frame) {
+                const bool halfFloat=(frame/2)%2!=0;
+                const DXGI_FORMAT motionFormat=halfFloat?DXGI_FORMAT_R16G16_FLOAT:DXGI_FORMAT_R32G32_FLOAT;
+                auto color=Texture2D(g,width,height,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_COPY_DEST);
+                auto depth=Texture2D(g,width,height,DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_STATE_COPY_DEST);
+                auto motion=Texture2D(g,width,height,motionFormat,D3D12_RESOURCE_STATE_COPY_DEST);
+                auto output=Texture2D(g,width,height,DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,true);
+                std::vector<uint32_t> pixels(size_t(width)*height);std::vector<float> depths(pixels.size(),0.75f),vectors(pixels.size()*2,0);
+                for(uint32_t y=0;y<height;++y)for(uint32_t x=0;x<width;++x)pixels[size_t(y)*width+x]=0xff000000u|((x+frame*3)&255)|((y&255)<<8)|(((x+y+frame)&255)<<16);
+                Upload(g,color.Get(),width,height,DXGI_FORMAT_R8G8B8A8_UNORM,4,pixels.data());
+                Upload(g,depth.Get(),width,height,DXGI_FORMAT_R32_FLOAT,4,depths.data());
+                Upload(g,motion.Get(),width,height,motionFormat,halfFloat?4u:8u,vectors.data());   // zero vectors in either format
+                Barrier(g.list.Get(),color.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                g.Submit();g.staging.clear();
+                parameters.Reset();parameters.Set("DLSSG.Backbuffer",color.Get());parameters.Set("DLSSG.Depth",depth.Get());parameters.Set("DLSSG.MVecs",motion.Get());
+                parameters.Set("DLSSG.OutputInterpolated",output.Get());parameters.Set("DLSSG.MultiFrameCount",count);
+                parameters.Set("DLSSG.CameraAspectRatio",float(width)/height);parameters.Set("DLSSG.CameraNear",0.1f);parameters.Set("DLSSG.CameraFar",100.0f);parameters.Set("DLSSG.CameraFOV",1.0471976f);
+                parameters.Set("DLSSG.MvecScaleX",1.0f);parameters.Set("DLSSG.MvecScaleY",1.0f);
+                for(uint32_t index=1;index<=count;++index) {
+                    parameters.Set("DLSSG.MultiFrameIndex",index);NgxCheck(api->D3D12Evaluate(g.list.Get(),feature,&parameters),"D3D12Evaluate (alternating inputs)");
+                    hashes<<"alternating "<<frame<<' '<<index<<' '<<HashOutput(g,output.Get(),width,height)<<'\n';
+                }
+            }
+            NgxCheck(api->D3D12ReleaseFeature(feature),"D3D12ReleaseFeature (alternating inputs)");
+        }
         hashes.close();NgxCheck(api->D3D12Shutdown(),"D3D12Shutdown");Sleep(2200);
         std::printf("D3D12_PROVIDER_FIXTURE_PASS tensor=%s resize_launches=%llu->%llu\n",on?"on":"off",beforeResize,afterResize);
         return 0;

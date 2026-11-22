@@ -45,6 +45,50 @@ struct Guarded {
     template<class T>T* Copy(const T& value,size_t size){DWORD old=0;VirtualProtect(static_cast<char*>(pages)+4096,4096,PAGE_NOACCESS,&old);auto* p=static_cast<char*>(pages)+4096-size;memcpy(p,&value,size);return reinterpret_cast<T*>(p);}
     ~Guarded(){VirtualFree(pages,0,MEM_RELEASE);}
 };
+// slshutdown.1 (Cyberpunk 2077's exit crash): the host's slShutdown must be the final release of the DLSS-G plug-in its
+// plug-in manager loaded. Our route pinned it before, so its static destructors ran at ExitProcess, after sl.common.
+static int RunShutdown(){
+    HMODULE interposer=LoadLibraryW(L"sl.interposer.dll");
+    Check(interposer!=nullptr,"controlled interposer fixture loads");if(!interposer)return 1;
+    Check(GetModuleHandleW(L"ControlWrapperFixture.dll")==nullptr,"the plug-in is not loaded before the session");
+    auto own=Proc<void(WINAPI*)(int)>(interposer,"FixtureOwnPlugins");
+    auto calls=Proc<unsigned(WINAPI*)()>(interposer,"FixtureShutdownCalls");
+    auto unloadedInShutdown=Proc<int(WINAPI*)()>(interposer,"FixtureWrapperUnloadedInShutdown");
+    auto lookup=Proc<PFun_slGetFeatureFunction*>(interposer,"slGetFeatureFunction");
+    auto shutdown=Proc<PFun_slShutdown*>(interposer,"slShutdown");
+    if(!own||!calls||!unloadedInShutdown||!lookup||!shutdown)return 2;
+    own(1);
+    sl::DLSSGOptions options{};options.structVersion=sl::kStructVersion1;options.mode=sl::DLSSGMode::eOn;options.numFramesToGenerate=1;
+    sl::ViewportHandle viewport(0);
+    void* set=nullptr;
+    Check(lookup(sl::kFeatureDLSS_G,"slDLSSGSetOptions",set)==sl::Result::eOk&&set!=nullptr,"session 1: the host loads the plug-in and its lookup succeeds");
+    HMODULE wrapper=GetModuleHandleW(L"ControlWrapperFixture.dll");
+    auto generated=wrapper?Proc<uint32_t(*)()>(wrapper,"FixtureGenerated"):nullptr;
+    Check(wrapper&&generated&&set!=reinterpret_cast<void*>(GetProcAddress(wrapper,"FixtureSetOptions")),"session 1: typed forwarding is published for the plug-in");
+    if(!set||!wrapper||!generated)return 1;
+    auto callSet=reinterpret_cast<PFun_slDLSSGSetOptions*>(set);
+    Check(callSet(viewport,options)==sl::Result::eOk&&generated()==1,"session 1 forwards to the plug-in");
+    Check(shutdown()==sl::Result::eOk&&calls()==1,"the host's slShutdown runs once through our hook");
+    Check(unloadedInShutdown()==1&&GetModuleHandleW(L"ControlWrapperFixture.dll")==nullptr,
+        "the host's slShutdown is the plug-in's final release: no reference of ours outlives it");
+    Check(callSet(viewport,options)==sl::Result::eErrorNotInitialized,"typed forwarding of the unloaded plug-in fails closed");
+    void* set2=nullptr;
+    Check(lookup(sl::kFeatureDLSS_G,"slDLSSGSetOptions",set2)==sl::Result::eOk&&set2!=nullptr,"session 2: the reloaded plug-in's lookup succeeds");
+    wrapper=GetModuleHandleW(L"ControlWrapperFixture.dll");
+    generated=wrapper?Proc<uint32_t(*)()>(wrapper,"FixtureGenerated"):nullptr;
+    if(!set2||!wrapper||!generated)return 1;
+    Check(set2!=reinterpret_cast<void*>(GetProcAddress(wrapper,"FixtureSetOptions")),"session 2: typed forwarding is published again");
+    auto callSet2=reinterpret_cast<PFun_slDLSSGSetOptions*>(set2);
+    Check(callSet2(viewport,options)==sl::Result::eOk&&generated()==1,"session 2 forwards to the reloaded plug-in");
+    HMODULE extra=LoadLibraryW(L"ControlWrapperFixture.dll");
+    Check(extra==wrapper,"another component holds the plug-in too");
+    Check(shutdown()==sl::Result::eOk&&calls()==2&&unloadedInShutdown()==0
+        &&GetModuleHandleW(L"ControlWrapperFixture.dll")==wrapper,"a plug-in held elsewhere stays loaded through the host's slShutdown");
+    Check(callSet2(viewport,options)==sl::Result::eOk,"its route still forwards after that shutdown");
+    if(extra)FreeLibrary(extra);
+    Check(GetModuleHandleW(L"ControlWrapperFixture.dll")==wrapper,"the route took its reference back");
+    printf("COMPLETE slShutdown plug-in release regression passed=%u\n",ok?1:0);return ok?0:1;
+}
 int wmain(int argc,wchar_t** argv){
     if(argc<3)return 2;
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX);
@@ -58,6 +102,7 @@ int wmain(int argc,wchar_t** argv){
     Check(Has(initial,"version",MFG_STATUS_VERSION),"candidate status uses the matching policy protocol");
     Check(Has(initial,"processBirth",std::to_string(diagnostic_paths::ProcessBirth()).c_str()),"snapshot identifies this exact process lifetime");
     Check(Has(initial,"mainResolverDiscoveryInstalled","true")&&Has(initial,"setOptionsSeen","false"),"initial state has no invented FG observation");
+    if(!wcscmp(argv[1],L"slshutdown"))return RunShutdown();
     HANDLE statusLock=INVALID_HANDLE_VALUE;std::string lockedContent;
     if(!wcscmp(argv[1],L"control-locked")){
         statusLock=CreateFileW(status.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);

@@ -420,6 +420,16 @@ void Runtime(const std::string& mode){
   CHECK(Logged(L"DLSS 5: output has 7 mips, processing mip 0 only")==1);
   game.Set("Output",output.Get());
  }
+ // Issue 171 (MSFS 2024, R32_FLOAT depth with 11 mips): depth and motion vectors with a mip chain are accepted. We
+ // put no barrier on them and the provider reads them as the game's DLSS does.
+ {
+  auto mippedDepth=gpu.Texture(DXGI_FORMAT_R32G8X24_TYPELESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,7);
+  auto mippedMotion=gpu.Texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,7);
+  game.Set("Depth",mippedDepth.Get());game.Set("MotionVectors",mippedMotion.Get());const unsigned beforeMippedInputs=evaluates;
+  run();gpu.Submit();CHECK(evaluates==beforeMippedInputs+1);
+  CHECK(Logged(L"DLSS 5 inputs refused: depth")==0&&Logged(L"DLSS 5 inputs refused: motion vectors")==0);
+  game.Set("Depth",depth.Get());game.Set("MotionVectors",motion.Get());
+ }
  // Provider pass-through makes the production HDR encode/decode a no-op, in
  // every Scaling Domain and NR Signal Encoding (RGB residual reconstruction).
  CHECK(images.Unchanged(output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
@@ -840,6 +850,17 @@ void PresentRuntime(){
   evaluate();present(PresentTarget{&streamline,image8.Get(),0,0x6000});
   CHECK(evaluates==beforeWrapped+3&&streamline.executes==0&&Read().state==State::eRunning);
   CHECK(wrapped.refs==1&&opaque.refs==1&&streamline.refs==1&&wrapperDevice.refs==1&&streamlineDevice.refs==1);
+ }
+ // Issue 171 (MSFS 2024): the Present-stage capture takes depth and motion vectors that carry a mip chain; its
+ // copies read mip 0 through our own views.
+ {
+  auto mippedDepth=gpu.Texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,7);
+  auto mippedMotion=gpu.Texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,7);
+  game.Set("Depth",mippedDepth.Get());game.Set("MotionVectors",mippedMotion.Get());const unsigned beforeMippedInputs=evaluates;
+  evaluate();present(target8);
+  CHECK(evaluates==beforeMippedInputs+1&&lastMotionWidth==64);
+  CHECK(Logged(L"DLSS 5 inputs refused: Present-stage")==0);
+  game.Set("Depth",depth.Get());game.Set("MotionVectors",motion.Get());
  }
  // hudlatch.1: Block Hudless ends with its chain. Draining another owner leaves it; draining the stage's owner (a
  // resize, or the chain moved to XeFG, whose layer has no Present stage) gives frame generation the HUD-less tag

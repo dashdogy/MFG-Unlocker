@@ -1,5 +1,7 @@
 // ngxprov.1: XeMFG as a D3D12 DLSS-G provider (d3d12_provider.h).
 #include "d3d12_provider.h"
+#include "d3d12_host.h"
+#include "optiscaler_host.h"
 #include "ngx_provider.h"
 #include "ngx_provider_policy.h"
 #include "standalone_policy.h"
@@ -22,6 +24,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace xess_d3d12_provider
 {
@@ -63,9 +66,24 @@ struct TimingRecord
     uint64_t consumedEnd = 0;   // the end stamp last read from this record: the same value again is a stale read
 };
 
+// provkey.1: a copy of one depth or motion input, made with that input's own description (CopyResource).
+struct InputCopy
+{
+    ComPtr<ID3D12Resource> texture;
+    D3D12_RESOURCE_DESC source{};   // the input it was made for
+};
+
 struct Slot   // one real frame's inputs, kept for the next batch as its previous frame
 {
-    ComPtr<ID3D12Resource> backbuffer, depth, motion, hudless;
+    ComPtr<ID3D12Resource> backbuffer, hudless;
+    // provkey.1 (Dying Light 2, Dying Light: The Beast): the copies follow the frame they hold, not the feature. Those
+    // games hand DLSS-G two depth textures in turn (R32 and D32S8), The Beast two motion formats as well, so each slot
+    // keeps the copy in use and the one it alternates with.
+    InputCopy depth, motion;
+    InputCopy spareDepth, spareMotion;
+    DXGI_FORMAT hudlessFormat = DXGI_FORMAT_UNKNOWN;   // what `hudless` was made for
+    uint32_t hudlessWidth = 0, hudlessHeight = 0;
+    bool inputsFailed = false;   // making the copies failed for these inputs: no retry until one changes
     bool hasHudless = false;
     float projection[16]{};
     float jitterX = 0, jitterY = 0, motionScaleX = 0, motionScaleY = 0;
@@ -83,6 +101,7 @@ struct Retired
     std::array<ComPtr<ID3D12Resource>, kMaxGenerated> outputs;
     ComPtr<ID3D12QueryHeap> queryHeap;
     ComPtr<ID3D12Resource> readback;
+    std::vector<ComPtr<ID3D12Resource>> textures;   // provkey.1: input copies replaced under a live context
 };
 
 // Released 2 s after the last recording that used it. A thread that can't start leaks it rather than free it under
@@ -106,12 +125,14 @@ struct Feature
     xefg_internal::Handle context = nullptr;
     uint64_t pipelineToken{};
     std::unique_ptr<xefg_cuda::ProviderList> proxy;
+    // provkey.1: what XeFG's context is made for. Depth, motion and HUD-less descriptions belong to the slots.
     uint32_t width = 0, height = 0;             // back buffer
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;   // back buffer copies and outputs (ngx_provider::ColorFormat)
-    D3D12_RESOURCE_DESC depthDesc{}, motionDesc{};
-    DXGI_FORMAT hudlessFormat = DXGI_FORMAT_UNKNOWN;
-    uint32_t hudlessWidth = 0, hudlessHeight = 0;
     bool inverted = false;
+    std::array<uint64_t, 4> contextTimes{};     // GetTickCount64 of the last contexts created (the re-create guard)
+    uint32_t contexts = 0;                      // contexts created for this feature
+    uint64_t inputChanges = 0;                  // a slot's input copy followed a changed description, context kept
+    uint64_t unpaired = 0;                      // batches started from one frame because the pair's inputs differed
     std::array<Slot, 2> slots;
     uint32_t current = 0;
     bool havePrevious = false;
@@ -256,11 +277,31 @@ bool SameDesc(const D3D12_RESOURCE_DESC& a, const D3D12_RESOURCE_DESC& b)
            a.DepthOrArraySize == b.DepthOrArraySize;
 }
 
+// provkey.1: RTXMFG_PROVIDER_PAIR_MIXED_INPUTS=1 lets XeFG pair a frame with a previous one whose depth, motion or
+// HUD-less copy has another description. Off, such a batch starts from its frame alone, which is what every changed
+// input did before (through a new context). A switch for testers, read once.
+bool PairMixedInputs() noexcept
+{
+    static const bool pair = [] {
+        wchar_t value[8]{};
+        const DWORD length = GetEnvironmentVariableW(L"RTXMFG_PROVIDER_PAIR_MIXED_INPUTS", value, DWORD(std::size(value)));
+        return length == 1 && value[0] == L'1';
+    }();
+    return pair;
+}
+
+// A context is released 2 s after its last use (Retire). More than four in that time would pile them up.
+constexpr uint64_t kContextWindowMs = 2000;
+
 bool PrepareDevice(Device& d)
 {
     std::string why;
-    // The pair the SDK route drives (OptiScaler's), else the player's from the runtime search, as on Vulkan.
-    const HMODULE fg = xess_vulkan::ProviderRuntime(why);
+    // Under OptiScaler: the pair the SDK route drives (OptiScaler's), else the player's from the runtime search, as on
+    // Vulkan. genswap.2, without OptiScaler (behind the game's Streamline): the pair the D3D12 host loads, its
+    // RTXMFG-XeSS folders first. The Vulkan search starts in the module's own folder, where a game's older copy can sit
+    // (Cyberpunk's libxess_fg 1.1.0.19), and the route admits one pair per process: refusing that copy here also cost
+    // the takeover that followed the newer pair (runtime_route_rejected).
+    const HMODULE fg = optiscaler_host::Detected() ? xess_vulkan::ProviderRuntime(why) : xess_d3d12::ProviderRuntime(why);
     if (!fg) { d.reason = "runtime_" + why; return false; }
     if (!xess_mod::PrepareProvider(d.device.Get(), why)) { d.reason = "route_" + why; return false; }
     if (!xefg_internal::Resolve(fg, d.api, why)) { d.reason = "xefg_" + why; return false; }
@@ -430,8 +471,11 @@ std::unique_ptr<Retired> TakeResources(Device& d, Feature& f)
     return retired;
 }
 
-// The textures of one feature and XeFG's context. Re-created (the old ones retired) when any input's size or format
-// changes.
+// XeFG's context, the back buffer copies and the outputs of one feature. Re-created (the old ones retired) when the
+// back buffer or the depth direction changes: that is all XeFG's Init takes. provkey.1: the depth, motion and HUD-less
+// copies are the slots' (EnsureSlotInputs). They were part of this key, and Dying Light 2 and The Beast, which
+// alternate two depth textures, got a new context many times a second: no previous frame to interpolate from, and
+// retired contexts piling up in video memory.
 bool EnsureFeature(Device& d, Feature& f, const Inputs& in, bool inverted)
 {
     const auto& bb = in.backbufferDesc;
@@ -445,16 +489,18 @@ bool EnsureFeature(Device& d, Feature& f, const Inputs& in, bool inverted)
                   RectText(in.depthSubrect) + "_" + RectText(in.motionSubrect);
         return false;
     }
-    const DXGI_FORMAT hudlessFormat = in.hudless ? ngx_provider::ColorFormat(in.hudlessDesc.Format) : DXGI_FORMAT_UNKNOWN;
     const uint32_t width = uint32_t(bb.Width), height = bb.Height;
-    const uint32_t hudlessWidth = hudlessFormat ? uint32_t(in.hudlessDesc.Width) : 0;
-    const uint32_t hudlessHeight = hudlessFormat ? in.hudlessDesc.Height : 0;
-    const bool sameInputs = f.width == width && f.height == height && f.format == format &&
-                            SameDesc(f.depthDesc, in.depthDesc) && SameDesc(f.motionDesc, in.motionDesc) &&
-                            f.hudlessFormat == hudlessFormat && f.hudlessWidth == hudlessWidth &&
-                            f.hudlessHeight == hudlessHeight && f.inverted == inverted;
-    if (sameInputs && f.context) return true;
-    if (sameInputs && f.broken) { f.fault = f.brokenFault; return false; }
+    const bool sameContext = f.width == width && f.height == height && f.format == format && f.inverted == inverted;
+    if (sameContext && f.context) return true;
+    if (sameContext && f.broken) { f.fault = f.brokenFault; return false; }
+    // The re-create guard: with four contexts made inside the release window, this batch shows the real frame instead of
+    // making a fifth. The context for the other description stays as it is and serves again if the input goes back.
+    const uint64_t now = GetTickCount64();
+    const uint64_t oldest = f.contextTimes[f.contexts % f.contextTimes.size()];
+    if (f.contexts >= f.contextTimes.size() && now - oldest < kContextWindowMs) {
+        f.fault = "context_rate";
+        return false;
+    }
     if (f.context || f.outputs[0] || f.slots[0].backbuffer) Retire(TakeResources(d, f));
     const auto fail = [&f](std::string why) {
         f.fault = why;
@@ -467,20 +513,11 @@ bool EnsureFeature(Device& d, Feature& f, const Inputs& in, bool inverted)
     f.width = width;
     f.height = height;
     f.format = format;
-    f.depthDesc = in.depthDesc;
-    f.motionDesc = in.motionDesc;
-    f.hudlessFormat = hudlessFormat;
-    f.hudlessWidth = hudlessWidth;
-    f.hudlessHeight = hudlessHeight;
     f.inverted = inverted;
     ID3D12Device* device = d.device.Get();
     for (Slot& slot : f.slots) {
         slot = {};
-        if (FAILED(CreateTexture(device, Texture2D(width, height, format, D3D12_RESOURCE_FLAG_NONE), kSlotState, slot.backbuffer)) ||
-            FAILED(CreateTexture(device, DepthCopyDesc(in.depthDesc), kSlotState, slot.depth)) ||
-            FAILED(CreateTexture(device, SameAs(in.motionDesc), kSlotState, slot.motion)) ||
-            (hudlessFormat && FAILED(CreateTexture(device, Texture2D(hudlessWidth, hudlessHeight, hudlessFormat, D3D12_RESOURCE_FLAG_NONE),
-                                                   kSlotState, slot.hudless))))
+        if (FAILED(CreateTexture(device, Texture2D(width, height, format, D3D12_RESOURCE_FLAG_NONE), kSlotState, slot.backbuffer)))
             return fail("input_textures");
     }
     for (uint32_t i = 0; i < kMaxGenerated; ++i) {
@@ -513,6 +550,7 @@ bool EnsureFeature(Device& d, Feature& f, const Inputs& in, bool inverted)
         return fail("init_" + std::to_string(result));
     }
     f.context = context;
+    f.contextTimes[f.contexts++ % f.contextTimes.size()] = now;
     if (xefg_cuda::Snapshot().state == xefg_cuda::State::Active) f.proxy = std::make_unique<xefg_cuda::ProviderList>();
     Log("d3d12_provider_feature", "\"width\":" + std::to_string(width) + ",\"height\":" + std::to_string(height) +
         ",\"format\":" + std::to_string(int(format)) + ",\"backbuffer_format\":" + std::to_string(int(bb.Format)) +
@@ -520,8 +558,83 @@ bool EnsureFeature(Device& d, Feature& f, const Inputs& in, bool inverted)
         std::to_string(int(in.depthDesc.Format)) + "],\"motion\":[" + std::to_string(in.motionDesc.Width) + "," +
         std::to_string(in.motionDesc.Height) + "],\"extent\":[" + std::to_string(in.rects.depth.width) + "," + std::to_string(in.rects.depth.height) +
         "],\"motion_format\":" + std::to_string(int(in.motionDesc.Format)) +
-        ",\"hudless\":" + (hudlessFormat ? "true" : "false") + ",\"inverted\":" + (inverted ? "true" : "false"));
+        ",\"hudless\":" + (in.hudless && ngx_provider::ColorFormat(in.hudlessDesc.Format) != DXGI_FORMAT_UNKNOWN ? "true" : "false") +
+        ",\"inverted\":" + (inverted ? "true" : "false") + ",\"contexts\":" + std::to_string(f.contexts) +
+        ",\"pair_mixed\":" + (PairMixedInputs() ? "true" : "false") +
+        // genswap.1: what a live switch to XeMFG costs on the evaluating thread (textures, XeFG's context and its Init).
+        ",\"create_ms\":" + std::to_string(GetTickCount64() - now));
     return true;
+}
+
+// provkey.1: the copy for `source` among a slot's two, made when neither fits. The one it replaces may still be read by
+// a recorded batch and goes to `retired`. `changed`: the copy in use was for another description.
+bool ChooseCopy(Device& d, InputCopy& current, InputCopy& spare, const D3D12_RESOURCE_DESC& source,
+                const D3D12_RESOURCE_DESC& copyDesc, Retired& retired, bool& changed)
+{
+    if (current.texture && SameDesc(current.source, source)) return true;
+    changed = changed || current.texture;
+    std::swap(current, spare);
+    if (current.texture && SameDesc(current.source, source)) return true;
+    if (current.texture) retired.textures.push_back(std::move(current.texture));
+    current.source = source;
+    return SUCCEEDED(CreateTexture(d.device.Get(), copyDesc, kSlotState, current.texture));
+}
+
+// provkey.1: the slot's depth, motion and HUD-less copies for this frame's inputs, under the feature's live context.
+// A HUD-less input that goes away leaves its copy for when it returns.
+bool EnsureSlotInputs(Device& d, Feature& f, Slot& slot, const Inputs& in)
+{
+    const DXGI_FORMAT hudlessFormat = in.hudless ? ngx_provider::ColorFormat(in.hudlessDesc.Format) : DXGI_FORMAT_UNKNOWN;
+    const uint32_t hudlessWidth = hudlessFormat ? uint32_t(in.hudlessDesc.Width) : 0;
+    const uint32_t hudlessHeight = hudlessFormat ? in.hudlessDesc.Height : 0;
+    const bool sameHudless = slot.hudlessFormat == hudlessFormat && slot.hudlessWidth == hudlessWidth &&
+                             slot.hudlessHeight == hudlessHeight;
+    if (slot.inputsFailed && SameDesc(slot.depth.source, in.depthDesc) && SameDesc(slot.motion.source, in.motionDesc) &&
+        (!hudlessFormat || sameHudless)) {
+        f.fault = "input_textures";
+        return false;
+    }
+    slot.inputsFailed = false;
+    auto retired = std::make_unique<Retired>();
+    bool changed = false;
+    const D3D12_RESOURCE_DESC depthBefore = slot.depth.source, motionBefore = slot.motion.source;
+    bool made = ChooseCopy(d, slot.depth, slot.spareDepth, in.depthDesc, DepthCopyDesc(in.depthDesc), *retired, changed);
+    made = ChooseCopy(d, slot.motion, slot.spareMotion, in.motionDesc, SameAs(in.motionDesc), *retired, changed) && made;
+    if (hudlessFormat && !(slot.hudless && sameHudless)) {
+        if (slot.hudless) {
+            changed = true;
+            retired->textures.push_back(std::move(slot.hudless));
+        }
+        slot.hudlessFormat = hudlessFormat;
+        slot.hudlessWidth = hudlessWidth;
+        slot.hudlessHeight = hudlessHeight;
+        made = SUCCEEDED(CreateTexture(d.device.Get(), Texture2D(hudlessWidth, hudlessHeight, hudlessFormat, D3D12_RESOURCE_FLAG_NONE),
+                                       kSlotState, slot.hudless)) && made;
+    }
+    slot.hasHudless = hudlessFormat != DXGI_FORMAT_UNKNOWN && slot.hudless;
+    if (!retired->textures.empty()) Retire(std::move(retired));
+    if (changed && (++f.inputChanges <= 8 || f.inputChanges % 512 == 0))   // the first ones, then a count now and then
+        Log("d3d12_provider_inputs", "\"changes\":" + std::to_string(f.inputChanges) + ",\"depth\":[" +
+            std::to_string(in.depthDesc.Width) + "," + std::to_string(in.depthDesc.Height) + "," +
+            std::to_string(int(in.depthDesc.Format)) + "],\"depth_before\":" + std::to_string(int(depthBefore.Format)) +
+            ",\"motion\":[" + std::to_string(in.motionDesc.Width) + "," + std::to_string(in.motionDesc.Height) + "," +
+            std::to_string(int(in.motionDesc.Format)) + "],\"motion_before\":" + std::to_string(int(motionBefore.Format)) +
+            ",\"hudless\":" + (slot.hasHudless ? "true" : "false") + ",\"context_kept\":true");
+    if (!made) {
+        slot.inputsFailed = true;
+        f.fault = "input_textures";
+        return false;
+    }
+    return true;
+}
+
+// Whether two frames' input copies have the same descriptions, so XeFG reads a pair of one kind.
+bool SameInputKinds(const Slot& a, const Slot& b)
+{
+    return SameDesc(a.depth.source, b.depth.source) && SameDesc(a.motion.source, b.motion.source) &&
+           a.hasHudless == b.hasHudless &&
+           (!a.hasHudless || (a.hudlessFormat == b.hudlessFormat && a.hudlessWidth == b.hudlessWidth &&
+                              a.hudlessHeight == b.hudlessHeight));
 }
 
 xefg_internal::Resource Describe(ID3D12Resource* resource, uint32_t width, uint32_t height)
@@ -538,9 +651,9 @@ void DescribeFrame(const Feature& f, const Slot& slot, xefg_internal::Frame& fra
 {
     frame = {};
     frame.backbuffer = Describe(slot.backbuffer.Get(), f.width, f.height);
-    frame.depth = Describe(slot.depth.Get(), slot.depthRect);
-    frame.motionVectors = Describe(slot.motion.Get(), slot.motionRect);
-    if (slot.hasHudless) frame.hudless = Describe(slot.hudless.Get(), f.hudlessWidth, f.hudlessHeight);
+    frame.depth = Describe(slot.depth.texture.Get(), slot.depthRect);
+    frame.motionVectors = Describe(slot.motion.texture.Get(), slot.motionRect);
+    if (slot.hasHudless) frame.hudless = Describe(slot.hudless.Get(), slot.hudlessWidth, slot.hudlessHeight);
     for (int i = 0; i < 16; ++i) frame.viewMatrix[i] = (i % 5 == 0) ? 1.0f : 0.0f;   // identity: no camera matrices given
     std::memcpy(frame.projectionMatrix, slot.projection, sizeof(frame.projectionMatrix));
     frame.outputWidth = float(f.width);
@@ -594,7 +707,7 @@ bool GenerateBatch(Device& d, Feature& f, ID3D12GraphicsCommandList* list, NVSDK
     if (!EnsureFeature(d, f, in, inverted)) return false;
     const bool reset = Number<int>(parameters, "DLSSG.Reset", 0) != 0;
     Slot& slot = f.slots[f.current];
-    slot.hasHudless = in.hudless && slot.hudless;
+    if (!EnsureSlotInputs(d, f, slot, in)) return false;
     slot.depthRect = in.rects.depth;
     slot.motionRect = in.rects.motion;
     if (in.rects != f.loggedRects && f.rectLogs < 16) {   // the first choice and the first changes: what the game passes
@@ -613,21 +726,21 @@ bool GenerateBatch(Device& d, Feature& f, ID3D12GraphicsCommandList* list, NVSDK
     barriers.Add(in.motion, kInputState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     if (slot.hasHudless) barriers.Add(in.hudless, kInputState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     barriers.Add(slot.backbuffer.Get(), kSlotState, D3D12_RESOURCE_STATE_COPY_DEST);
-    barriers.Add(slot.depth.Get(), kSlotState, D3D12_RESOURCE_STATE_COPY_DEST);
-    barriers.Add(slot.motion.Get(), kSlotState, D3D12_RESOURCE_STATE_COPY_DEST);
+    barriers.Add(slot.depth.texture.Get(), kSlotState, D3D12_RESOURCE_STATE_COPY_DEST);
+    barriers.Add(slot.motion.texture.Get(), kSlotState, D3D12_RESOURCE_STATE_COPY_DEST);
     if (slot.hasHudless) barriers.Add(slot.hudless.Get(), kSlotState, D3D12_RESOURCE_STATE_COPY_DEST);
     barriers.Record(list);
     CopyRegion(list, slot.backbuffer.Get(), in.backbuffer, f.width, f.height);
-    list->CopyResource(slot.depth.Get(), in.depth);
-    list->CopyResource(slot.motion.Get(), in.motion);
-    if (slot.hasHudless) CopyRegion(list, slot.hudless.Get(), in.hudless, f.hudlessWidth, f.hudlessHeight);
+    list->CopyResource(slot.depth.texture.Get(), in.depth);
+    list->CopyResource(slot.motion.texture.Get(), in.motion);
+    if (slot.hasHudless) CopyRegion(list, slot.hudless.Get(), in.hudless, slot.hudlessWidth, slot.hudlessHeight);
     barriers.Add(in.backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, kBackbufferState);
     barriers.Add(in.depth, D3D12_RESOURCE_STATE_COPY_SOURCE, kInputState);
     barriers.Add(in.motion, D3D12_RESOURCE_STATE_COPY_SOURCE, kInputState);
     if (slot.hasHudless) barriers.Add(in.hudless, D3D12_RESOURCE_STATE_COPY_SOURCE, kInputState);
     barriers.Add(slot.backbuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kSlotState);
-    barriers.Add(slot.depth.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kSlotState);
-    barriers.Add(slot.motion.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kSlotState);
+    barriers.Add(slot.depth.texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kSlotState);
+    barriers.Add(slot.motion.texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kSlotState);
     if (slot.hasHudless) barriers.Add(slot.hudless.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kSlotState);
     for (uint32_t i = 0; i < count; ++i) {
         barriers.Add(f.outputs[i].Get(), f.outputStates[i], kGenerateState);
@@ -664,7 +777,12 @@ bool GenerateBatch(Device& d, Feature& f, ID3D12GraphicsCommandList* list, NVSDK
     // XeFG skips a pair whose areas differ, as across a dynamic-resolution step: that batch starts from this frame alone.
     const Slot& prior = f.slots[f.current ^ 1];
     const bool sameAreas = prior.depthRect == slot.depthRect && prior.motionRect == slot.motionRect;
-    const Slot& previous = f.havePrevious && !reset && sameAreas ? prior : slot;
+    // provkey.1: likewise a pair whose depth, motion or HUD-less copies are of two descriptions (the game switched
+    // textures between the frames): XeFG is not known to read such a pair correctly, so the batch starts from this
+    // frame alone, as it did when the switch made a new context.
+    const bool sameKinds = SameInputKinds(prior, slot) || PairMixedInputs();
+    if (f.havePrevious && !reset && sameAreas && !sameKinds) ++f.unpaired;
+    const Slot& previous = f.havePrevious && !reset && sameAreas && sameKinds ? prior : slot;
     // The batch's call, kept for its later evaluations (the slots it names stay until the next batch).
     f.exec = {};
     DescribeFrame(f, previous, f.exec.previous);
@@ -775,7 +893,8 @@ int32_t Evaluate(ID3D12GraphicsCommandList* list, void* handle, NVSDK_NGX_Parame
                 Log("d3d12_provider_batch", "\"batches\":" + std::to_string(f.batches) + ",\"count\":" + std::to_string(count) +
                     ",\"evaluations\":" + std::to_string(f.evaluations) + ",\"real\":" + std::to_string(f.realCopies) +
                     ",\"failures\":" + std::to_string(f.failures) + ",\"real_in_place\":" + std::to_string(f.realInPlace) +
-                    ",\"paused\":" + std::to_string(f.paused) +
+                    ",\"paused\":" + std::to_string(f.paused) + ",\"contexts\":" + std::to_string(f.contexts) +
+                    ",\"input_changes\":" + std::to_string(f.inputChanges) + ",\"unpaired\":" + std::to_string(f.unpaired) +
                     ",\"cuda_launches\":" + std::to_string(xefg_cuda::Snapshot().launches) + ",\"cuda_fallbacks\":" + std::to_string(xefg_cuda::Snapshot().fallbacks) +
                     TimingFields(d, f) +
                     (f.batchReady ? std::string(",\"ready\":true") : ",\"ready\":false,\"fault\":\"" + Escape(f.fault) + "\""));

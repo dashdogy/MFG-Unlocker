@@ -310,6 +310,12 @@ msgstr "Byter DLSS Super Resolution till det nya presetet..."
 msgid "Same as Structure"
 msgstr "Som Struktur"
 
+msgid "Mask"
+msgstr "Mask"
+
+msgid "Detects skin and faces so that Faces & skin applies to them."
+msgstr "Hittar hud och ansikten så att Ansikten och hud gäller dem."
+
 msgid "Not set"
 msgstr "Ingen tangent"
 
@@ -433,8 +439,17 @@ msgstr ""
 "Kör nätverket varannan bildruta. Bildrutorna däremellan tillämpar dess senaste utseende på sin egen bild, så att rörliga och animerade ytor behåller det utan spår.\n"
 "Ungefär halva GPU-kostnaden. Fina detaljer följer spelets rörelsevektorer där en yta bara har flyttat sig."
 
+msgid "Save"
+msgstr "Spara"
+
+msgid "Share"
+msgstr "Dela"
+
 msgid "%s (changed)"
 msgstr "%s (ändrad)"
+
+msgid "Custom"
+msgstr "Anpassad"
 
 msgid "Preset %u"
 msgstr "Preset %u"
@@ -489,20 +504,23 @@ msgstr ""
 "Exportera kopierar de aktuella inställningarna till urklipp som en kod som börjar med DLSS5-, att dela med andra spelare.\n"
 "Importera tillämpar en inklistrad kod och sparar den som en preset. Med tomt fält läser Importera från urklipp."
 
+msgid "Subtle"
+msgstr "Diskret"
+
+msgid "Strong"
+msgstr "Kraftig"
+
+msgid "Presets"
+msgstr "Presets"
+
 msgid "Delete"
 msgstr "Ta bort"
 
 msgid "Save as"
 msgstr "Spara som"
 
-msgid "Save"
-msgstr "Spara"
-
 msgid "Name"
 msgstr "Namn"
-
-msgid "Share"
-msgstr "Dela"
 
 msgid "Import"
 msgstr "Importera"
@@ -512,6 +530,42 @@ msgstr "Exportera"
 
 msgid "Paste a code"
 msgstr "Klistra in en kod"
+
+msgid "Look & passes"
+msgstr "Utseende och pass"
+
+msgid "Blend"
+msgstr "Blandning"
+
+msgid "Scaling"
+msgstr "Skalning"
+
+msgid "HDR"
+msgstr "HDR"
+
+msgid "Provider"
+msgstr "Leverantör"
+
+msgid "%.0f%% of each rendered frame"
+msgstr "%.0f%% av varje renderad bildruta"
+
+msgid "%.1f ms"
+msgstr "%.1f ms"
+
+msgid "Half rate"
+msgstr "Halv takt"
+
+msgid "DirectX 11 to DirectX 12"
+msgstr "DirectX 11 till DirectX 12"
+
+msgid "%ux%u, network %ux%u, passes: %u"
+msgstr "%ux%u, nätverk %ux%u, pass: %u"
+
+msgid "Direct provider"
+msgstr "Direkt leverantör"
+
+msgid "Native NGX"
+msgstr "Inbyggd NGX"
 
 msgid "Neural Rendering"
 msgstr "Neural rendering"
@@ -531,14 +585,17 @@ msgstr "Auto: %s"
 msgid "Hook Method"
 msgstr "Hookmetod"
 
-msgid "Subtle"
-msgstr "Diskret"
+msgid "DLSS 5 settings could not be saved."
+msgstr "DLSS 5-inställningarna kunde inte sparas."
 
-msgid "Strong"
-msgstr "Kraftig"
+msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
+msgstr "Före uppskalning och Presentation körs inte med Vulkan ännu. Välj Auto eller Efter uppskalning."
 
-msgid "Custom"
-msgstr "Anpassad"
+msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
+msgstr "Presentation körs inte med DirectX 11 ännu. Välj Auto, Före uppskalning eller Efter uppskalning."
+
+msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
+msgstr "Spelets swapchain kan inte använda hookmetoden Presentation; loggen anger orsaken. Före och efter uppskalning fungerar fortfarande."
 
 msgid "Look"
 msgstr "Utseende"
@@ -573,20 +630,33 @@ msgstr "Auto"
 msgid "up to %.0f%%"
 msgstr "upp till %.0f%%"
 
-msgid "Half rate"
-msgstr "Halv takt"
+msgid "Motion tolerance"
+msgstr "Rörelsetolerans"
 
-msgid "DLSS 5 settings could not be saved."
-msgstr "DLSS 5-inställningarna kunde inte sparas."
+msgid ""
+"How much a surface may change between frames and still keep the carried fine detail.\n"
+"Strict carries it on fewer moving surfaces, which keep the rebuilt look; Loose carries more detail."
+msgstr ""
+"Hur mycket en yta får ändras mellan bildrutor och ändå behålla de överförda fina detaljerna.\n"
+"Strikt för över dem på färre rörliga ytor, som behåller det återskapade utseendet; Tolerant för över mer detaljer."
 
-msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
-msgstr "Före uppskalning och Presentation körs inte med Vulkan ännu. Välj Auto eller Efter uppskalning."
+msgid "Strict"
+msgstr "Strikt"
 
-msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
-msgstr "Presentation körs inte med DirectX 11 ännu. Välj Auto, Före uppskalning eller Efter uppskalning."
+msgid "Normal"
+msgstr "Normal"
 
-msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
-msgstr "Spelets swapchain kan inte använda hookmetoden Presentation; loggen anger orsaken. Före och efter uppskalning fungerar fortfarande."
+msgid "Loose"
+msgstr "Tolerant"
+
+msgid "Default"
+msgstr "Standard"
+
+msgid "Fast"
+msgstr "Snabbt"
+
+msgid "Network"
+msgstr "Nätverk"
 
 msgid "Compare"
 msgstr "Jämför"
@@ -594,15 +664,21 @@ msgstr "Jämför"
 msgid "Split view"
 msgstr "Delad vy"
 
+msgid "Swap sides"
+msgstr "Byt sida"
+
+msgid "Split position"
+msgstr "Delningsposition"
+
+msgid "Split view shows DLSS 5 on the left and the original on the right."
+msgstr "Delad vy visar DLSS 5 till vänster och originalet till höger."
+
 msgid ""
 "Shows the original image left of the line and DLSS 5 to its right.\n"
 "Before upscaling draws no line, because the upscaler would treat it as part of the image."
 msgstr ""
 "Visar originalbilden till vänster om linjen och DLSS 5 till höger.\n"
 "Före uppskalning ritas ingen linje, eftersom uppskalaren skulle behandla den som en del av bilden."
-
-msgid "Split position"
-msgstr "Delningsposition"
 
 msgid "Hold to show original"
 msgstr "Håll för originalet"
@@ -614,20 +690,30 @@ msgstr ""
 "Medan tangenten hålls ned visar spelet sin originalbild, så att DLSS 5 kan jämföras i rörelse.\n"
 "DLSS 5 fortsätter att köras, så GPU-kostnaden är oförändrad, och tangenten når fortfarande spelet."
 
-msgid "Presets"
-msgstr "Presets"
+msgid "Network input"
+msgstr "Nätverkets indata"
+
+msgid "Network output"
+msgstr "Nätverkets utdata"
+
+msgid "Change (x8)"
+msgstr "Ändring (x8)"
+
+msgid "Debug view"
+msgstr "Felsökningsvy"
+
+msgid ""
+"Shows what the network is given and returns, or where DLSS 5 changes the image (grey: unchanged; lighter or darker: changed).\n"
+"With Split view, on the DLSS 5 side only."
+msgstr ""
+"Visar vad nätverket får och returnerar, eller var DLSS 5 ändrar bilden (grått: oförändrat; ljusare eller mörkare: ändrat).\n"
+"Med delad vy bara på DLSS 5-sidan."
 
 msgid "Status"
 msgstr "Status"
 
 msgid "State"
 msgstr "Tillstånd"
-
-msgid "%.1f ms"
-msgstr "%.1f ms"
-
-msgid "%.0f%% of each rendered frame"
-msgstr "%.0f%% av varje renderad bildruta"
 
 msgid "GPU cost"
 msgstr "GPU-kostnad"
@@ -644,20 +730,8 @@ msgstr "mäter"
 msgid "Auto scale"
 msgstr "Auto-skala"
 
-msgid "%ux%u, network %ux%u, passes: %u"
-msgstr "%ux%u, nätverk %ux%u, pass: %u"
-
 msgid "Route"
 msgstr "Väg"
-
-msgid "Direct provider"
-msgstr "Direkt leverantör"
-
-msgid "Native NGX"
-msgstr "Inbyggd NGX"
-
-msgid "DirectX 11 to DirectX 12"
-msgstr "DirectX 11 till DirectX 12"
 
 msgid "Waiting for DLSS 5 GPU work to complete before applying settings."
 msgstr "Väntar på att DLSS 5:s GPU-arbete ska slutföras innan inställningarna tillämpas."
@@ -697,15 +771,6 @@ msgstr ""
 "Lokal förstärkning av ton och kontrast.\n"
 "Över 1 går förbi leverantörens vanliga intervall."
 
-msgid "Character Mask"
-msgstr "Karaktärsmask"
-
-msgid "Detects skin and faces so that Faces & skin applies to them."
-msgstr "Hittar hud och ansikten så att Ansikten och hud gäller dem."
-
-msgid "Look & passes"
-msgstr "Utseende och pass"
-
 msgid "Pass Count"
 msgstr "Antal pass"
 
@@ -728,9 +793,6 @@ msgstr ""
 msgid "Later-pass settings apply when Pass Count is 2 or more."
 msgstr "Inställningarna för senare pass gäller när antal pass är 2 eller fler."
 
-msgid "Blend"
-msgstr "Blandning"
-
 msgid "Blend strength"
 msgstr "Blandningsstyrka"
 
@@ -746,11 +808,11 @@ msgstr "0 behåller spelets färger och tar bara DLSS 5:s ljus och detaljer. 1 �
 msgid "Highlight guard"
 msgstr "Högdagerskydd"
 
-msgid "Limits how far DLSS 5 may brighten a pixel, as a multiple of its original brightness, so lights do not turn into bright speckles."
-msgstr "Begränsar hur mycket DLSS 5 får ljusa upp en pixel, som en multipel av dess ursprungliga ljusstyrka, så att ljus inte blir till ljusa prickar."
-
 msgid "Brightening limit"
 msgstr "Gräns för uppljusning"
+
+msgid "Limits how far DLSS 5 may brighten a pixel, as a multiple of its original brightness, so lights do not turn into bright speckles."
+msgstr "Begränsar hur mycket DLSS 5 får ljusa upp en pixel, som en multipel av dess ursprungliga ljusstyrka, så att ljus inte blir till ljusa prickar."
 
 msgid "Dark halo reduction"
 msgstr "Minska mörka halor"
@@ -769,9 +831,6 @@ msgstr "Haloradie"
 
 msgid "How far from each pixel to look for the edge, in network pixels."
 msgstr "Hur långt från varje pixel kanten söks, i nätverkets pixlar."
-
-msgid "Scaling"
-msgstr "Skalning"
 
 msgid "Signed PQ"
 msgstr "Signerad PQ"
@@ -830,9 +889,6 @@ msgid ""
 msgstr ""
 "RGB-residual lägger till nätverkets ändring i bilden med full upplösning.\n"
 "Bearbetad bild använder nätverkets uppskalade utdata direkt."
-
-msgid "HDR"
-msgstr "HDR"
 
 msgid "Linear BT.709"
 msgstr "Linjär BT.709"
@@ -895,30 +951,18 @@ msgstr "På tillämpar spelets DLSS-exponeringstextur före neural rendering; Om
 msgid "Adaptive exposure"
 msgstr "Adaptiv exponering"
 
-msgid ""
-"Keeps the scene the network sees at a steady brightness in HDR games, so the same settings suit games with different exposure.\n"
-"The game's own brightness is unchanged. SDR color is left as it is."
-msgstr ""
-"Håller scenen som nätverket ser vid jämn ljusstyrka i HDR-spel, så att samma inställningar passar spel med olika exponering.\n"
-"Spelets egen ljusstyrka ändras inte. SDR-färg lämnas som den är."
-
 msgid "Adaptive target"
 msgstr "Adaptivt mål"
 
 msgid "The average brightness Adaptive exposure gives the scene the network sees (0.18 is middle grey). Higher shows it a brighter scene."
 msgstr "Den genomsnittliga ljusstyrka som adaptiv exponering ger scenen som nätverket ser (0.18 är mellangrått). Högre visar det en ljusare scen."
 
-msgid "Provider"
-msgstr "Leverantör"
-
-msgid "Default"
-msgstr "Standard"
-
-msgid "Fast"
-msgstr "Snabbt"
-
-msgid "Network"
-msgstr "Nätverk"
+msgid ""
+"Keeps the scene the network sees at a steady brightness in HDR games, so the same settings suit games with different exposure.\n"
+"The game's own brightness is unchanged. SDR color is left as it is."
+msgstr ""
+"Håller scenen som nätverket ser vid jämn ljusstyrka i HDR-spel, så att samma inställningar passar spel med olika exponering.\n"
+"Spelets egen ljusstyrka ändras inte. SDR-färg lämnas som den är."
 
 msgid "UI Correction"
 msgstr "UI-korrigering"
@@ -929,25 +973,6 @@ msgid ""
 msgstr ""
 "Auto aktiverar leverantörens UI-korrigering vid Presentation, vars bild innehåller spelets UI, och lämnar den avstängd för DLSS-indata och -utdata.\n"
 "Av använder den aldrig. På använder den alltid."
-
-msgid "Strict"
-msgstr "Strikt"
-
-msgid "Normal"
-msgstr "Normal"
-
-msgid "Loose"
-msgstr "Tolerant"
-
-msgid "Motion tolerance"
-msgstr "Rörelsetolerans"
-
-msgid ""
-"How much a surface may change between frames and still keep the carried fine detail.\n"
-"Strict carries it on fewer moving surfaces, which keep the rebuilt look; Loose carries more detail."
-msgstr ""
-"Hur mycket en yta får ändras mellan bildrutor och ändå behålla de överförda fina detaljerna.\n"
-"Strikt för över dem på färre rörliga ytor, som behåller det återskapade utseendet; Tolerant för över mer detaljer."
 
 msgid "Never"
 msgstr "Aldrig"
@@ -973,34 +998,6 @@ msgstr "Blockera HUD-lös bild"
 
 msgid "Present only: keeps the game's HUD-less image from DLSS frame generation, so generated frames match processed ones."
 msgstr "Endast Presentation: håller spelets HUD-lösa bild borta från DLSS Frame Generation så att genererade bilder matchar de bearbetade."
-
-msgid "Mask"
-msgstr "Mask"
-
-msgid "Network input"
-msgstr "Nätverkets indata"
-
-msgid "Network output"
-msgstr "Nätverkets utdata"
-
-msgid "Change (x8)"
-msgstr "Ändring (x8)"
-
-msgid "Debug view"
-msgstr "Felsökningsvy"
-
-msgid ""
-"Shows what the network is given and returns, or where DLSS 5 changes the image (grey: unchanged; lighter or darker: changed).\n"
-"With Split view, on the DLSS 5 side only."
-msgstr ""
-"Visar vad nätverket får och returnerar, eller var DLSS 5 ändrar bilden (grått: oförändrat; ljusare eller mörkare: ändrat).\n"
-"Med delad vy bara på DLSS 5-sidan."
-
-msgid "Swap sides"
-msgstr "Byt sida"
-
-msgid "Split view shows DLSS 5 on the left and the original on the right."
-msgstr "Delad vy visar DLSS 5 till vänster och originalet till höger."
 
 msgid "Reset to defaults"
 msgstr "Återställ standard"
@@ -1384,6 +1381,9 @@ msgstr "Lägg libxess_fg.dll och libxell.dll från Intels XeSS SDK %s i %s och s
 msgid "Restart the game to start XeMFG."
 msgstr "Starta om spelet för att starta XeMFG."
 
+msgid "XeMFG starts once DLSS frame generation is turned off and on again in the game's settings, or after a restart."
+msgstr "XeMFG startar när DLSS Frame Generation slås av och på igen i spelets inställningar, eller efter en omstart."
+
 msgid "This game ignores window size changes, so XeMFG starts after a restart. From then on, XeMFG switches on and off in this game without a restart."
 msgstr "Det här spelet ignorerar ändringar av fönsterstorleken, så XeMFG startar efter en omstart. Därefter slås XeMFG på och av i det här spelet utan omstart."
 
@@ -1399,11 +1399,17 @@ msgstr "XeMFG kunde inte ta över det körande spelets swapchain (%s). Starta om
 msgid "The XeMFG setting could not be saved."
 msgstr "XeMFG-inställningen kunde inte sparas."
 
+msgid "XeMFG is off, but it keeps generating until DLSS frame generation is turned off and on again in the game's settings, or a restart."
+msgstr "XeMFG är av, men fortsätter generera tills DLSS Frame Generation slås av och på igen i spelets inställningar, eller till en omstart."
+
 msgid "XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or window-mode change, or a restart."
 msgstr "XeMFG är av, men XeFG behåller spelets swapchain till spelets nästa byte av upplösning eller fönsterläge, eller till en omstart."
 
 msgid "XeMFG is off. The game's DLSS frame generation comes back after a restart: it cannot start again in this session once XeMFG has taken over its swap chain."
 msgstr "XeMFG är av. Spelets DLSS-bildgenerering kommer tillbaka efter en omstart: den kan inte starta igen i den här sessionen när XeMFG har tagit över dess swapchain."
+
+msgid "Switching the game's frame generation to XeMFG..."
+msgstr "Byter spelets Frame Generation till XeMFG..."
 
 msgid "Moving the game's swap chain to XeMFG..."
 msgstr "Flyttar spelets swapchain till XeMFG..."
@@ -1413,6 +1419,9 @@ msgstr "XeMFG kunde inte starta: %s"
 
 msgid "Turn on DLSS frame generation in the game's settings. XeMFG replaces it."
 msgstr "Slå på DLSS Frame Generation i spelets inställningar. XeMFG ersätter den."
+
+msgid "Dynamic MFG does not apply while XeMFG runs as the game's DLSS frame generation. The frame count above is used."
+msgstr "Dynamisk MFG gäller inte när XeMFG körs som spelets DLSS Frame Generation. Antalet bildrutor ovan används."
 
 msgid "Turn off the game's FSR frame generation. XeMFG does not run on top of it."
 msgstr "Stäng av spelets FSR Frame Generation. XeMFG körs inte ovanpå den."
@@ -1435,11 +1444,11 @@ msgstr "Startar"
 msgid "Waiting for a resize"
 msgstr "Väntar på storleksändring"
 
-msgid "Restart needed"
-msgstr "Omstart krävs"
-
 msgid "Waiting"
 msgstr "Väntar"
+
+msgid "Restart needed"
+msgstr "Omstart krävs"
 
 msgid "Inputs"
 msgstr "Indata"
@@ -1489,12 +1498,6 @@ msgstr "MFG Unlockers multi-frame-port"
 
 msgid "Intel 2x model"
 msgstr "Intels 2x-modell"
-
-msgid "No generated frames"
-msgstr "Inga genererade bildrutor"
-
-msgid "the provider is failing; see the RTXMFG log"
-msgstr "leverantören misslyckas; se RTXMFG-loggen"
 
 msgid "Frame generation"
 msgstr "Frame Generation"
@@ -1571,6 +1574,9 @@ msgstr "Frame Generation ställs in i OptiScalers meny. Den här menyn har DLSS-
 msgid "DLSS 5"
 msgstr "DLSS 5"
 
+msgid "Character Mask"
+msgstr "Karaktärsmask"
+
 msgid "Present does not run from OptiScaler's menu. Choose Auto, Before upscaling or After upscaling."
 msgstr "Presentation körs inte från OptiScalers meny. Välj Auto, Före uppskalning eller Efter uppskalning."
 
@@ -1588,6 +1594,12 @@ msgstr "XMX-port"
 
 msgid "on the shader cores"
 msgstr "på shaderkärnorna"
+
+msgid "No generated frames"
+msgstr "Inga genererade bildrutor"
+
+msgid "the provider is failing; see the RTXMFG log"
+msgstr "leverantören misslyckas; se RTXMFG-loggen"
 
 msgid "XMX port: MFG Unlocker's port of Intel's multi-frame XMX model, run as DXIL shaders on any GPU. CUDA port: the same model with its int8 layers run as CUDA kernels on RTX tensor cores."
 msgstr "XMX-port: MFG Unlockers port av Intels multi-frame-XMX-modell, körs som DXIL-shaders på alla GPU:er. CUDA-port: samma modell med int8-lagren körda som CUDA-kernels på RTX-tensorkärnor."

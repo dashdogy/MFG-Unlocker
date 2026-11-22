@@ -33,6 +33,8 @@ target_link_libraries(NvapiResolveTests PRIVATE version psapi)
 add_executable(DriverPathTests driver_path_tests.cpp)
 # winemenu.1: InsideLoader() without RtlIsThreadWithinLoaderCallout (Wine/Proton).
 add_executable(LoaderLockTests loader_lock_tests.cpp)
+# cowtwin.1 (issues 170 and 172): a writable protection read back as its copy-on-write twin (Wine/Proton).
+add_executable(ProtectionTwinTests protection_twin_tests.cpp)
 # GitHub issue 158: the per-handle real-frame table reuses its least recently used slot.
 add_executable(FirstSampleTableTests first_sample_table_tests.cpp)
 # GitHub issue 149 follow-up (Indiana Jones, RTX 4090): the RTX 40 2X hold follows the provider a Create uses, and an
@@ -92,7 +94,7 @@ add_executable(EntryOverlayTests entry_overlay_tests.cpp "${NATIVE_SOURCE}/entry
 add_library(EntryOverlayFixture SHARED entry_overlay_fixture.cpp entry_overlay_fixture.asm entry_overlay_fixture.def)
 set_target_properties(EntryOverlayFixture PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_dependencies(EntryOverlayTests EntryOverlayFixture)
-foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipMeteringTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests AmpereArchitectureTests AmpereWrapperTests DlssgSelectionTests NvapiResolveTests DriverPathTests LoaderLockTests FirstSampleTableTests AdaGateHoldTests GpuNameOverrideTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests DlssgPresetHookInstallTests DlssSrOverrideAudit EntryOverlayTests)
+foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipMeteringTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests AmpereArchitectureTests AmpereWrapperTests DlssgSelectionTests NvapiResolveTests DriverPathTests LoaderLockTests ProtectionTwinTests FirstSampleTableTests AdaGateHoldTests GpuNameOverrideTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests DlssgPresetHookInstallTests DlssSrOverrideAudit EntryOverlayTests)
     target_compile_features(${target} PRIVATE cxx_std_20)
     target_include_directories(${target} PRIVATE "${NATIVE_SOURCE}" "${MINHOOK}/include")
     target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -110,7 +112,7 @@ target_compile_definitions(SelectionSibling PRIVATE FIXTURE_MINOR=9 FIXTURE_BUIL
 # No inputs: run with every build. The flip-metering, wrapper, selection and architecture tests take real
 # Streamline wrappers and DLSS-G providers as arguments (see BUILD.md).
 enable_testing()
-foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests EntryOverlayTests DriverPathTests LoaderLockTests FirstSampleTableTests AdaGateHoldTests)
+foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests EntryOverlayTests DriverPathTests LoaderLockTests ProtectionTwinTests FirstSampleTableTests AdaGateHoldTests)
     add_test(NAME ${target} COMMAND ${target})
 endforeach()
 # Exit code 2 is a setup failure (no NVIDIA driver or no split nvapi64_impl.dll), never a pass.

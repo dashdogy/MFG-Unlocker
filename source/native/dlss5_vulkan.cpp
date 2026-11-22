@@ -375,11 +375,12 @@ void Run(VkCommandBuffer cmd, VkPipeline pipeline, const Bindings& b, const void
     vk.vkCmdDispatch(cmd, group ? 1 : (x + 7) / 8, group ? 1 : (y + 7) / 8, 1);
 }
 
-// A pass's SPIR-V (a payload of the packed dlss5_vk group, word-aligned) as a compute pipeline.
+// A pass's SPIR-V (a payload of the dlss5_vk group, read in place from the module's resources) as a compute pipeline.
+// pCode must be word-aligned; a resource that is not is refused rather than copied.
 bool MakePipeline(uint32_t pass, const char* entry, VkPipeline& out) noexcept {
     const auto code = embedded_payload::Find(embedded_payload::Owner(), embedded_payload::packed::dlss5_vk,
         embedded_payload::packed::dlss5_vk_items, pass);
-    if (code.empty() || code.size() % 4) return false;
+    if (code.empty() || code.size() % 4 || reinterpret_cast<uintptr_t>(code.data()) % alignof(uint32_t)) return false;
     auto& vk = gDevice.vk;
     VkShaderModuleCreateInfo module{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     module.codeSize = code.size(); module.pCode = reinterpret_cast<const uint32_t*>(code.data());

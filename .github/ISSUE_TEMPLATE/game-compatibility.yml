@@ -39,7 +39,7 @@ body:
     attributes:
       label: Mod version
       description: State the release version or commit used.
-      placeholder: v1.7.1
+      placeholder: v1.7.2
     validations:
       required: true
 

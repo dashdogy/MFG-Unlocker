@@ -95,9 +95,14 @@ public:
     // ALLOW_DATA_ACCESS on every bottom-level query.
     void BuildSizes(PFN_vkGetAccelerationStructureBuildSizesKHR original, VkAccelerationStructureBuildTypeKHR type,
         const VkAccelerationStructureBuildGeometryInfoKHR* info, const uint32_t* maxPrimitiveCounts, VkAccelerationStructureBuildSizesInfoKHR* sizes);
+    struct BuildResult
+    {
+        bool recordedHair{};
+        const char* error{}; // static detail for a refused LSS geometry
+    };
     // vkCmdBuildAccelerationStructuresKHR through `original`. `compute`: the compute pipeline bound on `list` before
     // this call (VK_NULL_HANDLE when none), bound again after the converter dispatches.
-    void CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, VkCommandBuffer list, uint32_t count,
+    BuildResult CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, VkCommandBuffer list, uint32_t count,
         const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkAccelerationStructureBuildRangeInfoKHR* const* ranges, VkPipeline compute);
     // vkCmdBuildAccelerationStructuresIndirectKHR through `original`: the primitive counts are on the GPU, so an LSS
     // geometry is built (directly) from `maxPrimitiveCounts` inactive DOTS triangles, valid and never hit; every

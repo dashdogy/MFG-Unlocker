@@ -43,11 +43,12 @@ enum class State : uint32_t
     Waiting,     // requested, no D3D12 device (or converted Vulkan device) yet
     NotAdmitted, // this GPU, driver or game folder (see reason); the game runs as on a stock GPU
     Failed,      // preparation failed after the device hooks: off for this process
-    Prepared,    // LSS reported to the game, its hair builds and shaders converted
+    Prepared,    // the converter is ready for the game's LSS calls
 };
 struct Snapshot
 {
     State state{};
+    bool lssRequested{}; // game opt-in or observed LSS geometry, retained for the session
     uint64_t capsAnswered{}, optionsStripped{}, shadersRewritten{}, shadersRefused{};
     uint64_t prebuilds{}, builds{}, updates{}, inactiveBuilds{}, skippedUpdates{}, failures{};
     uint64_t lastBuildAgeMs{UINT64_MAX}; // since the latest converted hair build

@@ -40,7 +40,7 @@ if(XEFG_CUDA_VULKAN_PROBE)
         "${NATIVE}/xess/vulkan/xvk_commandlist.cpp" "${NATIVE}/xess/vulkan/xvk_queue.cpp"
         "${NATIVE}/xess/vulkan/xvk_pipeline.cpp" "${NATIVE}/xess/vulkan/xvk_programs.cpp"
         "${NATIVE}/xess/vulkan/xvk_dxgi.cpp" "${NATIVE}/xess/vulkan/xvk_util.cpp"
-        "${NATIVE}/embedded_payload.cpp" "${NATIVE}/third_party/lzma/LzmaDec.c")
+        "${NATIVE}/embedded_payload.cpp")
     target_include_directories(XefgCudaVkTests PRIVATE "${XEFG_CUDA_GENERATED}")
     target_compile_features(XefgCudaVkTests PRIVATE cxx_std_20)
     target_compile_definitions(XefgCudaVkTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -175,6 +175,10 @@ if(XEFG_AGILITY_CORE)
 endif()
 
 add_test(NAME xefg_cuda_pipeline_tokens COMMAND XefgCudaProxyTests ${XEFG_CUDA_ARGS} --proxy-list --test tokens)
+# cudaheld.1 (issue 174): pipelines built off the scoped thread belong to their context; a full table reclaims
+# released pipelines.
+add_test(NAME xefg_cuda_pipeline_tokens_offthread COMMAND XefgCudaProxyTests ${XEFG_CUDA_ARGS} --proxy-list --test tokens-offthread)
+add_test(NAME xefg_cuda_pipeline_tokens_reclaim COMMAND XefgCudaProxyTests ${XEFG_CUDA_ARGS} --proxy-list --test tokens-reclaim)
 
 if(XEFG_CUDA_CANDIDATE_DLL)
     enable_language(RC)

@@ -169,6 +169,20 @@ int main()
     Check(!ReplacementOwnsFrameGeneration(false, 0, 0), "without the provider's offer the Ampere ring governs");
     Check(!ReplacementOwnsFrameGeneration(true, 1, 0) && !ReplacementOwnsFrameGeneration(true, 0, 1),
         "a FrameGeneration Create on NVIDIA's provider hands the decision back to the certified ring");
+    // genswap30.1: XeMFG standalone behind the game's Streamline on RTX 30/20. Its ownership is live, so the options
+    // policy steps aside while XeFG owns (or will own) the feature and governs again once the switch goes back.
+    using ampere_policy::OptionsApply;
+    Check(OptionsApply(true, false, false), "NVIDIA's provider on the translated program: the RTX 30/20 options govern");
+    Check(!OptionsApply(true, false, true), "XeFG owns the game's feature: its options follow XeMFG's frame count");
+    Check(!OptionsApply(true, true, false) && !OptionsApply(true, true, true), "a replacement provider owns it");
+    Check(!OptionsApply(false, false, false) && !OptionsApply(false, false, true), "RTX 40/50 never take this policy");
+    {
+        bool xefgOwns = true;
+        const bool whileXefg = OptionsApply(true, ReplacementOwnsFrameGeneration(false, 0, 0), xefgOwns);
+        xefgOwns = false;   // switched back: NVIDIA's translated feature is created again in the same session
+        const bool afterSwap = OptionsApply(true, ReplacementOwnsFrameGeneration(false, 0, 1), xefgOwns);
+        Check(!whileXefg && afterSwap, "a swap back to NVIDIA's provider hands the options back within the session");
+    }
     Check(SafeMaximumMultiplier(false, 5, true, 5, 0) == 2, "control: the uncertified ring is the 2x of the DW3 run");
     bool replacementSafe = true;
     for (bool ready : {false, true})
@@ -184,6 +198,30 @@ int main()
     Check(d.mode == Mode::eOn && d.generatedFrames == 5, "DW3: OptiScaler's 6x request is submitted as 6x");
     d = DecideOptions(false, 6, false, Mode::eOn, 1, SafeMaximumMultiplier(true, 5, true, 5, 0), false);
     Check(d.generatedFrames == 5, "a fixed 6x menu choice reaches the replacement as 6x");
+
+    // rtx30optimax.1 (Onimusha, NVIDIA 4X, RTX 3080 Ti, OptiScaler with MFGUnlocker's XeMFG provider): OptiScaler
+    // reads numFramesToGenerateMax once as its own ceiling. beta.2 handed it the wrapper's 5 (6x); rc.1 the
+    // advertised 3 (4x), because our clamp ran beneath OptiScaler's hook.
+    using ampere_policy::ReportedGeneratedFrames;
+    const uint32_t onimushaOffer = AdvertisedGeneratedFrames(5, 4);
+    Check(ReportedGeneratedFrames(true, 5, onimushaOffer) == 5,
+        "Onimusha: a replacement provider keeps the wrapper's 6x on a 4X title");
+    Check(ReportedGeneratedFrames(false, 5, onimushaOffer) == 3,
+        "Onimusha on NVIDIA's provider: the translated program is still offered the 4X ceiling");
+    d = DecideOptions(true, 2, false, Mode::eOn, ReportedGeneratedFrames(true, 5, onimushaOffer),
+        SafeMaximumMultiplier(true, 5, true, 5, 0), false);
+    Check(d.generatedFrames == 5, "Onimusha: the 6x OptiScaler is offered is the 6x the replacement receives");
+    bool reportedBounded = true;
+    for (uint32_t reported = 0; reported <= 7; ++reported)
+        for (uint32_t policy = 0; policy <= 7; ++policy)
+            for (uint32_t ring = 0; ring <= 6; ++ring)
+            {
+                const uint32_t advertised = AdvertisedGeneratedFrames(5, policy, ring);
+                reportedBounded = reportedBounded
+                    && ReportedGeneratedFrames(true, reported, advertised) == reported
+                    && ReportedGeneratedFrames(false, reported, advertised) == std::min(reported, advertised);
+            }
+    Check(reportedBounded, "only a replacement owner skips the offer; otherwise the old min(reported, offer) holds");
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

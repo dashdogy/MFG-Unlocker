@@ -49,6 +49,15 @@ constexpr bool ReplacementOwnsFrameGeneration(bool replacementOffered,
     return replacementOffered && nvidiaFrameGenerationCreates == 0 && ampereCreatedFeatures == 0;
 }
 
+// genswap30.1: whether the RTX 30/20 options policy governs the game's DLSS-G options: on the translated program,
+// unless a replacement provider owns FrameGeneration, or XeFG behind the game's Streamline owns the game's feature
+// or will own its next one. That ownership is live (the generator swap hands the feature back and forth within a
+// session), unlike the replacement's counters, so a swap back to NVIDIA's provider returns the options here.
+constexpr bool OptionsApply(bool translatedProgram, bool replacementOwns, bool xefgOwns) noexcept
+{
+    return translatedProgram && !replacementOwns && !xefgOwns;
+}
+
 // The safe maximum multiplier on RTX 30/20: a replacement's own maximum (its generated frames + 1, at most
 // six), else the certified ring's (RingMaximumMultiplier), else 2x before the backend is ready.
 constexpr uint32_t SafeMaximumMultiplier(bool replacementOwns, uint32_t replacementGeneratedFrames,
@@ -210,6 +219,17 @@ constexpr uint32_t AdvertisedGeneratedFrames(uint32_t startupMaximum,
     const uint32_t limit = policyMaximumMultiplier > 2 ? policyMaximumMultiplier - 1 : 1;
     const uint32_t offered = limit < kMaximumGeneratedFrames ? limit : kMaximumGeneratedFrames;
     return CertifiedCapacityValid(ringMaximum) && ringMaximum < offered ? ringMaximum : offered;
+}
+
+// rtx30optimax.1: the numFramesToGenerateMax an RTX 30/20 GetState pass-through hands on. While an Nvngx replacement
+// provider owns FrameGeneration (ReplacementOwnsFrameGeneration) no ring or admission applies and the options follow
+// the game as on RTX 40, so the wrapper's own maximum stands; otherwise the advertised offer bounds it. OptiScaler
+// reads this once as the ceiling of its own frame count: since beta2fix.1 left OptiScaler's slDLSSGGetState hook
+// alone, our internal slGetData clamp ran beneath it and held its XeMFG at the title's NVIDIA tier (Onimusha,
+// RTX 3080 Ti: 4x on rc.1 where beta.2 gave 6x).
+constexpr uint32_t ReportedGeneratedFrames(bool replacementOwns, uint32_t reported, uint32_t advertised) noexcept
+{
+    return !replacementOwns && advertised < reported ? advertised : reported;
 }
 
 // Public NGX handles are opaque. No EndpointCore offsets, inferred allocation

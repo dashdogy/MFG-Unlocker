@@ -1,6 +1,8 @@
 // CPU checks of XeMFG standalone's policy (source/native/xess/standalone_policy.h).
 #include "xess/standalone_policy.h"
 #include "xess/ngx_provider_policy.h"
+#include "xess/streamline_provider_policy.h"
+#include "xess/live_move_policy.h"
 #include "xess/xemfg_dynamic.h"
 #include "xess/module_list.h"
 #include "host_process_policy.h"
@@ -197,6 +199,12 @@ void Conventions()
     CHECK(Near(scale.first, -2560.0f) && Near(scale.second, 1440.0f));
     scale = NgxDlssgMotionScale(2.0f, 3.0f, 0, 0, 1920, 1080);
     CHECK(Near(scale.first, 2.0f) && Near(scale.second, 3.0f));
+    scale = NgxDlssgMotionScale(0.0f, 0.0f, 2560, 1440, 2560, 1440);
+    CHECK(Near(scale.first, 1.0f) && Near(scale.second, 1.0f));
+    scale = NgxDlssgMotionScale(0.0f, 0.0f, 3840, 2160, 2560, 1440);
+    CHECK(Near(scale.first, 2.0f / 3.0f) && Near(scale.second, 2.0f / 3.0f));
+    scale = NgxDlssgMotionScale(0.0f, -2.0f, 2560, 1440, 2560, 1440);
+    CHECK(Near(scale.first, 0.0f) && Near(scale.second, -2.0f));
     // XeSS: pixels pass; NDC velocity (y up) becomes half-extent pixels with y flipped.
     scale = XessMotionScale(2.0f, 3.0f, false, 1920, 1080);
     CHECK(Near(scale.first, 2.0f) && Near(scale.second, 3.0f));
@@ -622,6 +630,127 @@ void Provider()
     CHECK(ReadableDepthFormat(DXGI_FORMAT_D24_UNORM_S8_UINT) == DXGI_FORMAT_UNKNOWN);
     CHECK(ReadableDepthFormat(DXGI_FORMAT_R32G8X24_TYPELESS) == DXGI_FORMAT_UNKNOWN);
     CHECK(ReadableDepthFormat(DXGI_FORMAT_R32_FLOAT) == DXGI_FORMAT_UNKNOWN);
+    {
+        // slprov.1: what may become XeFG's behind the game's Streamline, and the table of the features it holds.
+        using namespace xess_streamline_provider;
+        CHECK(Offer(true, true, true));
+        CHECK(!Offer(false, true, true) && !Offer(true, false, true) && !Offer(true, true, false));
+        CHECK(kFirstHandleId > 0x10000u);
+        int a = 0, b = 0, c = 0;
+        FeatureTable<int, 2> table;
+        CHECK(!table.Add(nullptr) && table.Count() == 0);
+        CHECK(table.Add(&a) && table.Add(&b) && !table.Add(&c));   // full
+        CHECK(!table.Add(&a));                                     // already held
+        CHECK(table.Find(&a) == &a && table.Find(&c) == nullptr && table.Find(nullptr) == nullptr);
+        CHECK(table.Remove(&a) && !table.Remove(&a) && !table.Remove(nullptr) && table.Count() == 1);
+        CHECK(table.Add(&c) && table.Find(&c) == &c && table.Count() == 2);
+    }
+}
+
+// genswap.1: where XeMFG standalone runs on D3D12, and the live switch behind the game's Streamline.
+void GeneratorSwap()
+{
+    using namespace xess_streamline_provider;
+    // The route: a game that drives Streamline's DLSS-G on RTX 40/50, unless anything rules it out.
+    RouteInputs ready;
+    ready.nativeProgram = true;
+    ready.routeLoaded = true;
+    ready.dlssgDriven = true;
+    CHECK(BehindStreamline(ready));
+    { RouteInputs in = ready; in.key = Key::eOn; CHECK(BehindStreamline(in)); }
+    { RouteInputs in = ready; in.key = Key::eOff; CHECK(!BehindStreamline(in)); }
+    { RouteInputs in = ready; in.optiScaler = true; CHECK(!BehindStreamline(in)); }
+    { RouteInputs in = ready; in.refused = true; CHECK(!BehindStreamline(in)); }
+    { RouteInputs in = ready; in.nativeProgram = false; CHECK(!BehindStreamline(in)); }   // AMD, Intel, RTX 30/20 not admitted
+    { RouteInputs in = ready; in.routeLoaded = false; CHECK(!BehindStreamline(in)); }     // no Streamline DLSS-G
+    // genswap30.1: RTX 30/20 take the route through the translated program once it admits XeFG, with the same rules.
+    {
+        RouteInputs translated = ready;
+        translated.nativeProgram = false;
+        translated.translatedRoute = true;
+        CHECK(BehindStreamline(translated));
+        { RouteInputs in = translated; in.key = Key::eOff; CHECK(!BehindStreamline(in)); }
+        { RouteInputs in = translated; in.optiScaler = true; CHECK(!BehindStreamline(in)); }   // rtx30ngx.1 hosts XeFG
+        { RouteInputs in = translated; in.refused = true; CHECK(!BehindStreamline(in)); }
+        { RouteInputs in = translated; in.routeLoaded = false; CHECK(!BehindStreamline(in)); }
+        { RouteInputs in = translated; in.hostOwnsChain = true; CHECK(!BehindStreamline(in)); }
+        { RouteInputs in = translated; in.dlssgRetired = true; CHECK(!BehindStreamline(in)); }
+        { RouteInputs in = translated; in.dlssgDriven = false; in.undrivenEvaluations = kUndrivenEvaluations; CHECK(!BehindStreamline(in)); }
+    }
+    CHECK(GeneratorRoute(true, false) && GeneratorRoute(false, true) && GeneratorRoute(true, true) && !GeneratorRoute(false, false));
+    // What admits RTX 30/20's translated program: its startup complete, and a wrapper ring that holds 6x.
+    {
+        TranslatedProgram program;
+        program.ready = true;
+        program.startupMaximum = kTranslatedRing;
+        CHECK(TranslatedRoute(program));
+        { TranslatedProgram in = program; in.ready = false; CHECK(!TranslatedRoute(in)); }        // startup not complete or failed
+        { TranslatedProgram in = program; in.startupMaximum = 0; CHECK(!TranslatedRoute(in)); }   // no capability bootstrap
+        { TranslatedProgram in = program; in.startupMaximum = 1; CHECK(!TranslatedRoute(in)); }   // legacy 2x wrapper: takeover
+        { TranslatedProgram in = program; in.startupMaximum = 3; CHECK(!TranslatedRoute(in)); }   // ring short of 6x: takeover
+        { TranslatedProgram in = program; in.certifiedRing = kTranslatedRing; CHECK(TranslatedRoute(in)); }
+        { TranslatedProgram in = program; in.certifiedRing = 2; CHECK(!TranslatedRoute(in)); }    // a Create certified less
+        CHECK(RingHolds(kTranslatedRing) && RingHolds(kTranslatedRing + 1) && !RingHolds(kTranslatedRing - 1) && !RingHolds(0));
+    }
+    { RouteInputs in = ready; in.hostOwnsChain = true; CHECK(!BehindStreamline(in)); }    // the takeover keeps its chain
+    { RouteInputs in = ready; in.dlssgRetired = true; CHECK(!BehindStreamline(in)); }
+    // A game that has not set DLSS-G options yet gets the benefit of the doubt for a while, then the takeover.
+    {
+        RouteInputs in = ready;
+        in.dlssgDriven = false;
+        CHECK(BehindStreamline(in));
+        in.undrivenEvaluations = kUndrivenEvaluations - 1;
+        CHECK(BehindStreamline(in));
+        in.undrivenEvaluations = kUndrivenEvaluations;
+        CHECK(!BehindStreamline(in));
+        in.dlssgDriven = true;   // once it has, the count no longer matters
+        CHECK(BehindStreamline(in));
+    }
+
+    // The swap. Nothing live: nothing to do.
+    CHECK(DecideSwap(SwapInputs{}) == SwapAction::eNone);
+    // Switched on while DLSS-G generates: its feature is released first.
+    SwapInputs on;
+    on.wantedXefg = true;
+    on.gameWantsOn = true;
+    on.liveTotal = 1;
+    CHECK(WrongGenerator(on) && DecideSwap(on) == SwapAction::eBegin);
+    { SwapInputs in = on; in.gameWantsOn = false; CHECK(DecideSwap(in) == SwapAction::eNone); }   // the game's next On
+    { SwapInputs in = on; in.exact = false; CHECK(DecideSwap(in) == SwapAction::eUnavailable); }
+    { SwapInputs in = on; in.attempted = true; CHECK(DecideSwap(in) == SwapAction::eNone); }      // never a release loop
+    // XeFG's last context is still being retired: DLSS-G runs on until it is gone.
+    { SwapInputs in = on; in.sinceXefgReleaseMs = 500; CHECK(DecideSwap(in) == SwapAction::eWait); }
+    { SwapInputs in = on; in.sinceXefgReleaseMs = kSwapSpacingMs; CHECK(DecideSwap(in) == SwapAction::eBegin); }
+    // While Off is submitted.
+    SwapInputs held = on;
+    held.holding = true;
+    held.attempted = true;
+    held.heldMs = 100;
+    CHECK(DecideSwap(held) == SwapAction::eHold);
+    { SwapInputs in = held; in.heldMs = kSwapTimeoutMs; CHECK(DecideSwap(in) == SwapAction::eGiveUp); }
+    { SwapInputs in = held; in.gameWantsOn = false; CHECK(DecideSwap(in) == SwapAction::ePause); }
+    { SwapInputs in = held; in.liveTotal = 0; CHECK(!WrongGenerator(in) && DecideSwap(in) == SwapAction::eDone); }
+    { SwapInputs in = held; in.liveTotal = 0; in.createsInFlight = true; CHECK(DecideSwap(in) == SwapAction::eHold); }
+    // The switch went back during the hold: DLSS-G is the wanted generator again, so the hold ends.
+    { SwapInputs in = held; in.wantedXefg = false; CHECK(DecideSwap(in) == SwapAction::eDone); }
+    // XeFG owns the feature and is wanted: nothing to do.
+    SwapInputs steady = on;
+    steady.liveXefg = 1;
+    CHECK(!WrongGenerator(steady) && DecideSwap(steady) == SwapAction::eNone);
+    // Switched off while XeFG generates: no wait for its own retire time.
+    SwapInputs off = steady;
+    off.wantedXefg = false;
+    off.sinceXefgReleaseMs = 100;
+    CHECK(WrongGenerator(off) && DecideSwap(off) == SwapAction::eBegin);
+    { SwapInputs in = off; in.holding = true; in.liveTotal = in.liveXefg = 0; CHECK(DecideSwap(in) == SwapAction::eDone); }
+    // Two features, one of each generator: wrong for either position of the switch.
+    { SwapInputs in = on; in.liveTotal = 2; in.liveXefg = 1; CHECK(WrongGenerator(in)); in.wantedXefg = false; CHECK(WrongGenerator(in)); }
+
+    // The menu's XeMFG frame count as DLSS-G's count of generated frames.
+    CHECK(GeneratedFrames(6, 5, 1) == 5 && GeneratedFrames(4, 5, 1) == 3 && GeneratedFrames(2, 5, 3) == 1);
+    CHECK(GeneratedFrames(6, 3, 1) == 3);                                    // within what the wrapper takes
+    CHECK(GeneratedFrames(6, 0, 2) == 2 && GeneratedFrames(6, 0, 0) == 1);   // a wrapper left as it was: the game's count
+    CHECK(GeneratedFrames(1, 5, 4) == 1 && GeneratedFrames(0, 5, 4) == 1);
 }
 
 // pluginprov.2: Chromium-family helpers (host_process_policy.h) get proxy forwarding only.
@@ -670,6 +799,51 @@ void HostPort()
     CHECK(!MayPublishHostPort({false, false, true, false, false}));
     CHECK(!MayPublishHostPort({false, false, true, false, true}));
 }
+
+// takeover.1: a live move of the game's swap chain: which refusals are tried again, and for how long.
+void LiveMove()
+{
+    using namespace xess_live_move;
+    // What passes by itself, and what does not.
+    for (const char* reason : {"concurrent_call", "gpu_drain", "menu_busy", "menu_drawing", "chain_shared"})
+        CHECK(Transient(reason));
+    for (const char* reason : {"fullscreen_exclusive", "chain_desc", "waitable_forwarded", "dlssg_still_on", "resize_queues",
+            "resize_failed", "resize_ignored", "xefg_create", "xell_create", "runtime_not_found", "prepare_timeout",
+            "recreate_failed", ""})
+        CHECK(!Transient(reason));
+    CHECK(!Transient(nullptr));
+
+    // At a Present: again at the next one, for the retry window from the first refusal.
+    { const Retry r = AtPresent("concurrent_call", 0, 0); CHECK(r.again && r.waitMs == 0); }
+    { const Retry r = AtPresent("gpu_drain", kRetryWindowMs - 1, 0); CHECK(r.again && r.waitMs == 0); }
+    CHECK(!AtPresent("menu_busy", kRetryWindowMs, 0).again);
+    CHECK(!AtPresent("menu_busy", kRetryWindowMs + 5000, 0).again);
+    // One that does not pass by itself is the move's result at once.
+    CHECK(!AtPresent("fullscreen_exclusive", 0, 0).again);
+    CHECK(!AtPresent("xefg_create", 0, 0).again);
+    CHECK(!AtPresent(nullptr, 0, 0).again);
+    // A held chain costs the menu's session each try: a few tries, spaced out, inside the same window.
+    { const Retry r = AtPresent("chain_shared", 0, 1); CHECK(r.again && r.waitMs == kSharedGapMs); }
+    CHECK(AtPresent("chain_shared", 600, kSharedTries - 1).again);
+    CHECK(!AtPresent("chain_shared", 600, kSharedTries).again);
+    CHECK(!AtPresent("chain_shared", kRetryWindowMs, 1).again);
+    // Every spaced try fits the window, so the count is what ends them.
+    CHECK(uint64_t(kSharedTries) * kSharedGapMs < kRetryWindowMs);
+
+    // In the game's resize: the window is nudged again, a few times in all.
+    { const Retry r = InResize("menu_drawing", 1); CHECK(r.again && r.waitMs == kResizeGapMs); }
+    CHECK(InResize("concurrent_call", kResizeAsks - 1).again);
+    CHECK(!InResize("concurrent_call", kResizeAsks).again);
+    CHECK(InResize("chain_shared", 0).again);   // the game's own resize, with no nudge before it
+    CHECK(!InResize("resize_failed", 1).again);
+    CHECK(!InResize("resize_queues", 0).again);
+    CHECK(!InResize(nullptr, 0).again);
+
+    // The waits stay short of the hold on the game's DLSS-G release (5 s) and long enough to be worth it.
+    CHECK(kPrepareHoldMs >= 1000 && kPrepareHoldMs <= 5000);
+    CHECK(kPrepareJoinMs >= 1000 && kPrepareJoinMs <= 5000);
+    CHECK(kLastChainMs >= 250 && kLastChainMs <= 2000);
+}
 }
 
 int main(int argc, char** argv)
@@ -689,6 +863,8 @@ int main(int argc, char** argv)
     if (which == "probes" || which == "all") Probes();
     if (which == "modules" || which == "all") Modules();
     if (which == "provider" || which == "all") Provider();
+    if (which == "genswap" || which == "all") GeneratorSwap();
+    if (which == "livemove" || which == "all") LiveMove();
     if (which == "chromium" || which == "all") ChromiumHelper();
     if (which == "hostport" || which == "all") HostPort();
     std::printf("%s: %d checks, %d failures\n", which.c_str(), gChecks, gFailures);

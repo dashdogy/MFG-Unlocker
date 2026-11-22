@@ -8,9 +8,9 @@ plugin, for both DLSS MFG and XeMFG. Use a current OptiScaler 10 build; the
 
 ## Which OptiScaler build
 
-MFG Unlocker V1.7.1 pairs with our OptiScaler build,
-[OptiScaler for MFG Unlocker V1.7.1](https://github.com/dashdogy/OptiScaler/releases/tag/mfgunlocker-v1.7.1) (dashdogy/OptiScaler).
-Install OptiScaler as usual from its nightly-20261111, then replace
+MFG Unlocker V1.7.2 pairs with our OptiScaler build,
+[OptiScaler for MFG Unlocker V1.7.2](https://github.com/dashdogy/OptiScaler/releases/tag/mfgunlocker-v1.7.2) (dashdogy/OptiScaler).
+Install OptiScaler as usual from its nightly-20261122, then replace
 `OptiScaler.dll` with the one from that release, keeping the name it was
 installed under. Stock OptiScaler does not have these yet, until they are
 upstreamed:
@@ -31,6 +31,11 @@ upstreamed:
   instead of OptiScaler's newer ones: games whose Streamline refuses newer
   plugins (Modern Warfare 4 lost DLSS) and games whose older Streamline
   interposer cannot hook them (Like a Dragon: Pirate Yakuza in Hawaii crashed).
+- Crash fixes for Assassin's Creed Mirage, World War Z on Vulkan, Dead Space
+  on exit, Marvel's Spider-Man: Miles Morales after a GPU hang, and Metro 2033
+  Redux and Metro: Last Light Redux. Red Dead Redemption 2 keeps DLSS Frame
+  Generation on Vulkan, and Crimson Desert on AMD turns XeFG off instead of
+  crashing while RTSS runs.
 
 DLSS MFG through OptiScaler, and XeMFG in DirectX 12 games with the
 `Upscaler` input, also work with a current upstream OptiScaler 10 build. The

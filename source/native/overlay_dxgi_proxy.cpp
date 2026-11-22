@@ -19,6 +19,9 @@
 #include "overlay_back_buffers.h"
 #include "xess/xess_mod.h"
 #include "xess/d3d12_host.h"
+#include "xess/live_move_policy.h"
+#include <chrono>
+#include <cstring>
 #endif
 #include <atomic>
 #include <climits>
@@ -336,6 +339,25 @@ constexpr uint64_t kDlssgOffWaitMs=5000;
 // frames late, and XeFG's chain bypasses Streamline, so the native chain presents this many frames after the release.
 constexpr uint32_t kStreamlineCollectPresents=12;
 constexpr uint64_t kMoveVramLogDelayMs=3000;
+// takeover.1: milliseconds between a live move's steps (xess_d3d12::MoveTimes).
+struct MoveClock {
+    std::chrono::steady_clock::time_point last=std::chrono::steady_clock::now();
+    uint32_t Lap() noexcept {
+        const auto now=std::chrono::steady_clock::now();
+        const auto passed=std::chrono::duration_cast<std::chrono::milliseconds>(now-last).count();
+        last=now;
+        return static_cast<uint32_t>(passed);
+    }
+};
+// takeover.1: what a game may have set on its chain besides the latency, colour space and HDR metadata the proxy
+// records: read from the old chain before it goes, set on the new one.
+struct CarriedState {
+    bool sourceSize=false,rotation=false,background=false,matrix=false;
+    UINT width=0,height=0;
+    DXGI_MODE_ROTATION mode=DXGI_MODE_ROTATION_UNSPECIFIED;
+    DXGI_RGBA color{};
+    DXGI_MATRIX_3X2_F transform{};
+};
 #endif
 class SwapchainProxy;
 struct PresentCall {
@@ -399,6 +421,13 @@ public:
     // xemfglive.9: native Presents since DLSS-G's release; when video memory is logged again (0: not due).
     uint32_t collectPresents = 0;
     uint64_t vramLogAt = 0;
+    // takeover.1 (xess/live_move_policy.h): a move at a Present that was refused for a moment: its first refusal, when
+    // it tries next (0: the next Present), its refusals and those for a held chain. A move in the game's resize: the
+    // window's nudges for this position of the switch, and when it is nudged again (0: not).
+    uint64_t firstRefusal = 0, retryAt = 0;
+    uint32_t moveTries = 0, sharedTries = 0;
+    uint32_t resizeAsks = 0;
+    uint64_t reaskAt = 0;
 #endif
     struct Method {
         SwapchainProxy* object;
@@ -671,6 +700,13 @@ public:
         if (!window||!chain1||!queue||!(xemfgHost||MovableNative())||!xess_d3d12::Ready()) return;
         static std::atomic<uint32_t> told{0};
         const BackBufferChoice choice=ChooseBackBuffers();
+        // genswap.1: behind the game's Streamline no swap chain moves, so a game known to ignore window size changes
+        // needs no copy per frame either. [XeMFG] ProxyBackBuffers=1 still asks for the buffers.
+        if (choice==BackBufferChoice::eKnownGame&&xess_d3d12::BehindStreamline()) {
+            if (told.fetch_add(1)==0)
+                single_module::Log(L"MFG_PROXY_UI XeMFG live switching: XeMFG runs behind the game's Streamline, where no swap chain moves; the game keeps the swap chain's own buffers");
+            return;
+        }
         wchar_t line[400]{};
         if (!BackBuffersChosen(choice)) {
             if (told.fetch_add(1)==0) {
@@ -709,26 +745,61 @@ public:
     void AskMove() noexcept {
         if (!creationQueue||!window) return;
         const uint32_t generation=xess_d3d12::SwitchGeneration();
-        if (generation==askedGeneration) return;
+        if (generation==askedGeneration) { AskAgain(generation); return; }
         askedGeneration=generation;
         presentMove=false;   // a move still waiting belongs to the switch's previous position
+        resizeAsks=0; reaskAt=0;
+        // genswap.1: behind the game's Streamline no chain moves; XeFG's provider prepares now (a refusal there ends
+        // the route, and the move below takes the chain over as before).
+        if (!xemfgHost) xess_d3d12::PrepareRoute(creationQueue.Get());
         const auto move=xess_d3d12::WantedMove(xemfgHost);
         if (move==xess_d3d12::Move::eNone) return;
         if (!xemfgHost&&(!MovableNative()||!dx12::IsPrincipal(renderer))) return;
         std::string refused;
         if (!MovePreflight(move,refused)) { xess_d3d12::MoveResult(move,refused.c_str()); return; }
+        // takeover.1: XeFG's context (and the player's pair) is made on a worker from now, while the game presents.
+        if (move==xess_d3d12::Move::eToXefg) xess_d3d12::BeginLivePrepare(creationQueue.Get());
         // xemfglive.6: the game's DLSS-G on this native chain is released exactly before the chain goes to XeFG.
         if (move==xess_d3d12::Move::eToXefg&&!xemfgHost&&xess_d3d12::DlssgEverApplied())
             xess_d3d12::WantDlssgRelease(true);
+        presentMoveStart=GetTickCount64();
         // xemfglive.3: the game holds none of the chain's buffers, so the chain moves at a coming Present.
         if (backBuffers.Active()) {
             presentMove=true;
-            presentMoveStart=GetTickCount64();
             collectPresents=0;
+            firstRefusal=retryAt=0; moveTries=sharedTries=0;
             xess_d3d12::HoldForMove(generation,true);
             return;
         }
+        resizeAsks=1;
         xess_d3d12::RequestResize(window,generation);
+    }
+    // takeover.1: a move in the game's resize was refused for a moment (MoveOnResize): the window is nudged once more.
+    void AskAgain(uint32_t generation) noexcept {
+        if (!reaskAt||GetTickCount64()<reaskAt) return;
+        if (xess_d3d12::WantedMove(xemfgHost)==xess_d3d12::Move::eNone||backBuffers.Active()) { reaskAt=0; return; }
+        if (!xess_d3d12::RequestResizeAgain(window,generation)) return;   // the last nudge still runs: the next Present asks
+        reaskAt=0;
+        ++resizeAsks;
+    }
+    // takeover.1: a move at a Present was refused. One that passes by itself is tried again at the game's next
+    // Presents (xess/live_move_policy.h); any other is the move's result.
+    void RefusedAtPresent(xess_d3d12::Move move,const char* reason) noexcept {
+        const uint64_t now=GetTickCount64();
+        if (!moveTries) firstRefusal=now;
+        ++moveTries;
+        if (!strcmp(reason,"chain_shared")) ++sharedTries;
+        const auto retry=xess_live_move::AtPresent(reason,now-firstRefusal,sharedTries);
+        if (!retry.again) { presentMove=false; xess_d3d12::MoveResult(move,reason); return; }
+        retryAt=retry.waitMs?now+retry.waitMs:0;
+        xess_d3d12::MoveRetry(move,reason,moveTries,askedGeneration);
+    }
+    // takeover.1: the same for a move in the game's resize: the window is nudged again (AskAgain) a few times.
+    void RefusedInResize(xess_d3d12::Move move,const char* reason) noexcept {
+        const auto retry=xess_live_move::InResize(reason,resizeAsks);
+        if (!retry.again) { xess_d3d12::MoveResult(move,reason); return; }
+        reaskAt=GetTickCount64()+retry.waitMs;
+        xess_d3d12::MoveRetry(move,reason,resizeAsks?resizeAsks:1,xess_d3d12::SwitchGeneration());
     }
     // xemfglive.3: the move AskMove started, after the game's Present. It waits while the game's DLSS-G is On and gives
     // up after kDlssgOffWaitMs. xemfglive.6/.9: to XeFG it also waits for DLSS-G's exact feature release (on timeout
@@ -743,7 +814,8 @@ public:
         const Move move=xess_d3d12::WantedMove(xemfgHost);
         if (move==Move::eNone||askedGeneration!=xess_d3d12::SwitchGeneration()||!backBuffers.Active()) { presentMove=false; return; }
         // xemfglive.8: either way the game's DLSS-G is Off at the provider first, so it never stays On through a move.
-        const bool expired=GetTickCount64()-presentMoveStart>kDlssgOffWaitMs;
+        const uint64_t now=GetTickCount64();
+        const bool expired=now-presentMoveStart>kDlssgOffWaitMs;
         if (xess_d3d12::DlssgOn()) {
             if (expired) {
                 presentMove=false;
@@ -763,7 +835,13 @@ public:
             xess_d3d12::HoldForMove(askedGeneration,false);
             return;
         }
-        presentMove=false;
+        // takeover.1: XeFG's context is still being made on its worker: the game presents until it is.
+        if (move==Move::eToXefg&&xess_d3d12::LivePrepareRunning()&&now-presentMoveStart<=xess_live_move::kPrepareHoldMs) {
+            xess_d3d12::HoldForMove(askedGeneration,false);
+            return;
+        }
+        // takeover.1: a move refused for a moment waits for its next try (RefusedAtPresent).
+        if (retryAt&&now<retryAt) { xess_d3d12::HoldForMove(askedGeneration,false); return; }
         std::string refused;
         DXGI_SWAP_CHAIN_DESC1 desc{};
         DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen{};
@@ -776,12 +854,20 @@ public:
             std::lock_guard lock(methodMutex);
             if (activeMethods!=1||providerRetired) refused="concurrent_call"; else moving=true;
         }
-        if (!refused.empty()) { xess_d3d12::MoveResult(move,refused.c_str()); return; }
+        if (!refused.empty()) { RefusedAtPresent(move,refused.c_str()); return; }
         MovingScope guard{this};
-        if (!backBuffers.Drain()) { xess_d3d12::MoveResult(move,"gpu_drain"); return; }
+        xess_d3d12::MoveTimes times;
+        times.waited=static_cast<uint32_t>(now-presentMoveStart);
+        MoveClock clock;
+        if (!backBuffers.Drain()) { RefusedAtPresent(move,"gpu_drain"); return; }
+        times.drained=clock.Lap();
         backBuffers.ForgetChain();
         HRESULT result=S_OK;
-        ReplaceChain(move,desc,hasFullscreen?&fullscreen:nullptr,L"at a Present",result);
+        if (const char* again=ReplaceChain(move,desc,hasFullscreen?&fullscreen:nullptr,L"at a Present","present",times,clock,result)) {
+            RefusedAtPresent(move,again);
+            return;
+        }
+        presentMove=false;
     }
     // xemfglive.3: the game resizes the proxy's back buffers: they are let go, the chain resizes (or moves) beneath them,
     // and they are made again. On failure, or other queues than the chain's, the game gets the chain's own from then on.
@@ -832,8 +918,9 @@ public:
         return true;
     }
     // A native chain from the factory this one came from (a window just released by its old chain may take a moment).
+    // takeover.1: `forMs` more of trying, every 50 ms, when nothing else is left for the game's window.
     bool CreateNativeChain(const DXGI_SWAP_CHAIN_DESC1& desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen,
-        ComPtr<IDXGISwapChain1>& created,std::string& reason) noexcept {
+        ComPtr<IDXGISwapChain1>& created,std::string& reason,uint64_t forMs=0) noexcept {
         ComPtr<IUnknown> own;
         if (!parent||parent->QueryInterface(factoryId,reinterpret_cast<void**>(own.GetAddressOf()))!=S_OK||!own) {
             reason="native_factory"; return false;
@@ -842,6 +929,11 @@ public:
         HRESULT hr=E_FAIL;
         for (int attempt=0;attempt<4;++attempt) {
             if (attempt) Sleep(16);
+            hr=factory->CreateNative(creationQueue.Get(),window,desc,fullscreen,created.ReleaseAndGetAddressOf());
+            if (SUCCEEDED(hr)&&created) return true;
+        }
+        for (const uint64_t until=GetTickCount64()+forMs;forMs&&GetTickCount64()<until;) {
+            Sleep(50);
             hr=factory->CreateNative(creationQueue.Get(),window,desc,fullscreen,created.ReleaseAndGetAddressOf());
             if (SUCCEEDED(hr)&&created) return true;
         }
@@ -861,13 +953,46 @@ public:
         if (!host&&install::PrepareInput()) renderer=dx12::CreateSession(original.Get(),creationQueue.Get());
         return true;
     }
-    void ReplayState() noexcept {
+    // takeover.1: what the chain itself can still tell before it goes. The source size counts when it is not the whole
+    // buffer, the rotation when it is one, the matrix when it is not the identity (only composition chains have one).
+    CarriedState ReadCarriedState(const DXGI_SWAP_CHAIN_DESC1& desc) noexcept {
+        CarriedState state;
+        if (auto* chain1=interfaces.As<IDXGISwapChain1>(1)) {
+            state.rotation=SUCCEEDED(chain1->GetRotation(&state.mode))&&state.mode!=DXGI_MODE_ROTATION_UNSPECIFIED
+                &&state.mode!=DXGI_MODE_ROTATION_IDENTITY;
+            state.background=SUCCEEDED(chain1->GetBackgroundColor(&state.color));
+        }
+        if (auto* chain2=interfaces.As<IDXGISwapChain2>(2)) {
+            state.sourceSize=SUCCEEDED(chain2->GetSourceSize(&state.width,&state.height))&&state.width&&state.height
+                &&(state.width!=desc.Width||state.height!=desc.Height)&&state.width<=desc.Width&&state.height<=desc.Height;
+            const DXGI_MATRIX_3X2_F& m=state.transform;
+            state.matrix=SUCCEEDED(chain2->GetMatrixTransform(&state.transform))
+                &&!(m._11==1.0f&&m._12==0.0f&&m._21==0.0f&&m._22==1.0f&&m._31==0.0f&&m._32==0.0f);
+        }
+        return state;
+    }
+    void ReplayState(const CarriedState& carried) noexcept {
         if (maxLatency) if (auto* chain2=interfaces.As<IDXGISwapChain2>(2)) chain2->SetMaximumFrameLatency(maxLatency);
         if (colorSpaceSet) if (auto* chain3=interfaces.As<IDXGISwapChain3>(3))
             if (SUCCEEDED(chain3->SetColorSpace1(colorSpace))) dx12::ObserveColorSpace(renderer,colorSpace);
         if (hdrSet&&interfaces.Acquire(4,chainIids[4],chainLast[4]))
             if (auto* chain4=interfaces.As<IDXGISwapChain4>(4))
                 chain4->SetHDRMetaData(hdrType,static_cast<UINT>(hdrData.size()),hdrData.empty()?nullptr:hdrData.data());
+        // takeover.1: the rest, as the old chain had it. The background colour is set quietly (every chain has one).
+        HRESULT source=S_FALSE,rotated=S_FALSE,transformed=S_FALSE;
+        auto* chain1=interfaces.As<IDXGISwapChain1>(1);
+        auto* chain2=interfaces.As<IDXGISwapChain2>(2);
+        if (carried.background&&chain1) chain1->SetBackgroundColor(&carried.color);
+        if (carried.rotation&&chain1) rotated=chain1->SetRotation(carried.mode);
+        if (carried.sourceSize&&chain2) source=chain2->SetSourceSize(carried.width,carried.height);
+        if (carried.matrix&&chain2) transformed=chain2->SetMatrixTransform(&carried.transform);
+        if (!carried.sourceSize&&!carried.rotation&&!carried.matrix) return;
+        wchar_t line[360]{};
+        swprintf_s(line,L"MFG_PROXY_UI XeMFG live move: carried to the new chain: source size %ux%u (0x%08lX), rotation %d (0x%08lX), matrix transform %d (0x%08lX); 0x00000001 = not set on the old chain",
+            carried.sourceSize?carried.width:0,carried.sourceSize?carried.height:0,static_cast<unsigned long>(source),
+            carried.rotation?int(carried.mode):0,static_cast<unsigned long>(rotated),carried.matrix?1:0,
+            static_cast<unsigned long>(transformed));
+        single_module::Log(line);
     }
     // Inside the game's ResizeBuffers: the real resize runs first (DXGI refuses it while anyone holds the chain's
     // buffers, so success proves the game let them go), then ReplaceChain. True when handled here (`result`).
@@ -892,9 +1017,14 @@ public:
             std::lock_guard lock(methodMutex);
             if (activeMethods!=1||providerRetired) refused="concurrent_call"; else moving=true;
         }
-        const auto fail=[&](const char* why) { xess_d3d12::MoveResult(move,why); };
+        // takeover.1: a refusal that passes by itself has the window nudged again (RefusedInResize).
+        const auto fail=[&](const char* why) { RefusedInResize(move,why); };
         if (!refused.empty()) { fail(refused.c_str()); return false; }   // the game's resize runs as always
         MovingScope guard{this};
+        xess_d3d12::MoveTimes times;
+        const uint64_t asked=GetTickCount64()-presentMoveStart;
+        if (resizeAsks&&asked<10000) times.waited=static_cast<uint32_t>(asked);   // else the game's own resize, later
+        MoveClock clock;
         if (!dx12::BeginResize(renderer)) { fail("menu_drawing"); result=DXGI_ERROR_WAS_STILL_DRAWING; return true; }
         result=(masks||queues)?interfaces.As<IDXGISwapChain3>(3)->ResizeBuffers1(count,width,height,format,flags,masks,queues)
             :original->ResizeBuffers(count,width,height,format,flags);
@@ -903,28 +1033,40 @@ public:
         if (FAILED(result)) { fail("resize_failed"); return true; }
         // The chain as resized (a zero size or count kept its own).
         if (FAILED(interfaces.As<IDXGISwapChain1>(1)->GetDesc1(&desc))) { fail("chain_desc"); return true; }
-        ReplaceChain(move,desc,hasFullscreen?&fullscreen:nullptr,L"in the game's resize",result);
+        times.drained=clock.Lap();   // here: the game's own resize of the old chain
+        if (const char* again=ReplaceChain(move,desc,hasFullscreen?&fullscreen:nullptr,L"in the game's resize","resize",times,clock,result))
+            fail(again);
         return true;
     }
     // The move itself (`moving` set, no one but the menu holding the chain's buffers): a native chain must be ours alone
     // and goes first, then the new one is created on the same window; if that fails, one of the old kind is. `result`
     // becomes S_OK, or DXGI_ERROR_DEVICE_REMOVED when no chain could be created (the proxy is an inert shell then).
-    void ReplaceChain(xess_d3d12::Move move,const DXGI_SWAP_CHAIN_DESC1& desc,
-        const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreenDesc,const wchar_t* when,HRESULT& result) noexcept {
+    // takeover.1: returns a refusal that left everything as it was and passes by itself (the menu was busy, the chain
+    // was held): the caller tries the move again. Null once the move ended, either way (its result is reported here).
+    // XeFG's context is made before anything is released, so what can fail there leaves the game its chain. `times`
+    // (with `clock`, at the last step the caller measured) is logged as d3d12_live_move_timing.
+    const char* ReplaceChain(xess_d3d12::Move move,const DXGI_SWAP_CHAIN_DESC1& desc,
+        const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreenDesc,const wchar_t* when,const char* route,
+        xess_d3d12::MoveTimes& times,MoveClock& clock,HRESULT& result) noexcept {
         using xess_d3d12::Move;
         const auto fail=[&](const char* why) { xess_d3d12::MoveResult(move,why); };
+        if (move==Move::eToXefg) {
+            std::string unprepared;
+            if (!xess_d3d12::EnsureLivePrepared(creationQueue.Get(),unprepared)) { fail(unprepared.c_str()); return nullptr; }
+            times.prepared=clock.Lap();
+        }
         xess_d3d12::LogVideoMemory(creationQueue.Get(),"before_move");   // xemfglive.9
         IDXGISwapChain* const oldHost=xemfgHost?original.Get():nullptr;   // identity only after the Reset
+        const CarriedState carried=ReadCarriedState(desc);
         if (!xemfgHost) {
-            if (!dx12::RetireSession(renderer)) { fail("menu_busy"); return; }
+            if (!dx12::RetireSession(renderer)) return "menu_busy";
             dx12::DestroySession(renderer); renderer=nullptr;
             interfaces.Clear();
             original->AddRef();
             if (original->Release()!=1) {   // another holder keeps the chain (and the window): it stays, with its menu
                 interfaces.Rebase(original.Get());
                 if (install::PrepareInput()) renderer=dx12::CreateSession(original.Get(),creationQueue.Get());
-                fail("chain_shared");
-                return;
+                return "chain_shared";
             }
         } else {
             interfaces.Clear();
@@ -934,6 +1076,7 @@ public:
         original.Reset();   // the window is free: the native chain is gone, or XeFG's goes with its context
         if (oldHost) xess_d3d12::ChainReleased(oldHost,"live_move");
         else xess_d3d12::NativeChainReleased();   // xemfglive.5: the game's DLSS-G may be held until a restart
+        times.released=clock.Lap();
         ComPtr<IDXGISwapChain1> created;
         std::string reason;
         bool host=false,retried=false;
@@ -945,6 +1088,18 @@ public:
             std::string xefg;
             host=xess_d3d12::CreateSwapChainLive(creationQueue.Get(),window,desc,fullscreenDesc,true,created.GetAddressOf(),xefg);
         }
+        if (!created) {
+            // takeover.1: neither kind could be created on the freed window. Before the game is told its device is
+            // gone, a native chain is tried for a second more (a window can take that long to be let go).
+            std::string last;
+            if (CreateNativeChain(desc,fullscreenDesc,created,last,xess_live_move::kLastChainMs)) {
+                host=false;
+                retried=move!=Move::eToNative;   // back to native after all: the move it was asked for
+                if (!retried) reason.clear();
+                single_module::Log(L"MFG_PROXY_UI XeMFG live move: a native chain could be created after a wait");
+            }
+        }
+        times.created=clock.Lap();
         if (!created||!Adopt(created.Get(),host)) {
             if (created&&host) { IDXGISwapChain1* const raw=created.Detach(); xess_d3d12::Abandon(raw); }
             created.Reset();
@@ -954,11 +1109,12 @@ public:
             }
             reason="recreate_failed"+(reason.empty()?std::string():":"+reason);
             fail(reason.c_str());
+            xess_d3d12::MoveTiming(move,route,times,false);
             single_module::Log(L"MFG_PROXY_UI XeMFG live move: no chain could be created for the game's window");
             result=DXGI_ERROR_DEVICE_REMOVED;
-            return;
+            return nullptr;
         }
-        ReplayState();
+        ReplayState(carried);
         if (ownWaitable) {
             // The game keeps waiting on the proxy's semaphore; the bridge now follows the new chain's.
             HANDLE source=(desc.Flags&DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
@@ -966,14 +1122,17 @@ public:
             HANDLE to=DuplicateOwn(ownWaitable);
             if (!bridge.Start(source,to)) { if (source) CloseHandle(source); presentRelease=to; }
         }
+        times.adopted=clock.Lap();
         result=S_OK;
         xess_d3d12::MoveResult(move,retried?(reason.empty()?"recreated":reason.c_str()):nullptr,retried);
+        xess_d3d12::MoveTiming(move,route,times,!retried);
         xess_d3d12::LogVideoMemory(creationQueue.Get(),"after_move");   // xemfglive.9
         vramLogAt=GetTickCount64()+kMoveVramLogDelayMs;
         wchar_t line[200]{};
         swprintf_s(line,L"MFG_PROXY_UI XeMFG live move %ls: the game's chain is now %ls%ls",when,host?L"XeFG's":L"native",
             retried?L" (the wanted kind failed)":L"");
         single_module::Log(line);
+        return nullptr;
     }
 #endif
 

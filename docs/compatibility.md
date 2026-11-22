@@ -129,7 +129,8 @@ exe with `Universal=0` under `[RtxHair]`. Support is experimental. Vulkan
 games with RTX Hair, such as Indiana Jones and the Great Circle, are converted
 the same way and need no extra files. `DumpSpirv=1` under `[RtxHair]` writes
 the game's hair shaders to an `RTXMFG-hair-spirv` folder beside the game, for
-bug reports.
+bug reports. The menu's **Path traced hair** section appears once the game
+asks for RTX Hair, and says why when it cannot turn on.
 
 ### The Witcher 3
 

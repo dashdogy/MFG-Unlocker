@@ -37,6 +37,21 @@ int wmain(int argc,wchar_t** argv) {
     SetLastError(0);
     Check(lookup(kernel,"MfgMissingExportForRegression")==nullptr && GetLastError()==ERROR_PROC_NOT_FOUND,
         "failed resolver preserves null result and native last error");
+    if(mode==L"engine-vulkan-resolver") {
+        HMODULE vulkan=LoadLibraryExW(L"vulkan-1.dll",nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if(!Check(vulkan!=nullptr,"system Vulkan loader available")) return 1;
+        // The executable's system resolver is also intercepted. Use a direct
+        // export lookup taken through its original system entry as the control.
+        auto systemLookup=reinterpret_cast<Lookup>(lookup(kernel,"GetProcAddress"));
+        if(!Check(systemLookup!=nullptr,"system resolver available")) return 1;
+        const auto original=systemLookup(vulkan,"vkGetInstanceProcAddr");
+        const auto resolved=lookup(vulkan,"vkGetInstanceProcAddr");
+        Check(original && resolved && resolved!=original,"renderer Vulkan resolver supplies a typed gateway");
+        const auto unchanged=systemLookup(vulkan,"vkEnumerateInstanceExtensionProperties");
+        Check(unchanged && lookup(vulkan,"vkEnumerateInstanceExtensionProperties")==unchanged,
+            "unwrapped Vulkan export stays native");
+        return gFailures?1:0;
+    }
     if(excluded || mode==L"engine-conflict") {
         const auto before=Status(candidate).factoryWrappersCreated;
         ComPtr<IDXGIFactory1> result;

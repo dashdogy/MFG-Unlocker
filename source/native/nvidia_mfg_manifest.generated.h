@@ -7,9 +7,9 @@ struct ManifestEntry { std::string_view key; Tier tier; };
 
 // Source: https://www.nvidia.com/content/dam/en-zz/Solutions/geforce/news/nvidia-rtx-games-engines-apps/dlss-rt-games-apps-overrides.json
 // NoMfgOverride: native FG listed, MFG cell blank; 2x is the mod fallback, not a published maximum.
-inline constexpr char kManifestFetchedDate[] = "2026-11-12";
-inline constexpr char kManifestSha256[] = "D938E180F4E91B08674B3BA38C8CD075835C5871F120868BF3AA403A9F5EE298";
-inline constexpr std::array<ManifestEntry, 410> kManifest = {{
+inline constexpr char kManifestFetchedDate[] = "2026-11-22";
+inline constexpr char kManifestSha256[] = "600FAF87372D8AEC47BDE823079C54C789AD0A20D8993BE81A1233BB6F2BA69A";
+inline constexpr std::array<ManifestEntry, 414> kManifest = {{
     {"007firstlight", Tier::eSixX}, // 007 First Light
     {"171", Tier::eSixX}, // 171
     {"3dmark", Tier::eFourX}, // 3D Mark
@@ -138,6 +138,7 @@ inline constexpr std::array<ManifestEntry, 410> kManifest = {{
     {"evefrontier", Tier::eSixX}, // EVE Frontier
     {"eveonline", Tier::eSixX}, // EVE Online
     {"everspace2", Tier::eSixX}, // Everspace 2
+    {"evevanguard", Tier::eFourX}, // EVE Vanguard
     {"evotinction", Tier::eSixX}, // EVOTINCTION
     {"exfil", Tier::eSixX}, // EXFIL
     {"f122", Tier::eNoMfgOverride}, // F1 22
@@ -164,6 +165,7 @@ inline constexpr std::array<ManifestEntry, 410> kManifest = {{
     {"frostpunk2", Tier::eSixX}, // Frostpunk 2
     {"funkofusion", Tier::eNoMfgOverride}, // Funko Fusion
     {"gearsofwareday", Tier::eSixX}, // Gears of War: E-Day
+    {"geforce8800gtx20yearsofalegend", Tier::eSixX}, // GeForce 8800 GTX - 20 Years of a Legend
     {"ghostoftsushimadirectorscut", Tier::eNoMfgOverride}, // Ghost of Tsushima Director’s Cut
     {"ghostrunner2", Tier::eSixX}, // Ghostrunner 2
     {"goals", Tier::eFourX}, // GOALS
@@ -171,6 +173,7 @@ inline constexpr std::array<ManifestEntry, 410> kManifest = {{
     {"goofygorillas", Tier::eSixX}, // Goofy Gorillas
     {"gothic1remake", Tier::eSixX}, // Gothic 1 Remake
     {"grandtheftautovenhanced", Tier::eFourX}, // Grand Theft Auto V Enhanced
+    {"gravhounds", Tier::eSixX}, // GRAVHOUNDS
     {"grayzonewarfare", Tier::eSixX}, // Gray Zone Warfare
     {"greedland", Tier::eSixX}, // Greedland
     {"groundbranch", Tier::eSixX}, // Ground Branch
@@ -187,6 +190,7 @@ inline constexpr std::array<ManifestEntry, 410> kManifest = {{
     {"hogwartslegacy", Tier::eSixX}, // Hogwarts Legacy
     {"horizonforbiddenwestcompleteedition", Tier::eNoMfgOverride}, // Horizon Forbidden West Complete Edition
     {"horizonzerodawnremastered", Tier::eNoMfgOverride}, // Horizon Zero Dawn Remastered
+    {"huntingsimulator3", Tier::eSixX}, // Hunting Simulator 3
     {"iamjesuschrist", Tier::eSixX}, // I Am Jesus Christ
     {"icarus", Tier::eSixX}, // ICARUS
     {"immortalsofaveum", Tier::eSixX}, // Immortals of Aveum
@@ -400,8 +404,8 @@ inline constexpr std::array<ManifestEntry, 410> kManifest = {{
     {"warhammer40000spacemarine2", Tier::eFourX}, // Warhammer 40,000: Space Marine 2
     {"warhammervermintide2", Tier::eNoMfgOverride}, // Warhammer: Vermintide 2
     {"warhaven", Tier::eNoMfgOverride}, // Warhaven
-    {"warthunder", Tier::eFourX}, // War Thunder
-    {"wherewindsmeet", Tier::eFourX}, // Where Winds Meet
+    {"warthunder", Tier::eSixX}, // War Thunder
+    {"wherewindsmeet", Tier::eSixX}, // Where Winds Meet
     {"whoisabby", Tier::eNoMfgOverride}, // Who Is Abby
     {"whydonttheylaugh", Tier::eSixX}, // Why Don't They Laugh?
     {"wildassault", Tier::eSixX}, // Wild Assault

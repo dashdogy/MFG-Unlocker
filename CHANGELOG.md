@@ -3,6 +3,74 @@
 What changed in each release. Downloads and the full release notes are on
 [GitHub Releases](https://github.com/dashdogy/MFG-Unlocker/releases).
 
+## [V1.7.2](https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.7.2) - 23 Nov 2026
+
+A bugfix release built from your V1.7.1 reports on GitHub and Discord.
+
+The crash when quitting Cyberpunk 2077 is fixed. MFG Unlocker now lets go of
+its Streamline plug-ins before the game shuts Streamline down.
+
+In DX12 games with DLSS FG, XeMFG standalone now swaps in for the game's own
+frame gen instead of taking its swap chain over, so switching it on and off in
+game is more stable and the game keeps presenting while it switches. It works
+on 50, 40, 30 and 20 series (experimental). The frame count is fixed there:
+Dynamic and the FPS limit don't apply, and the menu says so.
+`"xemfgStreamline": 2` in `RTXMFG-Universal.json` goes back to the takeover.
+See [XeMFG standalone](docs/xemfg.md#xemfg-standalone).
+
+Everywhere else switching XeMFG standalone is more reliable: XeFG's context is
+ready before the game's frame gen is released, a move that fails is tried
+again, and turning it back on is much quicker because XeFG's compute pipelines
+are kept for the session.
+
+With XeMFG through optiscaler, Dying Light 2 and Dying Light: The Beast no
+longer pile up VRAM and stutter: the XeFG context is kept when the game changes
+its depth or motion vector format instead of being made again. XeMFG also stays
+on the fast tensor core (CUDA) port all session instead of dropping off it
+after about ten frame gen restarts
+([#174](https://github.com/dashdogy/MFG-Unlocker/issues/174)).
+
+Dead Space and A Plague Tale: Requiem get their DLSS back. They ship
+Streamline 1.x, which MFG Unlocker now leaves alone.
+
+DLSS 5 now works in Microsoft Flight Simulator 2024, whose depth has mip levels
+([#171](https://github.com/dashdogy/MFG-Unlocker/issues/171)), and the menu
+shows up there again with ReShade
+([#180](https://github.com/dashdogy/MFG-Unlocker/issues/180)). In Arknights:
+Endfield on Vulkan the menu should show up again too
+([#176](https://github.com/dashdogy/MFG-Unlocker/issues/176)).
+
+Frame gen now works in Trails through Daybreak, Daybreak II and Trails beyond
+the Horizon, and A Plague Tale: Resonance should no longer crash at launch with
+optiscaler.
+
+Linux and Proton: DLSS 5 no longer fails on its shaders
+([#169](https://github.com/dashdogy/MFG-Unlocker/issues/169)) or on Wine's
+copy-on-write pages ([#170](https://github.com/dashdogy/MFG-Unlocker/issues/170)),
+and 30 series frame gen gets past the same check
+([#172](https://github.com/dashdogy/MFG-Unlocker/issues/172)).
+
+Windows Defender should stop flagging the mod. V1.7.1 unpacked its GPU
+programs at run time; V1.7.2 ships them uncompressed again, which is why the
+file is bigger. See
+[Antivirus warnings](docs/troubleshooting.md#antivirus-warnings).
+
+If frame gen won't turn on in Black Myth: Wukong or Horizon Zero Dawn
+Remastered, the log now says why, so please send it.
+
+The Path traced hair section only shows up in games that use RTX Hair, and
+tells you why if it can't turn on.
+
+NVIDIA's game list is updated to 414 titles: War Thunder and Where Winds Meet
+now go up to 6x, and EVE Vanguard (4x), GeForce 8800 GTX - 20 Years of a
+Legend, GRAVHOUNDS and Hunting Simulator 3 (6x) are new.
+
+[Our optiscaler build for V1.7.2](docs/optiscaler.md#which-optiscaler-build)
+adds crash fixes for Assassin's Creed Mirage, World War Z on Vulkan, Dead Space
+on exit, Marvel's Spider-Man: Miles Morales after a GPU hang and the Metro
+Redux games, keeps DLSS FG on in Red Dead Redemption 2 on Vulkan, and turns
+XeFG off instead of crashing in Crimson Desert on AMD while RTSS runs.
+
 ## [V1.7.1](https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.7.1) - 13 Nov 2026
 
 DLSS 5 Auto is now significantly smoother, no more stutter when it changes the

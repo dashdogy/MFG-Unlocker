@@ -311,6 +311,12 @@ msgstr "正在将 DLSS 超分辨率切换到新预设…"
 msgid "Same as Structure"
 msgstr "与结构相同"
 
+msgid "Mask"
+msgstr "遮罩"
+
+msgid "Detects skin and faces so that Faces & skin applies to them."
+msgstr "检测皮肤和面部，使“面部与皮肤”作用于它们。"
+
 msgid "Not set"
 msgstr "未设置"
 
@@ -434,8 +440,17 @@ msgstr ""
 "每隔一帧运行一次网络。中间帧会将其最近的效果应用到自身画面上，因此移动和动态表面也能保留效果，且不会拖影。\n"
 "约为一半的 GPU 开销。在表面仅发生移动的地方，细节会沿游戏的运动矢量延续。"
 
+msgid "Save"
+msgstr "保存"
+
+msgid "Share"
+msgstr "分享"
+
 msgid "%s (changed)"
 msgstr "%s（已更改）"
+
+msgid "Custom"
+msgstr "自定义"
 
 msgid "Preset %u"
 msgstr "预设 %u"
@@ -490,20 +505,23 @@ msgstr ""
 "导出会将当前设置以 DLSS5- 开头的代码复制到剪贴板，便于与其他玩家分享。\n"
 "导入会应用粘贴的代码并将其保存为预设。输入框为空时，导入会读取剪贴板。"
 
+msgid "Subtle"
+msgstr "柔和"
+
+msgid "Strong"
+msgstr "强烈"
+
+msgid "Presets"
+msgstr "预设"
+
 msgid "Delete"
 msgstr "删除"
 
 msgid "Save as"
 msgstr "另存为"
 
-msgid "Save"
-msgstr "保存"
-
 msgid "Name"
 msgstr "名称"
-
-msgid "Share"
-msgstr "分享"
 
 msgid "Import"
 msgstr "导入"
@@ -513,6 +531,42 @@ msgstr "导出"
 
 msgid "Paste a code"
 msgstr "粘贴代码"
+
+msgid "Look & passes"
+msgstr "外观与多次处理"
+
+msgid "Blend"
+msgstr "混合"
+
+msgid "Scaling"
+msgstr "缩放"
+
+msgid "HDR"
+msgstr "HDR"
+
+msgid "Provider"
+msgstr "提供程序"
+
+msgid "%.0f%% of each rendered frame"
+msgstr "占每个渲染帧的 %.0f%%"
+
+msgid "%.1f ms"
+msgstr "%.1f 毫秒"
+
+msgid "Half rate"
+msgstr "半速率"
+
+msgid "DirectX 11 to DirectX 12"
+msgstr "DirectX 11 到 DirectX 12"
+
+msgid "%ux%u, network %ux%u, passes: %u"
+msgstr "%ux%u，网络 %ux%u，处理次数：%u"
+
+msgid "Direct provider"
+msgstr "直接提供程序"
+
+msgid "Native NGX"
+msgstr "原生 NGX"
 
 msgid "Neural Rendering"
 msgstr "神经渲染"
@@ -532,14 +586,17 @@ msgstr "自动：%s"
 msgid "Hook Method"
 msgstr "挂接方式"
 
-msgid "Subtle"
-msgstr "柔和"
+msgid "DLSS 5 settings could not be saved."
+msgstr "无法保存 DLSS 5 设置。"
 
-msgid "Strong"
-msgstr "强烈"
+msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
+msgstr "“放大前”和“呈现”暂不支持 Vulkan。请选择“自动”或“放大后”。"
 
-msgid "Custom"
-msgstr "自定义"
+msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
+msgstr "“呈现”暂不支持 DirectX 11。请选择“自动”、“放大前”或“放大后”。"
+
+msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
+msgstr "此游戏的交换链无法使用“呈现”挂接方式，原因见日志。放大前或放大后仍可使用。"
 
 msgid "Look"
 msgstr "外观"
@@ -574,20 +631,33 @@ msgstr "自动"
 msgid "up to %.0f%%"
 msgstr "最高 %.0f%%"
 
-msgid "Half rate"
-msgstr "半速率"
+msgid "Motion tolerance"
+msgstr "运动容差"
 
-msgid "DLSS 5 settings could not be saved."
-msgstr "无法保存 DLSS 5 设置。"
+msgid ""
+"How much a surface may change between frames and still keep the carried fine detail.\n"
+"Strict carries it on fewer moving surfaces, which keep the rebuilt look; Loose carries more detail."
+msgstr ""
+"表面在帧间可以变化多少仍保留沿用的细节。\n"
+"严格会在更少的运动表面上沿用细节，这些表面保留重建的效果；宽松会沿用更多细节。"
 
-msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
-msgstr "“放大前”和“呈现”暂不支持 Vulkan。请选择“自动”或“放大后”。"
+msgid "Strict"
+msgstr "严格"
 
-msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
-msgstr "“呈现”暂不支持 DirectX 11。请选择“自动”、“放大前”或“放大后”。"
+msgid "Normal"
+msgstr "正常"
 
-msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
-msgstr "此游戏的交换链无法使用“呈现”挂接方式，原因见日志。放大前或放大后仍可使用。"
+msgid "Loose"
+msgstr "宽松"
+
+msgid "Default"
+msgstr "默认"
+
+msgid "Fast"
+msgstr "快速"
+
+msgid "Network"
+msgstr "网络"
 
 msgid "Compare"
 msgstr "对比"
@@ -595,15 +665,21 @@ msgstr "对比"
 msgid "Split view"
 msgstr "分屏对比"
 
+msgid "Swap sides"
+msgstr "交换两侧"
+
+msgid "Split position"
+msgstr "分隔位置"
+
+msgid "Split view shows DLSS 5 on the left and the original on the right."
+msgstr "分屏对比时左侧显示 DLSS 5，右侧显示原始画面。"
+
 msgid ""
 "Shows the original image left of the line and DLSS 5 to its right.\n"
 "Before upscaling draws no line, because the upscaler would treat it as part of the image."
 msgstr ""
 "线左侧显示原始画面，右侧显示 DLSS 5。\n"
 "放大前模式不绘制分隔线，因为放大器会把它当作画面的一部分。"
-
-msgid "Split position"
-msgstr "分隔位置"
 
 msgid "Hold to show original"
 msgstr "按住显示原始画面"
@@ -615,20 +691,30 @@ msgstr ""
 "按住此键时，游戏显示原始画面，便于在运动中对比 DLSS 5。\n"
 "DLSS 5 仍在运行，因此 GPU 开销不变，按键也仍会传给游戏。"
 
-msgid "Presets"
-msgstr "预设"
+msgid "Network input"
+msgstr "网络输入"
+
+msgid "Network output"
+msgstr "网络输出"
+
+msgid "Change (x8)"
+msgstr "改动 (x8)"
+
+msgid "Debug view"
+msgstr "调试视图"
+
+msgid ""
+"Shows what the network is given and returns, or where DLSS 5 changes the image (grey: unchanged; lighter or darker: changed).\n"
+"With Split view, on the DLSS 5 side only."
+msgstr ""
+"显示网络接收和返回的内容，或 DLSS 5 改动画面的位置（灰色：未改动；更亮或更暗：已改动）。\n"
+"分屏对比时，仅在 DLSS 5 一侧显示。"
 
 msgid "Status"
 msgstr "状态"
 
 msgid "State"
 msgstr "状态"
-
-msgid "%.1f ms"
-msgstr "%.1f 毫秒"
-
-msgid "%.0f%% of each rendered frame"
-msgstr "占每个渲染帧的 %.0f%%"
 
 msgid "GPU cost"
 msgstr "GPU 开销"
@@ -645,20 +731,8 @@ msgstr "测量中"
 msgid "Auto scale"
 msgstr "自动比例"
 
-msgid "%ux%u, network %ux%u, passes: %u"
-msgstr "%ux%u，网络 %ux%u，处理次数：%u"
-
 msgid "Route"
 msgstr "路径"
-
-msgid "Direct provider"
-msgstr "直接提供程序"
-
-msgid "Native NGX"
-msgstr "原生 NGX"
-
-msgid "DirectX 11 to DirectX 12"
-msgstr "DirectX 11 到 DirectX 12"
 
 msgid "Waiting for DLSS 5 GPU work to complete before applying settings."
 msgstr "正在等待 DLSS 5 GPU 工作完成，然后应用设置。"
@@ -698,15 +772,6 @@ msgstr ""
 "局部色调与对比度增强。\n"
 "高于 1 时超出提供程序的常规范围。"
 
-msgid "Character Mask"
-msgstr "角色遮罩"
-
-msgid "Detects skin and faces so that Faces & skin applies to them."
-msgstr "检测皮肤和面部，使“面部与皮肤”作用于它们。"
-
-msgid "Look & passes"
-msgstr "外观与多次处理"
-
 msgid "Pass Count"
 msgstr "处理次数"
 
@@ -729,9 +794,6 @@ msgstr ""
 msgid "Later-pass settings apply when Pass Count is 2 or more."
 msgstr "处理次数为 2 或以上时，后续处理设置才会生效。"
 
-msgid "Blend"
-msgstr "混合"
-
 msgid "Blend strength"
 msgstr "混合强度"
 
@@ -747,11 +809,11 @@ msgstr "设为 0 保留游戏的色彩，只采用 DLSS 5 的光照和细节。�
 msgid "Highlight guard"
 msgstr "高光保护"
 
-msgid "Limits how far DLSS 5 may brighten a pixel, as a multiple of its original brightness, so lights do not turn into bright speckles."
-msgstr "限制 DLSS 5 能将像素提亮多少（以原始亮度的倍数计），避免灯光变成亮斑。"
-
 msgid "Brightening limit"
 msgstr "提亮上限"
+
+msgid "Limits how far DLSS 5 may brighten a pixel, as a multiple of its original brightness, so lights do not turn into bright speckles."
+msgstr "限制 DLSS 5 能将像素提亮多少（以原始亮度的倍数计），避免灯光变成亮斑。"
 
 msgid "Dark halo reduction"
 msgstr "暗光晕抑制"
@@ -770,9 +832,6 @@ msgstr "光晕半径"
 
 msgid "How far from each pixel to look for the edge, in network pixels."
 msgstr "在每个像素周围多远处寻找边缘，单位为网络像素。"
-
-msgid "Scaling"
-msgstr "缩放"
 
 msgid "Signed PQ"
 msgstr "有符号 PQ"
@@ -831,9 +890,6 @@ msgid ""
 msgstr ""
 "RGB 残差将网络的改动加到全分辨率图像上。\n"
 "处理后图像直接使用放大后的网络输出。"
-
-msgid "HDR"
-msgstr "HDR"
 
 msgid "Linear BT.709"
 msgstr "线性 BT.709"
@@ -896,30 +952,18 @@ msgstr "开启：在神经渲染前应用游戏的 DLSS 曝光纹理；反向：
 msgid "Adaptive exposure"
 msgstr "自适应曝光"
 
-msgid ""
-"Keeps the scene the network sees at a steady brightness in HDR games, so the same settings suit games with different exposure.\n"
-"The game's own brightness is unchanged. SDR color is left as it is."
-msgstr ""
-"在 HDR 游戏中让网络看到的画面保持稳定亮度，使同一套设置适用于曝光不同的游戏。\n"
-"游戏本身的亮度不会改变。SDR 颜色保持原样。"
-
 msgid "Adaptive target"
 msgstr "自适应目标"
 
 msgid "The average brightness Adaptive exposure gives the scene the network sees (0.18 is middle grey). Higher shows it a brighter scene."
 msgstr "自适应曝光为网络所见场景设定的平均亮度（中灰为 0.18）。数值越高，网络看到的场景越亮。"
 
-msgid "Provider"
-msgstr "提供程序"
-
-msgid "Default"
-msgstr "默认"
-
-msgid "Fast"
-msgstr "快速"
-
-msgid "Network"
-msgstr "网络"
+msgid ""
+"Keeps the scene the network sees at a steady brightness in HDR games, so the same settings suit games with different exposure.\n"
+"The game's own brightness is unchanged. SDR color is left as it is."
+msgstr ""
+"在 HDR 游戏中让网络看到的画面保持稳定亮度，使同一套设置适用于曝光不同的游戏。\n"
+"游戏本身的亮度不会改变。SDR 颜色保持原样。"
 
 msgid "UI Correction"
 msgstr "UI 校正"
@@ -930,25 +974,6 @@ msgid ""
 msgstr ""
 "自动：在呈现阶段（其图像包含游戏 UI）启用提供程序的 UI 校正，对 DLSS 输入和输出则保持关闭。\n"
 "关闭：从不使用。开启：始终使用。"
-
-msgid "Strict"
-msgstr "严格"
-
-msgid "Normal"
-msgstr "正常"
-
-msgid "Loose"
-msgstr "宽松"
-
-msgid "Motion tolerance"
-msgstr "运动容差"
-
-msgid ""
-"How much a surface may change between frames and still keep the carried fine detail.\n"
-"Strict carries it on fewer moving surfaces, which keep the rebuilt look; Loose carries more detail."
-msgstr ""
-"表面在帧间可以变化多少仍保留沿用的细节。\n"
-"严格会在更少的运动表面上沿用细节，这些表面保留重建的效果；宽松会沿用更多细节。"
 
 msgid "Never"
 msgstr "从不"
@@ -974,34 +999,6 @@ msgstr "阻止无 HUD 图像"
 
 msgid "Present only: keeps the game's HUD-less image from DLSS frame generation, so generated frames match processed ones."
 msgstr "仅用于呈现：不让 DLSS 帧生成使用游戏的无 HUD 图像，使生成帧与处理后的帧一致。"
-
-msgid "Mask"
-msgstr "遮罩"
-
-msgid "Network input"
-msgstr "网络输入"
-
-msgid "Network output"
-msgstr "网络输出"
-
-msgid "Change (x8)"
-msgstr "改动 (x8)"
-
-msgid "Debug view"
-msgstr "调试视图"
-
-msgid ""
-"Shows what the network is given and returns, or where DLSS 5 changes the image (grey: unchanged; lighter or darker: changed).\n"
-"With Split view, on the DLSS 5 side only."
-msgstr ""
-"显示网络接收和返回的内容，或 DLSS 5 改动画面的位置（灰色：未改动；更亮或更暗：已改动）。\n"
-"分屏对比时，仅在 DLSS 5 一侧显示。"
-
-msgid "Swap sides"
-msgstr "交换两侧"
-
-msgid "Split view shows DLSS 5 on the left and the original on the right."
-msgstr "分屏对比时左侧显示 DLSS 5，右侧显示原始画面。"
 
 msgid "Reset to defaults"
 msgstr "恢复默认值"
@@ -1385,6 +1382,9 @@ msgstr "请将 Intel XeSS SDK %s 中的 libxess_fg.dll 和 libxell.dll 放入 %s
 msgid "Restart the game to start XeMFG."
 msgstr "请重启游戏以启动 XeMFG。"
 
+msgid "XeMFG starts once DLSS frame generation is turned off and on again in the game's settings, or after a restart."
+msgstr "在游戏设置中关闭并重新开启 DLSS 帧生成后，或重启游戏后，XeMFG 即会启动。"
+
 msgid "This game ignores window size changes, so XeMFG starts after a restart. From then on, XeMFG switches on and off in this game without a restart."
 msgstr "此游戏会忽略窗口大小的变化，因此 XeMFG 将在重启后启动。此后在此游戏中开关 XeMFG 无需重启。"
 
@@ -1400,11 +1400,17 @@ msgstr "XeMFG 无法接管正在运行的游戏的交换链（%s）。请重启�
 msgid "The XeMFG setting could not be saved."
 msgstr "无法保存 XeMFG 设置。"
 
+msgid "XeMFG is off, but it keeps generating until DLSS frame generation is turned off and on again in the game's settings, or a restart."
+msgstr "XeMFG 已关闭，但在游戏设置中关闭并重新开启 DLSS 帧生成或重启游戏之前，它仍会继续生成帧。"
+
 msgid "XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or window-mode change, or a restart."
 msgstr "XeMFG 已关闭，但在游戏下次更改分辨率或窗口模式或重启之前，XeFG 仍保留游戏的交换链。"
 
 msgid "XeMFG is off. The game's DLSS frame generation comes back after a restart: it cannot start again in this session once XeMFG has taken over its swap chain."
 msgstr "XeMFG 已关闭。游戏的 DLSS 帧生成将在重启后恢复：XeMFG 接管其交换链后，本次会话中无法再次启动。"
+
+msgid "Switching the game's frame generation to XeMFG..."
+msgstr "正在将游戏的帧生成切换到 XeMFG..."
 
 msgid "Moving the game's swap chain to XeMFG..."
 msgstr "正在将游戏的交换链移交给 XeMFG..."
@@ -1414,6 +1420,9 @@ msgstr "XeMFG 无法启动：%s"
 
 msgid "Turn on DLSS frame generation in the game's settings. XeMFG replaces it."
 msgstr "请在游戏设置中开启 DLSS 帧生成，XeMFG 会取代它。"
+
+msgid "Dynamic MFG does not apply while XeMFG runs as the game's DLSS frame generation. The frame count above is used."
+msgstr "XeMFG 作为游戏的 DLSS 帧生成运行时，动态 MFG 不适用，将使用上方的帧数。"
 
 msgid "Turn off the game's FSR frame generation. XeMFG does not run on top of it."
 msgstr "请关闭游戏的 FSR 帧生成，XeMFG 不会叠加在其上运行。"
@@ -1436,11 +1445,11 @@ msgstr "正在启动"
 msgid "Waiting for a resize"
 msgstr "等待调整大小"
 
-msgid "Restart needed"
-msgstr "需要重启"
-
 msgid "Waiting"
 msgstr "等待中"
+
+msgid "Restart needed"
+msgstr "需要重启"
 
 msgid "Inputs"
 msgstr "输入"
@@ -1490,12 +1499,6 @@ msgstr "MFG Unlocker 多帧移植模型"
 
 msgid "Intel 2x model"
 msgstr "Intel 2x 模型"
-
-msgid "No generated frames"
-msgstr "没有生成帧"
-
-msgid "the provider is failing; see the RTXMFG log"
-msgstr "提供程序运行失败，详见 RTXMFG 日志"
 
 msgid "Frame generation"
 msgstr "帧生成"
@@ -1572,6 +1575,9 @@ msgstr "帧生成请在 OptiScaler 菜单中设置。此菜单提供 DLSS 预设
 msgid "DLSS 5"
 msgstr "DLSS 5"
 
+msgid "Character Mask"
+msgstr "角色遮罩"
+
 msgid "Present does not run from OptiScaler's menu. Choose Auto, Before upscaling or After upscaling."
 msgstr "“呈现”无法在 OptiScaler 菜单中使用。请选择“自动”、“放大前”或“放大后”。"
 
@@ -1589,6 +1595,12 @@ msgstr "XMX 移植"
 
 msgid "on the shader cores"
 msgstr "在着色器核心上运行"
+
+msgid "No generated frames"
+msgstr "没有生成帧"
+
+msgid "the provider is failing; see the RTXMFG log"
+msgstr "提供程序运行失败，详见 RTXMFG 日志"
 
 msgid "XMX port: MFG Unlocker's port of Intel's multi-frame XMX model, run as DXIL shaders on any GPU. CUDA port: the same model with its int8 layers run as CUDA kernels on RTX tensor cores."
 msgstr "XMX 移植：MFG Unlocker 移植的 Intel 多帧 XMX 模型，以 DXIL 着色器在任意 GPU 上运行。CUDA 移植：同一模型，其 int8 层以 CUDA 内核在 RTX Tensor Core 上运行。"

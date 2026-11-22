@@ -233,6 +233,11 @@ inline std::pair<float, float> StreamlineMotionScale(float mvecScaleX, float mve
 inline std::pair<float, float> NgxDlssgMotionScale(float mvecScaleX, float mvecScaleY, uint32_t motionWidth, uint32_t motionHeight,
                                                    uint32_t targetWidth, uint32_t targetHeight) noexcept
 {
+    // OptiFG can supply two zero scales when the upscaler omitted both parameters.
+    if (mvecScaleX == 0.0f && mvecScaleY == 0.0f) {
+        mvecScaleX = 1.0f;
+        mvecScaleY = 1.0f;
+    }
     return {motionWidth ? mvecScaleX * float(targetWidth) / float(motionWidth) : mvecScaleX,
             motionHeight ? mvecScaleY * float(targetHeight) / float(motionHeight) : mvecScaleY};
 }

@@ -1,5 +1,6 @@
 #include "cuda_route.h"
 #include "cuda_layers.h"
+#include "pipeline_blob_cache.h"
 #include "../../adapter_discovery.h"
 #include "../../sha256_util.h"
 #include "../../overlay_native.h"
@@ -189,6 +190,7 @@ UINT gIncrement{};
 std::atomic<uint64_t> gLaunches{}, gFallbacks{};
 std::atomic<uint32_t> gLayerCount{};
 std::array<std::atomic<bool>, std::size(kLayers)> gLayerSeen{};
+PipelineBlobCache gPipelineBlobs;
 
 void Log(const char* stage, const std::string& fields) noexcept
 {
@@ -202,6 +204,14 @@ std::array<std::atomic<uint8_t>, kSlots> gValues{};
 struct HeldLayer { ID3D12PipelineState* state; uint64_t token; uint8_t layer; };
 std::vector<HeldLayer> gHeld;
 thread_local uint64_t tPipelineToken{};
+// cudaheld.1 (issue 174): the token of the provider context opened last (PipelineScope), until that context's
+// pipelines are forgotten. XeFG builds a context's pipeline states on its own threads, where no scope is open, so
+// they were held under token 0 and never forgotten: 28 per context, and with the table full at 256 the tenth
+// context got 4 layers and the eleventh none. The provider creates its contexts one at a time under its device
+// lock, so an unscoped pipeline created while this is set belongs to this context. The XeFG output route opens no
+// scope; its pipelines keep token 0, as before.
+std::atomic<uint64_t> gLatestPipelineToken{};
+std::atomic<bool> gLayersFullLogged{};
 std::atomic<uint64_t> gNextPipelineToken{1};
 std::atomic<uint64_t> gPipelineGeneration{};
 std::atomic<uint32_t> gLayerMask{(1u << std::size(kLayers)) - 1};
@@ -245,13 +255,41 @@ bool Insert(void* key, uint8_t value) noexcept // under gMutex
     }
     return false;
 }
+// Drops the held pipeline states `drop` picks and rebuilds the lookup table from the rest; returns how many went.
+// Under gMutex. The generation is odd while the table is rebuilt, so a concurrent Lookup answers "not a layer".
+template <typename Drop> size_t DropHeld(Drop&& drop) noexcept
+{
+    std::array<ID3D12PipelineState*, kSlots/2> removed{};
+    size_t count{};
+    gPipelineGeneration.fetch_add(1, std::memory_order_acq_rel);
+    gAnyLayer.store(false, std::memory_order_release);
+    for (auto& key : gKeys) key.store(nullptr, std::memory_order_release);
+    auto out = gHeld.begin();
+    for (auto it = gHeld.begin(); it != gHeld.end(); ++it)
+        if (count < removed.size() && drop(*it)) removed[count++] = it->state;
+        else *out++ = *it;
+    gHeld.erase(out, gHeld.end());
+    for (const auto& held : gHeld) Insert(held.state, held.layer);
+    gLayerCount.store(uint32_t(gHeld.size()), std::memory_order_relaxed);
+    gAnyLayer.store(!gHeld.empty(), std::memory_order_release);
+    gPipelineGeneration.fetch_add(1, std::memory_order_release);
+    for (size_t i = 0; i < count; ++i) removed[i]->Release();
+    return count;
+}
+// A held pipeline state whose only reference is ours: its creator released it, so nothing can bind it again.
+bool OnlyWeHold(ID3D12PipelineState* state) noexcept
+{
+    state->AddRef();
+    return state->Release() == 1;
+}
 
 
 // ---- vtable patches ----------------------------------------------------------------------------------
 // Slots of the D3D12 ABI (d3d12.h). Device: CreateComputePipelineState, CreateCommandList,
 // ID3D12Device2::CreatePipelineState and ID3D12Device4::CreateCommandList1. Command list: the methods that carry
 // compute recording state.
-constexpr int kCreateComputePipelineState = 11, kCreateCommandList = 12, kCreatePipelineState = 47, kCreateCommandList1 = 51;
+constexpr int kCreateComputePipelineState = 11, kCreateCommandList = 12, kCreateRootSignature = 16,
+    kCreatePipelineState = 47, kCreateCommandList1 = 51;
 constexpr int kReset = 10, kDispatch = 14, kSetPipelineState = 25, kSetDescriptorHeaps = 28,
     kSetComputeRootSignature = 29, kSetComputeRootDescriptorTable = 31, kSetComputeRoot32BitConstant = 33,
     kSetComputeRoot32BitConstants = 35;
@@ -311,7 +349,8 @@ bool ApplyDevice(void** vtable, std::span<const Hook> hooks) noexcept
     }
     gDevicePatchCount.store(n + 1, std::memory_order_release);
     for (const auto& [slot, hook] : hooks)
-        if (!HookSlot(&vtable[slot], patch.original[slot], hook, true)) return false;
+        // Without root signature provenance the cache skips explicit roots.
+        if (!HookSlot(&vtable[slot], patch.original[slot], hook, true) && slot != kCreateRootSignature) return false;
     return true;
 }
 
@@ -974,8 +1013,24 @@ void Recognize(ID3D12Device* device, const D3D12_COMPUTE_PIPELINE_STATE_DESC& de
             std::lock_guard lock(gMutex);
             if (!gActive.load(std::memory_order_relaxed)) return;
             if (Lookup(state.Get())) return;
-            if (gHeld.size() >= kSlots/2 || !Insert(state.Get(), uint8_t(i + 1))) return;
-            gHeld.push_back({state.Detach(), tPipelineToken, uint8_t(i + 1)});
+            if (gHeld.size() >= kSlots/2)
+            {
+                // cudaheld.1 (issue 174): a full table used to refuse every later pipeline without a word, and the
+                // route then ran those layers as plain dispatches. Reclaim the states their creators released.
+                const size_t reclaimed = DropHeld([](const HeldLayer& held) { return OnlyWeHold(held.state); });
+                if (gHeld.size() >= kSlots/2)
+                {
+                    if (!gLayersFullLogged.exchange(true))
+                        Log("cuda_layers_full", "\"held\":" + std::to_string(gHeld.size()) + ",\"reclaimed\":" +
+                            std::to_string(reclaimed));
+                    return;
+                }
+                Log("cuda_layers_reclaimed", "\"reclaimed\":" + std::to_string(reclaimed) + ",\"held\":" +
+                    std::to_string(gHeld.size()));
+            }
+            if (!Insert(state.Get(), uint8_t(i + 1))) return;
+            const uint64_t token = tPipelineToken ? tPipelineToken : gLatestPipelineToken.load(std::memory_order_acquire);
+            gHeld.push_back({state.Detach(), token, uint8_t(i + 1)});
             gAnyLayer.store(true, std::memory_order_release);
             gLayerCount.store(uint32_t(gHeld.size()), std::memory_order_relaxed);
             if (!gLayerSeen[i].exchange(true))
@@ -987,10 +1042,37 @@ void Recognize(ID3D12Device* device, const D3D12_COMPUTE_PIPELINE_STATE_DESC& de
     catch (...) {}
 }
 
+// Only cache the provider's calls on the route's held device. A downstream hook could change
+// the descriptor before the runtime sees it, so its call takes the original path.
+bool CacheCall(ID3D12Device* device, const void* original, const void* caller) noexcept
+{
+    const auto address = reinterpret_cast<uintptr_t>(original);
+    if (!gActive.load(std::memory_order_acquire) || address < gRuntimeBegin || address >= gRuntimeEnd || !ProviderCall(caller))
+        return false;
+    ComPtr<IUnknown> identity;
+    return SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&identity))) && identity.Get() == gDeviceIdentity;
+}
+
+using CreateRootFn = HRESULT (STDMETHODCALLTYPE*)(ID3D12Device*, UINT, const void*, SIZE_T, REFIID, void**);
+HRESULT STDMETHODCALLTYPE HookCreateRootSignature(ID3D12Device* self, UINT nodeMask, const void* bytes, SIZE_T size, REFIID iid, void** out)
+{
+    const void* caller = _ReturnAddress();
+    const auto original = DeviceOriginal<CreateRootFn>(self, kCreateRootSignature);
+    const HRESULT result = original(self, nodeMask, bytes, size, iid, out);
+    if (SUCCEEDED(result) && out && *out && iid == __uuidof(ID3D12RootSignature)
+        && CacheCall(self, reinterpret_cast<const void*>(original), caller))
+        RecordPipelineRootSignature(static_cast<ID3D12RootSignature*>(*out), nodeMask, bytes, size);
+    return result;
+}
+
 HRESULT STDMETHODCALLTYPE HookCreateComputePipelineState(ID3D12Device* self, const D3D12_COMPUTE_PIPELINE_STATE_DESC* desc, REFIID iid, void** out)
 {
-    void* caller = _ReturnAddress();
-    const HRESULT result = DeviceOriginal<CreateComputeFn>(self, kCreateComputePipelineState)(self, desc, iid, out);
+    const void* caller = _ReturnAddress();
+    const auto original = DeviceOriginal<CreateComputeFn>(self, kCreateComputePipelineState);
+    const HRESULT result = CacheCall(self, reinterpret_cast<const void*>(original), caller)
+        ? gPipelineBlobs.CreateCompute(desc, iid, out, [&](const D3D12_COMPUTE_PIPELINE_STATE_DESC* input, void** output)
+            { return original(self, input, iid, output); })
+        : original(self, desc, iid, out);
     if (SUCCEEDED(result) && desc && out && *out && gActive.load(std::memory_order_acquire))
         Recognize(self, *desc, iid, *out, caller);
     return result;
@@ -1111,10 +1193,11 @@ bool PatchDevice(ID3D12Device* device, std::string& reason)
     // ID3D12Device2 adds CreatePipelineState (streams), ID3D12Device4 CreateCommandList1.
     const Hook hooks[] = {{kCreateComputePipelineState, reinterpret_cast<void*>(&HookCreateComputePipelineState)},
         {kCreateCommandList, reinterpret_cast<void*>(&HookCreateCommandList)},
+        {kCreateRootSignature, reinterpret_cast<void*>(&HookCreateRootSignature)},
         {kCreatePipelineState, reinterpret_cast<void*>(&HookCreatePipelineState)},
         {kCreateCommandList1, reinterpret_cast<void*>(&HookCreateCommandList1)}};
     for (const auto& [vtable, level] : vtables)
-        if (!ApplyDevice(vtable, std::span<const Hook>(hooks, level >= 4 ? 4 : level >= 2 ? 3 : 2)))
+        if (!ApplyDevice(vtable, std::span<const Hook>(hooks, level >= 4 ? 5 : level >= 2 ? 4 : 3)))
         { reason = "device_patch"; return false; }
     return true;
 }
@@ -1287,6 +1370,7 @@ void ForgetLayers() noexcept
     gLayerCount.store(0, std::memory_order_relaxed);
     // The provider's lists' own tables get their originals back and the lists are released.
     for (auto& table : gTables) Retire(table);
+    gPipelineBlobs.ContextRetired();
 }
 
 Status Snapshot() noexcept
@@ -1356,27 +1440,33 @@ bool AdapterCapability(const LUID& luid, int& major, int& minor, std::string& na
     try { return Capability(luid, major, minor, name); } catch (...) { return false; }
 }
 uint64_t NewPipelineToken() noexcept { return gNextPipelineToken.fetch_add(1, std::memory_order_relaxed); }
-PipelineScope::PipelineScope(uint64_t token) noexcept : previous_(tPipelineToken) { tPipelineToken = token; }
+PipelineScope::PipelineScope(uint64_t token) noexcept : previous_(tPipelineToken)
+{
+    tPipelineToken = token;
+    // cudaheld.1: also for the threads XeFG creates this context's pipelines on. It stays set after the scope, since
+    // those threads may still be compiling, and is cleared when this context's pipelines are forgotten.
+    if (token) gLatestPipelineToken.store(token, std::memory_order_release);
+}
 PipelineScope::~PipelineScope() { tPipelineToken = previous_; }
 void ForgetPipelines(uint64_t token) noexcept
 {
     if (!token) return;
     std::lock_guard lock(gMutex);
-    gPipelineGeneration.fetch_add(1, std::memory_order_acq_rel);
-    gAnyLayer.store(false, std::memory_order_release);
-    for (auto& key : gKeys) key.store(nullptr, std::memory_order_release);
-    std::array<ID3D12PipelineState*, kSlots/2> removed{};
-    size_t count{};
-    auto out = gHeld.begin();
-    for (auto it = gHeld.begin(); it != gHeld.end(); ++it)
-        if (it->token == token) removed[count++] = it->state;
-        else *out++ = *it;
-    gHeld.erase(out, gHeld.end());
-    for (const auto& held : gHeld) Insert(held.state, held.layer);
-    gLayerCount.store(uint32_t(gHeld.size()), std::memory_order_relaxed);
-    gAnyLayer.store(!gHeld.empty(), std::memory_order_release);
-    gPipelineGeneration.fetch_add(1, std::memory_order_release);
-    for (size_t i = 0; i < count; ++i) removed[i]->Release();
+    // A later unscoped pipeline no longer belongs to this context (a newer context's token is left alone).
+    uint64_t latest = token;
+    gLatestPipelineToken.compare_exchange_strong(latest, 0, std::memory_order_acq_rel);
+    const size_t before = gHeld.size();
+    const size_t removed = DropHeld([token](const HeldLayer& held) { return held.token == token; });
+    // One line per context: "removed":0 with a nonzero "held" is issue 174's signature.
+    if (before)
+    {
+        try
+        {
+            Log("cuda_layers_forgotten", "\"removed\":" + std::to_string(removed) + ",\"held\":" +
+                std::to_string(gHeld.size()));
+        }
+        catch (...) {}
+    }
 }
 void ReportVulkan(State state, int major, int minor, uint32_t layers, const char* reason) noexcept
 {

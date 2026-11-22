@@ -1,14 +1,15 @@
 cmake_minimum_required(VERSION 3.24)
 project(MfgEmbeddedPayloadTests LANGUAGES C CXX RC)
-# The packed payload store (V1.7.1 slim.1): three fixture files packed by the module's own packer, then
-# embedded_payload::Find returns their exact bytes; a flipped byte, a truncated stream, a wrong packed or raw size, a
-# wrong SHA-256 and a missing resource each refuse the whole group (every id empty, on later calls too) and log it once.
+# The payload store (V1.7.1 slim.1; uncompressed since V1.7.2 nolzma.1): three fixture files listed by the module's
+# own packer as a group, each its own resource; embedded_payload::Find returns their exact bytes in place. A flipped
+# byte, a truncated payload, a wrong offset or total size, a wrong SHA-256 and a missing resource each refuse the whole
+# group (every id empty, on later calls too) and log it once.
 set(NATIVE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../source/native" CACHE PATH "Release native source")
 include("${NATIVE_SOURCE}/embedded_payload.cmake")
 set(GENERATED "${CMAKE_CURRENT_BINARY_DIR}/generated")
 execute_process(COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_CURRENT_SOURCE_DIR}/make_fixtures.py" payloads
     --output "${GENERATED}" COMMAND_ERROR_IS_FATAL ANY)
-mfg_pack_payloads("${GENERATED}/fixtures.rc" fixtures 0 3950 "${GENERATED}" FIXTURES_PACKED_RC)
+mfg_pack_payloads("${GENERATED}/fixtures.rc" fixtures 0 "${GENERATED}" FIXTURES_PACKED_RC)
 execute_process(COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_CURRENT_SOURCE_DIR}/make_fixtures.py" damage
     --output "${GENERATED}" COMMAND_ERROR_IS_FATAL ANY)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/make_fixtures.py")

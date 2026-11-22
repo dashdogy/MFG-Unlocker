@@ -183,6 +183,9 @@ struct Translation
     bool lss{};
 };
 
+constexpr char kLssVertexLimit[] = "too many LSS primitives in one geometry";
+constexpr char kVertexAllocationFailed[] = "DOTS vertex buffer allocation failed";
+
 // `trianglesPerSegment`: 6 (three ribbons) or 4 (two). `fastBuild`: a bottom level with LSS prefers fast build
 // over fast trace (size queries and builds both pass here, so an update's flags still match its source's).
 bool TranslateBottom(const VkAccelerationStructureBuildGeometryInfoKHR& info, const uint32_t* primitives, VkDeviceAddress vertices,
@@ -204,7 +207,7 @@ bool TranslateBottom(const VkAccelerationStructureBuildGeometryInfoKHR& info, co
         const uint64_t count = primitives ? primitives[i] : 0;
         if (count * verticesPerPrimitive > 0xFFFFFFFFull)
         {
-            error = "too many LSS primitives in one geometry";
+            error = kLssVertexLimit;
             return false;
         }
         VkAccelerationStructureGeometryKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
@@ -701,14 +704,15 @@ void DotsBuilderVk::NoteKind(const VkAccelerationStructureBuildGeometryInfoKHR& 
         buildKinds_.push_back(kind);
 }
 
-void DotsBuilderVk::CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, VkCommandBuffer list, uint32_t count,
+DotsBuilderVk::BuildResult DotsBuilderVk::CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, VkCommandBuffer list, uint32_t count,
     const VkAccelerationStructureBuildGeometryInfoKHR* infos, const VkAccelerationStructureBuildRangeInfoKHR* const* ranges, VkPipeline compute)
 {
     if (!count || !infos || !ranges)
     {
         original(list, count, infos, ranges);
-        return;
+        return {};
     }
+    BuildResult result;
     std::vector<Translation> translations(count);
     std::vector<VkAccelerationStructureBuildGeometryInfoKHR> outInfos(infos, infos + count);
     std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> outRanges(ranges, ranges + count);
@@ -743,6 +747,7 @@ void DotsBuilderVk::CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, V
                     Error(error);
                     if (HasLss(info))
                     {
+                        result.error = kLssVertexLimit;
                         EmptyBuild(info, ranges[i], ring_.address, trianglesPerSegment_, options_.fastBuild, t);
                         outInfos[i] = t.info;
                         outRanges[i] = t.ranges.data();
@@ -759,7 +764,8 @@ void DotsBuilderVk::CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, V
                 if (!pool)
                 {
                     ++failures_;
-                    Error("DOTS vertex buffer allocation failed");
+                    Error(kVertexAllocationFailed);
+                    result.error = kVertexAllocationFailed;
                     EmptyBuild(info, ranges[i], ring_.address, trianglesPerSegment_, options_.fastBuild, t);
                     outInfos[i] = t.info;
                     outRanges[i] = t.ranges.data();
@@ -805,9 +811,11 @@ void DotsBuilderVk::CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, V
                     {
                         ++invalid_;
                         Error(std::string("LSS geometry left without hair: ") + layout.reason);
+                        if (layout.primitives) result.error = layout.reason;
                     }
                     if (layout.primitives)
                     {
+                        result.recordedHair |= layout.valid;
                         Dispatch d;
                         d.slot = NextSlot();
                         d.groups = (layout.primitives + 63) / 64;
@@ -883,6 +891,7 @@ void DotsBuilderVk::CmdBuild(PFN_vkCmdBuildAccelerationStructuresKHR original, V
     if (!dispatches.empty()) Record(list, dispatches, patches.empty() ? nullptr : &table, compute);
     original(list, count, outInfos.data(), outRanges.data());
     if (!summary.empty()) Summary(std::move(summary));
+    return result;
 }
 
 void DotsBuilderVk::CmdBuildIndirect(PFN_vkCmdBuildAccelerationStructuresIndirectKHR original, VkCommandBuffer list, uint32_t count,

@@ -280,8 +280,9 @@ nvapi::Status DotsBuilder::Prebuild(const nvapi::BuildInputsEx& inputs, D3D12_RA
 }
 
 nvapi::Status DotsBuilder::Build(ID3D12GraphicsCommandList4* list, const nvapi::BuildParams& params,
-    const std::function<void(ID3D12GraphicsCommandList4*)>& restore)
+    const std::function<void(ID3D12GraphicsCommandList4*)>& restore, bool* recordedHair)
 {
+    if (recordedHair) *recordedHair = false;
     if (!list || !params.pDesc || (params.version & 0xFFFF) < sizeof(nvapi::BuildParams))
     {
         ++failures_;
@@ -438,6 +439,8 @@ nvapi::Status DotsBuilder::Build(ID3D12GraphicsCommandList4* list, const nvapi::
         return status;
     }
     ++builds_;
+    if (recordedHair)
+        *recordedHair = std::any_of(layouts.begin(), layouts.end(), [](const LssLayout& layout) { return layout.valid && layout.primitives; });
     if (desc.inputs.flags & nvapi::kBuildPerformUpdate) ++updates_;
     if (rebuild) ++rebuilds_;
     return status;

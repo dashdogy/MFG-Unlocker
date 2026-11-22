@@ -10,6 +10,9 @@
 //           After the present the host sleeps in XeLL for the next frame unless the game slept in Reflex.
 #include "d3d12_host.h"
 #include "host_xell_binding.h"
+#include "streamline_provider.h"
+#include "streamline_provider_policy.h"
+#include "gpu_dispatch.h"
 #include "standalone_policy.h"
 #include "runtime_search.h"
 #include "xemfg_dynamic.h"
@@ -24,6 +27,7 @@
 #include "xemfg_host_common.h"
 #include "frame_gen_target.h"
 #include "module_list.h"
+#include "live_move_policy.h"
 #include <d3d12.h>
 #include <xefg_swapchain.h>
 #include <xefg_swapchain_d3d12.h>
@@ -37,12 +41,15 @@
 #include <wrl/client.h>
 #include <atomic>
 #include <cfloat>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace xess_d3d12
@@ -86,6 +93,11 @@ constexpr uint64_t kMoveWindowMs = 1500;
 // without the exact release the 6x unlock needs before a re-creation, which can hang the GPU), and its exact release
 // is wanted (held Off without resource retention until ampere_backend::FrameGenerationQuiescent).
 std::atomic<bool> gDlssgEverApplied{false}, gDlssgRetired{false}, gDlssgReleaseWanted{false};
+// genswap.1 (d3d12_host.h BehindStreamline): the chains the host owns, the upscaler evaluations seen while the game
+// never set DLSS-G options, and whether the route was found in charge since its last announced end.
+std::atomic<uint32_t> gChainCount{0};
+std::atomic<uint64_t> gUndrivenEvaluations{0};
+std::atomic<bool> gBehindAnnounced{false};
 
 // ---------------------------------------------------------------- runtime (the player's libxess_fg + libxell)
 struct Runtime
@@ -277,7 +289,8 @@ bool GameSleeps(uint64_t now) noexcept { return gHost.sleepMs && now - gHost.sle
 // when it drives one.
 bool Wanted() noexcept
 {
-    return gEnabled.load() && !gFsrFrameGeneration.load() && (!gDlssgSeen.load() || gGameFrameGeneration.load());
+    return gEnabled.load() && !gFsrFrameGeneration.load() && (!gDlssgSeen.load() || gGameFrameGeneration.load())
+        && !BehindStreamline();   // genswap.1: Streamline hands XeFG its inputs there
 }
 
 // The frame an upscaler evaluation belongs to: the frame the game's latest render-submit start named, else the next.
@@ -475,6 +488,181 @@ const char* Refusal(HWND window, const DXGI_SWAP_CHAIN_DESC1& desc, void* caller
     if (desc.BufferCount < 2 || desc.BufferCount > 8) return "buffer_count";
     return nullptr;
 }
+
+// ---------------------------------------------------------------- takeover.1: XeFG's context before a live move
+// The context a live move's takeover starts from (d3d12_host.h BeginLivePrepare): made by a worker, or by the move
+// itself, and kept until a takeover on its device takes it or the switch turns off.
+struct LivePrepare
+{
+    enum class State { eNone, eRunning, eReady, eFailed };
+    std::mutex mutex;
+    std::condition_variable changed;
+    State state = State::eNone;
+    bool abandoned = false;   // switched off while it was made: the context goes when the making ends
+    ComPtr<ID3D12Device> device;
+    xefg_swapchain_handle_t fg = nullptr;
+    std::string reason;
+};
+LivePrepare gPrepare;
+std::atomic<bool> gPrepareRunning{false};
+
+void DestroyLiveContext(xefg_swapchain_handle_t fg, const char* why) noexcept
+{
+    if (!fg) return;
+    try {
+        xefg_swapchain_result_t result;
+        {
+            xess_mod::VulkanHostCallScope scope;
+            result = gRuntime.xefgSwapChainDestroy(fg);
+        }
+        Log("d3d12_live_prepare_discarded", std::string("\"why\":\"") + why + "\",\"result\":" + std::to_string(int(result)));
+    } catch (...) {}
+}
+
+// The part of a takeover that needs no window: the player's pair, XeLL's context and XeFG's on the game's device. The
+// host's lock is held for XeLL only, so a game thread that asks the host something meanwhile does not wait for XeFG.
+bool MakeLiveContext(ID3D12Device* device, xefg_swapchain_handle_t& fg, std::string& reason, uint32_t& runtimeMs,
+    uint32_t& contextMs)
+{
+    fg = nullptr;
+    const int64_t start = Now();
+    Runtime& rt = LoadRuntime();
+    const int64_t loaded = Now();
+    runtimeMs = uint32_t(Milliseconds(loaded - start));
+    if (!rt.ready) { reason = rt.reason.empty() ? "runtime_not_ready" : rt.reason; return false; }
+    xell_context_handle_t xell = nullptr;
+    {
+        std::lock_guard lock(gHost.mutex);
+        if (!EnsureXell(device, reason)) return false;
+        xell = gHost.xell;
+        // No flip queue and the game's buffer count on this device (xess_mod ConfigureFlipQueue).
+        xess_mod::SetStandaloneHostDevice(device);
+    }
+    {
+        xess_mod::VulkanHostCallScope scope;
+        if (rt.xefgSwapChainD3D12CreateContext(device, &fg) != XEFG_SWAPCHAIN_RESULT_SUCCESS || !fg) {
+            fg = nullptr;
+            reason = "xefg_create";
+        } else {
+            rt.xefgSwapChainSetLoggingCallback(fg, XEFG_SWAPCHAIN_LOGGING_LEVEL_WARNING, XefgLog, nullptr);
+            if (rt.xefgSwapChainSetLatencyReduction(fg, xell) != XEFG_SWAPCHAIN_RESULT_SUCCESS) {
+                rt.xefgSwapChainDestroy(fg);
+                fg = nullptr;
+                reason = "xefg_latency";
+            }
+        }
+    }
+    contextMs = uint32_t(Milliseconds(Now() - loaded));
+    return fg != nullptr;
+}
+
+// Makes the context and publishes it (gPrepare.state is eRunning for `device` on entry). `worker`: on the worker
+// thread, else inside the move.
+void RunLivePrepare(ID3D12Device* device, bool worker) noexcept
+{
+    xefg_swapchain_handle_t fg = nullptr;
+    std::string reason;
+    uint32_t runtimeMs = 0, contextMs = 0;
+    bool made = false;
+    try {
+        made = MakeLiveContext(device, fg, reason, runtimeMs, contextMs);
+    } catch (...) {
+        reason = "prepare_exception";
+    }
+    bool abandoned = false;
+    try {
+        std::lock_guard lock(gPrepare.mutex);
+        abandoned = std::exchange(gPrepare.abandoned, false);
+        if (abandoned) {
+            gPrepare.state = LivePrepare::State::eNone;
+            gPrepare.device.Reset();
+            gPrepare.reason = "switched_off";
+        } else {
+            gPrepare.state = made ? LivePrepare::State::eReady : LivePrepare::State::eFailed;
+            gPrepare.fg = fg;
+            gPrepare.reason = reason;
+        }
+    } catch (...) {}
+    gPrepareRunning = false;
+    gPrepare.changed.notify_all();
+    if (abandoned) DestroyLiveContext(fg, "switched_off");
+    try {
+        Log("d3d12_live_prepare", std::string("\"ready\":") + (made ? "true" : "false") +
+            (reason.empty() ? std::string() : ",\"reason\":\"" + Escape(reason) + "\"") +
+            ",\"worker\":" + (worker ? "true" : "false") + ",\"runtime_ms\":" + std::to_string(runtimeMs) +
+            ",\"context_ms\":" + std::to_string(contextMs) + ",\"abandoned\":" + (abandoned ? "true" : "false") +
+            ",\"generation\":" + std::to_string(gSwitchGeneration.load()));
+    } catch (...) {}
+}
+
+struct PrepareJob
+{
+    ComPtr<ID3D12Device> device;
+    HMODULE self;
+};
+
+DWORD WINAPI PrepareThread(void* raw)
+{
+    HMODULE self = nullptr;
+    {
+        const std::unique_ptr<PrepareJob> job(static_cast<PrepareJob*>(raw));
+        self = job->self;
+        RunLivePrepare(job->device.Get(), true);
+    }
+    if (self) FreeLibraryAndExitThread(self, 0);
+    return 0;
+}
+
+// The prepared context for a takeover on `device`, which owns it from here; null when there is none.
+xefg_swapchain_handle_t TakeLivePrepared(ID3D12Device* device) noexcept
+{
+    try {
+        std::lock_guard lock(gPrepare.mutex);
+        if (gPrepare.state != LivePrepare::State::eReady || gPrepare.device.Get() != device) return nullptr;
+        gPrepare.state = LivePrepare::State::eNone;
+        gPrepare.device.Reset();
+        return std::exchange(gPrepare.fg, nullptr);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+// The switch turned off: a context no move used goes (one still being made, when its making ends).
+void DiscardLivePrepared(const char* why) noexcept
+{
+    try {
+        xefg_swapchain_handle_t fg = nullptr;
+        {
+            std::lock_guard lock(gPrepare.mutex);
+            if (gPrepare.state == LivePrepare::State::eRunning) { gPrepare.abandoned = true; return; }
+            fg = std::exchange(gPrepare.fg, nullptr);
+            gPrepare.state = LivePrepare::State::eNone;
+            gPrepare.device.Reset();
+            gPrepare.reason.clear();
+        }
+        DestroyLiveContext(fg, why);
+    } catch (...) {}
+}
+
+// The context could not be made (until the switch turns off): why.
+bool LivePrepareFailed(std::string& reason) noexcept
+{
+    try {
+        std::lock_guard lock(gPrepare.mutex);
+        if (gPrepare.state != LivePrepare::State::eFailed) return false;
+        reason = gPrepare.reason.empty() ? "prepare_failed" : gPrepare.reason;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool QueueDevice(IUnknown* queue, ComPtr<ID3D12Device>& device) noexcept
+{
+    ComPtr<ID3D12CommandQueue> native;
+    return queue && single_overlay::native::Unwrap(queue, native) && native
+        && SUCCEEDED(native->GetDevice(IID_PPV_ARGS(&device))) && device;
+}
 } // namespace
 
 // ---------------------------------------------------------------- configuration
@@ -488,6 +676,7 @@ void Configure(bool enabled, uint32_t frames) noexcept
         gSwitchGeneration.fetch_add(1);
         gMoveDeadlineMs = 0;
         WantDlssgRelease(false);   // xemfglive.6: a move of the new generation asks again
+        if (!enabled) DiscardLivePrepared("switched_off");   // takeover.1: a context made for a move that never came
         std::lock_guard lock(gHost.mutex);
         gHost.moveReason.clear();
     }
@@ -544,6 +733,8 @@ bool ReplacesFrameGeneration() noexcept
 {
     if (gDlssgRetired.load()) return true;   // xemfglive.5: until a restart, whatever else happens
     if (gRuntimeFailed.load() || optiscaler_host::Detected()) return false;
+    // genswap.1: behind Streamline the game's DLSS-G request is XeMFG's own feature, never held.
+    if (BehindStreamline()) return false;
     const bool pending = MovePending();
     std::lock_guard lock(gHost.mutex);
     // xemfglive.1: switched off, the hold stays for as long as XeFG has the chain (not only once its move back is asked
@@ -585,6 +776,21 @@ bool CreateSwapChain(IUnknown* queue, HWND window, const DXGI_SWAP_CHAIN_DESC1* 
     if (!gEnabled.load()) {
         gNativeBeforeOn = true;
         return false;
+    }
+    // genswap.1: where XeMFG can run as the game's DLSS-G feature, Streamline keeps the chain. The game's device names
+    // the GPU family when nothing has yet, and the provider prepares now, while the game still loads; a refusal there
+    // leaves the chain to the takeover below.
+    if (!tInsideHost && !FromFrameGenerator(caller)) {
+        ComPtr<ID3D12Device> device;
+        if (SUCCEEDED(native->GetDevice(IID_PPV_ARGS(&device))) && device) {
+            if (gpu_dispatch::Selected() == gpu_dispatch::Family::eUnknown) gpu_dispatch::ObserveNativeD3D12Device(device.Get());
+            if (BehindStreamline() && xess_streamline_provider::Prewarm(device.Get()) && BehindStreamline()) {
+                gNativeBeforeOn = true;   // a native chain: should the route end, it moves live
+                Log("d3d12_takeover_declined", "\"reason\":\"streamline_route\",\"width\":" + std::to_string(desc->Width) +
+                    ",\"height\":" + std::to_string(desc->Height) + ",\"format\":" + std::to_string(int(desc->Format)));
+                return false;
+            }
+        }
     }
     const char* refused = Refusal(window, *desc, caller);
     if (refused) {
@@ -639,6 +845,7 @@ bool TakeOver(ID3D12CommandQueue* native, HWND window, const DXGI_SWAP_CHAIN_DES
         const D3D12_COMMAND_QUEUE_DESC queueDesc = native->GetDesc();
         ComPtr<ID3D12Device> device;
         ComPtr<IDXGIFactory2> factory;
+        const int64_t started = Now();   // takeover.1: the d3d12_takeover line's context_ms and init_ms
         Runtime& rt = LoadRuntime();
         if (queueDesc.Type != D3D12_COMMAND_LIST_TYPE_DIRECT) reason = "queue_type";
         else if (FAILED(native->GetDevice(IID_PPV_ARGS(&device))) || !device) reason = "device";
@@ -651,7 +858,14 @@ bool TakeOver(ID3D12CommandQueue* native, HWND window, const DXGI_SWAP_CHAIN_DES
             auto create = dxgi ? reinterpret_cast<CreateFactory2>(GetProcAddress(dxgi, "CreateDXGIFactory2")) : nullptr;
             if (!create || FAILED(create(0, IID_PPV_ARGS(&factory))) || !factory) reason = "system_factory";
         }
-        if (reason.empty()) {
+        // takeover.1: a live move made the context before the game's chain went (EnsureLivePrepared); it is this
+        // chain's from here.
+        bool prepared = false;
+        if (reason.empty() && live) {
+            chain->fg = TakeLivePrepared(device.Get());
+            prepared = chain->fg != nullptr;
+        }
+        if (reason.empty() && !prepared) {
             std::lock_guard lock(gHost.mutex);
             if (EnsureXell(device.Get(), reason)) {
                 // No flip queue and the game's buffer count on this device (xess_mod ConfigureFlipQueue).
@@ -666,6 +880,7 @@ bool TakeOver(ID3D12CommandQueue* native, HWND window, const DXGI_SWAP_CHAIN_DES
                 }
             }
         }
+        const int64_t contextDone = Now();
         ComPtr<IDXGISwapChain1> proxy;
         if (reason.empty()) {
             // The game's depth convention is known only once its inputs arrive: reverse-Z until an input reported
@@ -720,6 +935,7 @@ bool TakeOver(ID3D12CommandQueue* native, HWND window, const DXGI_SWAP_CHAIN_DES
         {
             std::lock_guard lock(gHost.mutex);
             gHost.chains.push_back(chain);
+            gChainCount.store(uint32_t(gHost.chains.size()));
             gHost.ring.Clear();
             gHost.reason.clear();
         }
@@ -728,6 +944,9 @@ bool TakeOver(ID3D12CommandQueue* native, HWND window, const DXGI_SWAP_CHAIN_DES
             ",\"flags\":" + std::to_string(desc->Flags) + ",\"inverted_depth\":" + (chain->invertedDepth ? "true" : "false") +
             ",\"frames\":" + std::to_string(chain->framesApplied) + ",\"live\":" + (live ? "true" : "false") +
             ",\"await_dlssg_off\":" + (chain->awaitDlssgOff ? "true" : "false") +
+            ",\"prepared\":" + (prepared ? "true" : "false") +
+            ",\"context_ms\":" + std::to_string(uint32_t(Milliseconds(contextDone - started))) +
+            ",\"init_ms\":" + std::to_string(uint32_t(Milliseconds(Now() - contextDone))) +
             ",\"runtime\":\"" + Escape(Narrow(gRuntime.folder)) + "\"");
         *output = proxy.Detach();
         return true;
@@ -746,6 +965,7 @@ std::shared_ptr<Chain> Remove(IDXGISwapChain* key)
     std::lock_guard lock(gHost.mutex);
     auto chain = FindLocked(key);
     if (chain) gHost.chains.erase(std::find(gHost.chains.begin(), gHost.chains.end(), chain));
+    gChainCount.store(uint32_t(gHost.chains.size()));
     return chain;
 }
 
@@ -793,7 +1013,65 @@ Move WantedMove(bool hostChain) noexcept
     if (gMoveBlockedGeneration.load() == gSwitchGeneration.load()) return Move::eNone;
     // xemfglive.5: with the game's DLSS-G held until a restart, XeFG keeps the chain when switched off.
     if (hostChain) return gEnabled.load() || gDlssgRetired.load() ? Move::eNone : Move::eToNative;
-    return gEnabled.load() && !gRuntimeFailed.load() ? Move::eToXefg : Move::eNone;
+    // genswap.1: behind Streamline the native chain stays where it is; the switch re-creates the game's DLSS-G feature.
+    return gEnabled.load() && !gRuntimeFailed.load() && !BehindStreamline() ? Move::eToXefg : Move::eNone;
+}
+
+bool BehindStreamline() noexcept
+{
+    if (!gEnabled.load()) return false;
+    xess_streamline_provider::RouteInputs in;
+    in.key = xess_streamline_provider::Key(xess_streamline_provider::KeyValue());
+    in.optiScaler = optiscaler_host::Detected();
+    in.refused = xess_streamline_provider::Refused();
+    in.nativeProgram = gpu_dispatch::UsesNativeProgram();
+    in.translatedRoute = ampere_backend::XefgStandInAvailable();   // genswap30.1: RTX 30/20
+    in.routeLoaded = xess_streamline_provider::RouteLoaded();
+    in.dlssgDriven = gDlssgSeen.load();
+    in.undrivenEvaluations = gUndrivenEvaluations.load();
+    in.hostOwnsChain = gChainCount.load() != 0;
+    in.dlssgRetired = gDlssgRetired.load();
+    const bool behind = xess_streamline_provider::BehindStreamline(in);
+    if (behind) gBehindAnnounced.store(true);
+    return behind;
+}
+
+void PrepareRoute(IUnknown* queue) noexcept
+{
+    try {
+        if (!queue || !BehindStreamline()) return;
+        ComPtr<ID3D12CommandQueue> native;
+        ComPtr<ID3D12Device> device;
+        if (!single_overlay::native::Unwrap(queue, native) || !native || FAILED(native->GetDevice(IID_PPV_ARGS(&device)))
+            || !device)
+            return;
+        xess_streamline_provider::Prewarm(device.Get());
+    } catch (...) {}
+}
+
+void RouteChanged(const char* why) noexcept
+{
+    try {
+        if (!gEnabled.load()) return;
+        const uint32_t generation = gSwitchGeneration.fetch_add(1) + 1;
+        gMoveDeadlineMs = 0;
+        Log("d3d12_route_changed", std::string("\"why\":\"") + (why ? why : "") + "\",\"behind_streamline\":" +
+            (BehindStreamline() ? "true" : "false") + ",\"generation\":" + std::to_string(generation));
+        std::lock_guard lock(gHost.mutex);
+        gHost.moveReason.clear();
+    } catch (...) {}
+}
+
+HMODULE ProviderRuntime(std::string& reason) noexcept
+{
+    try {
+        Runtime& rt = LoadRuntime();
+        if (!rt.ready) { reason = rt.reason.empty() ? "not_ready" : rt.reason; return nullptr; }
+        return rt.fg;
+    } catch (...) {
+        reason = "exception";
+        return nullptr;
+    }
 }
 
 uint32_t SwitchGeneration() noexcept { return gSwitchGeneration.load(); }
@@ -806,7 +1084,10 @@ struct ResizeRequest
     uint32_t generation;
     uint64_t attempts;
     HMODULE self;
+    bool again;   // takeover.1: after a refusal that passes by itself (RequestResizeAgain)
 };
+// takeover.1: resize threads at work (RequestResizeAgain starts none while one still waits for its resize).
+std::atomic<uint32_t> gResizeThreads{0};
 
 // Shrinks the game's window by one pixel and restores it, both posted to the window's own thread
 // (SWP_ASYNCWINDOWPOS: this thread never waits on the game's message loop). Most games answer the size change with
@@ -837,25 +1118,68 @@ DWORD WINAPI ResizeThread(void* raw)
     const std::unique_ptr<ResizeRequest> request(static_cast<ResizeRequest*>(raw));
     const HMODULE self = request->self;
     try {
+        // takeover.1: on the way to XeFG, its context first (BeginLivePrepare's worker), so the resize that answers the
+        // nudge finds it made; the move counts as under way meanwhile.
+        const uint64_t prepareUntil = NowMs() + xess_live_move::kPrepareHoldMs;
+        while (gEnabled.load() && gPrepareRunning.load() && NowMs() < prepareUntil
+               && gSwitchGeneration.load() == request->generation) {
+            gMoveDeadlineMs = NowMs() + kMoveWindowMs;
+            Sleep(10);
+        }
         int width = 0, height = 0;
-        const char* refused = ResizeWindow(*request, width, height);
+        const char* refused = nullptr;
+        bool nudged = false;
+        std::string unprepared;
+        if (gSwitchGeneration.load() != request->generation) refused = "switch_changed";
+        // XeFG's context could not be made: the game keeps its chain, so there is no resize to ask for (and none the
+        // game could be remembered for ignoring).
+        else if (gEnabled.load() && LivePrepareFailed(unprepared)) refused = unprepared.c_str();
+        // The game resized by itself while the context was made: the move was tried in that resize.
+        else if (gMoveAttempts.load() == request->attempts) {
+            gMoveDeadlineMs = NowMs() + kMoveWindowMs;
+            nudged = true;
+            refused = ResizeWindow(*request, width, height);
+        }
         Log("d3d12_live_resize", "\"generation\":" + std::to_string(request->generation) + ",\"width\":" + std::to_string(width) +
             ",\"height\":" + std::to_string(height) + ",\"resized\":" + (refused ? "false" : "true") +
+            ",\"nudged\":" + (nudged ? "true" : "false") + ",\"again\":" + (request->again ? "true" : "false") +
             (refused ? std::string(",\"reason\":\"") + refused + "\"" : std::string()));
         // A game that did not resize keeps its chain: the wait ends now (its DLSS-G hold with it), and the menu says why.
         // xemfglive.3: one that ignored the nudge gets the proxy's back buffers from its next launch (remembered beside
-        // it), and the menu says so.
-        if (refused && !strcmp(refused, "resize_ignored") && single_overlay::proxy::RememberIgnoredResize())
+        // it), and the menu says so. takeover.1: not for a nudge asked again, which the game answered the first time.
+        if (refused && !strcmp(refused, "resize_ignored") && !request->again && single_overlay::proxy::RememberIgnoredResize())
             refused = "resize_ignored_remembered";
         if (refused && gSwitchGeneration.load() == request->generation) {
             gMoveDeadlineMs = 0;
             WantDlssgRelease(false);   // xemfglive.6: no move comes, the game's own requests are its own again
+            // takeover.1: nor is XeFG's context needed (the game's own next resize makes one inside its move).
+            if (gEnabled.load()) DiscardLivePrepared("resize_refused");
             std::lock_guard lock(gHost.mutex);
             if (gHost.moveReason.empty()) gHost.moveReason = refused;
         }
     } catch (...) {}
+    gResizeThreads.fetch_sub(1);
     if (self) FreeLibraryAndExitThread(self, 0);
     return 0;
+}
+
+// The thread that nudges the window for `generation`. False when it could not start (the menu says resize_thread).
+bool StartResize(HWND window, uint32_t generation, bool again)
+{
+    gMoveDeadlineMs = NowMs() + kMoveWindowMs;
+    HMODULE self = nullptr;   // the thread's own reference: the module outlives it
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(&ResizeThread), &self)) self = nullptr;
+    auto* request = new (std::nothrow) ResizeRequest{window, generation, gMoveAttempts.load(), self, again};
+    gResizeThreads.fetch_add(1);
+    HANDLE thread = request && self ? CreateThread(nullptr, 0, ResizeThread, request, 0, nullptr) : nullptr;
+    if (thread) { CloseHandle(thread); return true; }
+    gResizeThreads.fetch_sub(1);
+    delete request;
+    if (self) FreeLibrary(self);
+    gMoveDeadlineMs = 0;
+    std::lock_guard lock(gHost.mutex);
+    gHost.moveReason = "resize_thread";
+    return false;
 }
 }
 
@@ -866,18 +1190,101 @@ void RequestResize(HWND window, uint32_t generation) noexcept
         uint32_t asked = gResizeGeneration.load();
         if (asked == generation || !gResizeGeneration.compare_exchange_strong(asked, generation)) return;
         if (generation != gSwitchGeneration.load() || !window) return;
-        gMoveDeadlineMs = NowMs() + kMoveWindowMs;
-        HMODULE self = nullptr;   // the thread's own reference: the module outlives it
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(&ResizeThread), &self)) self = nullptr;
-        auto* request = new (std::nothrow) ResizeRequest{window, generation, gMoveAttempts.load(), self};
-        HANDLE thread = request && self ? CreateThread(nullptr, 0, ResizeThread, request, 0, nullptr) : nullptr;
-        if (thread) { CloseHandle(thread); return; }
-        delete request;
-        if (self) FreeLibrary(self);
-        gMoveDeadlineMs = 0;
-        std::lock_guard lock(gHost.mutex);
-        gHost.moveReason = "resize_thread";
+        StartResize(window, generation, false);
     } catch (...) {}
+}
+
+bool RequestResizeAgain(HWND window, uint32_t generation) noexcept
+{
+    try {
+        if (generation != gSwitchGeneration.load() || !window) return true;   // nothing left to ask for
+        if (gResizeThreads.load()) return false;
+        StartResize(window, generation, true);
+        return true;
+    } catch (...) {
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------- takeover.1: the context before the move
+void BeginLivePrepare(IUnknown* queue) noexcept
+{
+    try {
+        ComPtr<ID3D12Device> device;
+        if (!gEnabled.load() || optiscaler_host::Detected() || !QueueDevice(queue, device)) return;
+        xefg_swapchain_handle_t stale = nullptr;
+        {
+            std::lock_guard lock(gPrepare.mutex);
+            if (gPrepare.state == LivePrepare::State::eRunning) return;
+            // Made, or refused, for this device: the move reads that.
+            if (gPrepare.state != LivePrepare::State::eNone && gPrepare.device.Get() == device.Get()) return;
+            stale = std::exchange(gPrepare.fg, nullptr);   // another device's (the game made a new one)
+            gPrepare.state = LivePrepare::State::eRunning;
+            gPrepare.abandoned = false;
+            gPrepare.device = device;
+            gPrepare.reason.clear();
+        }
+        gPrepareRunning = true;
+        DestroyLiveContext(stale, "device_changed");
+        HMODULE self = nullptr;   // the thread's own reference: the module outlives it
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(&PrepareThread), &self)) self = nullptr;
+        auto* job = new (std::nothrow) PrepareJob{device, self};
+        HANDLE thread = job && self ? CreateThread(nullptr, 0, PrepareThread, job, 0, nullptr) : nullptr;
+        if (thread) { CloseHandle(thread); return; }
+        delete job;
+        if (self) FreeLibrary(self);
+        // No worker: the move makes the context itself (EnsureLivePrepared).
+        {
+            std::lock_guard lock(gPrepare.mutex);
+            gPrepare.state = LivePrepare::State::eNone;
+            gPrepare.device.Reset();
+        }
+        gPrepareRunning = false;
+        gPrepare.changed.notify_all();
+    } catch (...) {}
+}
+
+bool LivePrepareRunning() noexcept { return gPrepareRunning.load(); }
+
+bool EnsureLivePrepared(IUnknown* queue, std::string& reason) noexcept
+{
+    try {
+        ComPtr<ID3D12Device> device;
+        if (!QueueDevice(queue, device)) { reason = "not_d3d12"; return false; }
+        xefg_swapchain_handle_t stale = nullptr;
+        {
+            std::unique_lock lock(gPrepare.mutex);
+            // The worker waits on nothing of the game's, so it ends by itself; a move does not outwait it for ever.
+            if (!gPrepare.changed.wait_for(lock, std::chrono::milliseconds(xess_live_move::kPrepareJoinMs),
+                    [] { return gPrepare.state != LivePrepare::State::eRunning; })) {
+                reason = "prepare_timeout";
+                return false;
+            }
+            if (gPrepare.device.Get() == device.Get()) {
+                if (gPrepare.state == LivePrepare::State::eReady) return true;
+                if (gPrepare.state == LivePrepare::State::eFailed) {
+                    reason = gPrepare.reason.empty() ? "prepare_failed" : gPrepare.reason;
+                    return false;
+                }
+            }
+            // None, or another device's: made here, on the game's thread, as the takeover itself did before.
+            stale = std::exchange(gPrepare.fg, nullptr);
+            gPrepare.state = LivePrepare::State::eRunning;
+            gPrepare.abandoned = false;
+            gPrepare.device = device;
+            gPrepare.reason.clear();
+        }
+        gPrepareRunning = true;
+        DestroyLiveContext(stale, "device_changed");
+        RunLivePrepare(device.Get(), false);
+        std::lock_guard lock(gPrepare.mutex);
+        if (gPrepare.state == LivePrepare::State::eReady && gPrepare.device.Get() == device.Get()) return true;
+        reason = gPrepare.reason.empty() ? "prepare_failed" : gPrepare.reason;
+        return false;
+    } catch (...) {
+        reason = "prepare_exception";
+        return false;
+    }
 }
 
 void HoldForMove(uint32_t generation, bool first) noexcept
@@ -900,6 +1307,9 @@ bool LivePreflight(HWND window, const DXGI_SWAP_CHAIN_DESC1& desc, std::string& 
 {
     try {
         if (const char* refused = Refusal(window, desc, nullptr)) { reason = refused; return false; }
+        // takeover.1: the pair loads on BeginLivePrepare's worker, not in the game's Present. Until that was tried,
+        // the prepared context's result (EnsureLivePrepared, before the chain is released) says the same.
+        if (!gRuntimeTried.load()) return true;
         Runtime& rt = LoadRuntime();
         if (!rt.ready) { reason = rt.reason; return false; }
         return true;
@@ -923,8 +1333,37 @@ void MoveResult(Move move, const char* refused, bool retried) noexcept
         if ((move == Move::eToNative) == !refused) gNativeBeforeOn = true;
         gMoveDeadlineMs = 0;
         WantDlssgRelease(false);   // xemfglive.6: the game's own DLSS-G requests keep their retention again
+        // takeover.1: no move to XeFG is under way any more, so a context made for one goes (a later move, in the
+        // game's own resize, makes its own).
+        if (refused && move == Move::eToXefg) DiscardLivePrepared("move_refused");
         std::lock_guard lock(gHost.mutex);
         gHost.moveReason = refused ? refused : "";
+    } catch (...) {}
+}
+
+void MoveRetry(Move move, const char* refused, uint32_t tries, uint32_t generation) noexcept
+{
+    try {
+        if (generation != gSwitchGeneration.load()) return;
+        gMoveDeadlineMs = NowMs() + kMoveWindowMs;   // still "switching", the game's DLSS-G still held
+        // The first three refusals and every 30th after them: a busy second is a hundred Presents and more.
+        if (tries > 3 && tries % 30) return;
+        Log("d3d12_live_move_retry", std::string("\"direction\":\"") + (move == Move::eToXefg ? "to_xefg" : "to_native") +
+            "\",\"reason\":\"" + (refused ? refused : "") + "\",\"tries\":" + std::to_string(tries) +
+            ",\"generation\":" + std::to_string(generation));
+    } catch (...) {}
+}
+
+void MoveTiming(Move move, const char* route, const MoveTimes& times, bool moved) noexcept
+{
+    try {
+        const uint32_t inside = times.drained + times.prepared + times.released + times.created + times.adopted;
+        Log("d3d12_live_move_timing", std::string("\"direction\":\"") + (move == Move::eToXefg ? "to_xefg" : "to_native") +
+            "\",\"route\":\"" + (route ? route : "") + "\",\"moved\":" + (moved ? "true" : "false") +
+            ",\"waited_ms\":" + std::to_string(times.waited) + ",\"drained_ms\":" + std::to_string(times.drained) +
+            ",\"prepared_ms\":" + std::to_string(times.prepared) + ",\"released_ms\":" + std::to_string(times.released) +
+            ",\"created_ms\":" + std::to_string(times.created) + ",\"adopted_ms\":" + std::to_string(times.adopted) +
+            ",\"move_ms\":" + std::to_string(inside) + ",\"generation\":" + std::to_string(gSwitchGeneration.load()));
     } catch (...) {}
 }
 
@@ -1400,7 +1839,13 @@ void LatencySleep(uint32_t frame, bool slept) noexcept
 // ---------------------------------------------------------------- DLSS Super Resolution (NGX D3D12 evaluate)
 void CaptureDlssEvaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* parameters) noexcept
 {
-    if (!list || !parameters || !Wanted()) return;
+    if (!list || !parameters) return;
+    // genswap.1: while the game has never set DLSS-G options and XeMFG could start here, its upscaling evaluations are
+    // counted: enough of them without DLSS-G end the Streamline route (streamline_provider_policy.h BehindStreamline).
+    const bool wanted = Wanted();
+    const bool counting = !gDlssgSeen.load() && gUndrivenEvaluations.load() < xess_streamline_provider::kUndrivenEvaluations
+        && Ready();
+    if (!wanted && !counting) return;
     try {
         ID3D12Resource *depth = nullptr, *motion = nullptr, *color = nullptr, *output = nullptr;
         if (NVSDK_NGX_FAILED(parameters->Get(NVSDK_NGX_Parameter_Depth, &depth)) || !depth ||
@@ -1408,6 +1853,10 @@ void CaptureDlssEvaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parame
             NVSDK_NGX_FAILED(parameters->Get(NVSDK_NGX_Parameter_Color, &color)) || !color ||
             NVSDK_NGX_FAILED(parameters->Get(NVSDK_NGX_Parameter_Output, &output)) || !output)
             return;   // not an upscaling evaluation (frame generation, DLSS 5 and others carry other names)
+        if (counting && gUndrivenEvaluations.fetch_add(1) + 1 == xess_streamline_provider::kUndrivenEvaluations
+            && gBehindAnnounced.exchange(false))
+            RouteChanged("dlssg_not_driven");
+        if (!wanted) return;
         UpscalerFrame in;
         in.source = Source::eDlss;
         in.list = list;
@@ -1844,6 +2293,34 @@ Snapshot ReadSnapshot() noexcept
         if ((snapshot.state == "restart" || snapshot.state == "returning") && !gHost.moveReason.empty())
             snapshot.reason = gHost.moveReason;
         if (gRuntimeFailed.load() && snapshot.reason.empty()) snapshot.reason = gRuntime.reason;
+        // genswap.1: behind Streamline XeFG is the game's DLSS-G feature. "switching" while that feature is re-created;
+        // "restart" / "returning" with the reason generator_swap when a feature stays with the other generator until
+        // the game re-creates it; "active" while XeFG generates.
+        const auto route = xess_streamline_provider::ReadStatus();
+        if (snapshot.enabled && BehindStreamline()) {
+            snapshot.behindStreamline = true;
+            snapshot.active = route.live != 0;
+            snapshot.generating = route.generating;
+            snapshot.frames = route.frames;
+            snapshot.dynamic = snapshot.dynamicCap = false;
+            snapshot.dynamicTargetMilli = 0;
+            snapshot.moving = route.switching;
+            snapshot.restartNeeded = route.stuck;
+            snapshot.baseFpsMilli = route.baseFpsMilli;
+            snapshot.outputFpsMilli = route.outputFpsMilli;
+            snapshot.fpsAgeMs = route.fpsAgeMs;
+            snapshot.basePresents = route.batches;
+            snapshot.inputFrames = route.batches;
+            if (route.generating) snapshot.source = uint32_t(Source::eStreamline);
+            snapshot.state = route.switching ? "switching" : route.stuck ? "restart" : route.generating ? "active" : "waiting";
+            snapshot.reason = route.switching || route.stuck ? "generator_swap"
+                : route.generating ? ""
+                : snapshot.dlssgSeen && !snapshot.gameFrameGeneration ? "game_frame_generation_off" : "dlss_frame_generation";
+        } else if (!snapshot.enabled && route.live && route.stuck && !optiscaler_host::Detected()) {
+            // Switched off, but XeFG keeps the game's feature until the game re-creates it.
+            snapshot.state = "returning";
+            snapshot.reason = "generator_swap";
+        }
     } catch (...) {}
     return snapshot;
 }

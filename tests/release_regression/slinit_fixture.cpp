@@ -78,10 +78,34 @@ static sl::Result FixturePclSetMarker(uint32_t, const sl::FrameToken* frame){
 }
 extern "C" __declspec(dllexport) unsigned WINAPI FixturePclCalls(){return pclCalls.load();}
 extern "C" __declspec(dllexport) void* WINAPI FixturePclAddress(){return reinterpret_cast<void*>(&FixturePclSetMarker);}
+// slshutdown.1: Streamline's slShutdown unloads the plug-ins its plug-in manager loaded (sl.common last). With
+// FixtureOwnPlugins the lookup below loads the wrapper with its own reference, as that manager does, and slShutdown
+// releases it, recording whether that was the final release (Cyberpunk's exit crash: it was not, we kept sl.dlss_g).
+static std::atomic<unsigned> shutdowns{0};
+static std::atomic<int> wrapperUnloadedInShutdown{-1};
+static bool ownPlugins=false;
+static HMODULE ownedWrapper=nullptr;
+extern "C" __declspec(dllexport) void WINAPI FixtureOwnPlugins(int own){ownPlugins=own!=0;}
+extern "C" __declspec(dllexport) unsigned WINAPI FixtureShutdownCalls(){return shutdowns.load();}
+extern "C" __declspec(dllexport) int WINAPI FixtureWrapperUnloadedInShutdown(){return wrapperUnloadedInShutdown.load();}
+extern "C" __declspec(dllexport) sl::Result slShutdown(){
+    ++shutdowns;
+    if(ownedWrapper){
+        FreeLibrary(ownedWrapper);ownedWrapper=nullptr;
+        wrapperUnloadedInShutdown=GetModuleHandleW(L"ControlWrapperFixture.dll")==nullptr?1:0;
+    }
+    return sl::Result::eOk;
+}
 extern "C" __declspec(dllexport) sl::Result slGetFeatureFunction(sl::Feature, const char* name, void*& function){
     if(name&&!strcmp(name,"slPCLSetMarker")){function=reinterpret_cast<void*>(&FixturePclSetMarker);return sl::Result::eOk;}
-    HMODULE wrapper=GetModuleHandleW(L"ControlWrapperFixture.dll");
-    if(!wrapper)wrapper=LoadLibraryW(L"ControlWrapperFixture.dll");
+    HMODULE wrapper=nullptr;
+    if(ownPlugins){
+        if(!ownedWrapper)ownedWrapper=LoadLibraryW(L"ControlWrapperFixture.dll");
+        wrapper=ownedWrapper;
+    }else{
+        wrapper=GetModuleHandleW(L"ControlWrapperFixture.dll");
+        if(!wrapper)wrapper=LoadLibraryW(L"ControlWrapperFixture.dll");
+    }
     if(!wrapper)return sl::Result::eErrorNotInitialized;
     function=reinterpret_cast<void*>(GetProcAddress(wrapper,
         name && strcmp(name,"slDLSSGGetState")==0 ? "FixtureGetState" : "FixtureSetOptions"));

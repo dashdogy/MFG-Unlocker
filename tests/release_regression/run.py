@@ -94,6 +94,10 @@ def main():
               ('api-set-imports', 'ApiSetImportHost', '', 'version.dll'),
               ('control', 'ControlResolverTests', 'control', 'winmm.dll'),
               ('control-locked', 'ControlResolverTests', 'control-locked', 'winmm.dll'),
+              # slshutdown.1: the host's slShutdown is the final release of its plug-ins (Cyberpunk 2077 exit crash).
+              ('slshutdown', 'ControlResolverTests', 'slshutdown', 'winmm.dll'),
+              # sl1pass.1: a Streamline 1.x game (Dead Space, A Plague Tale: Requiem) keeps its own Streamline entries.
+              ('streamline-one', 'StreamlineOneTests', 'streamline-one', 'winmm.dll'),
               ('status-transport', 'StatusTransportTests', '', 'winmm.dll'),
               ('scoped-import', 'ScopedImportTests', '', 'winmm.dll'),
               ('scoped-factory', 'ScopedFactoryTests', '', 'winmm.dll'),
@@ -148,7 +152,8 @@ def main():
               ('d3d11-after-d3d12', 'D3D11PresentHarness', 'd3d11-after-d3d12', 'winmm.dll'),
               ('d3d12-with-d3d11-menu', 'WarpPresentHarness', 'd3d12-with-d3d11-menu', 'winmm.dll')]
     cases += [(name, 'EngineFactoryTests', name, 'winmm.dll') for name in
-              ('engine-direct', 'engine-dynamic', 'engine-late', 'engine-middleware', 'engine-external', 'engine-conflict')]
+              ('engine-direct', 'engine-dynamic', 'engine-late', 'engine-middleware', 'engine-external',
+               'engine-conflict', 'engine-vulkan-resolver')]
     cases += [('engine-menu', 'WarpPresentHarness', 'engine-menu', 'winmm.dll')]
     cases += [(f'optiscaler-{mode}', 'OptiScalerHostTests', mode, 'winmm.dll') for mode in
               ('standalone', 'proxy', 'plugin', 'late', 'optin', 'hidden', 'shared', 'forza', 'forza-shared',
@@ -237,6 +242,10 @@ def main():
         if (harness/'hotpatch'/'sl.interposer.dll').is_file():
             (destination/'hotpatch').mkdir()
             shutil.copy2(harness/'hotpatch'/'sl.interposer.dll', destination/'hotpatch'/'sl.interposer.dll')
+        # sl1pass.1: the Streamline 1.x shaped interposer, under its own folder because of its name.
+        if (harness/'streamline1'/'sl.interposer.dll').is_file():
+            (destination/'streamline1').mkdir()
+            shutil.copy2(harness/'streamline1'/'sl.interposer.dll', destination/'streamline1'/'sl.interposer.dll')
         candidate = destination/proxy
         shutil.copy2(dll, candidate)
         if mode.startswith('xefg-'):
@@ -312,6 +321,15 @@ def main():
             if label in unrouted:
                 row['noMessagesRoute'] = 'mouse-route=low-level-hook reason=no-window-messages installed=1' in log
                 row['passed'] &= row['noMessagesRoute']
+            if label == 'streamline-one':
+                # sl1pass.1: the log names the interposer the Streamline hooks stayed off.
+                row['streamlineOneLogged'] = 'Streamline 1.x interposer: no Streamline hooks installed' in log
+                row['passed'] &= row['streamlineOneLogged']
+            if label == 'slshutdown':
+                # slshutdown.1: one shutdown unloaded the plug-in, the other kept it for its other holder.
+                row['slShutdownLogged'] = ('Streamline slShutdown: references released first' in log
+                                           and 'unloaded=1 kept=0' in log and 'unloaded=0 kept=1' in log)
+                row['passed'] &= row['slShutdownLogged']
             if label in d3d11_menus:
                 row['d3d11Renderer'] = 'MFG_PROXY_UI renderer registered api=d3d11' in log
                 row['passed'] &= row['d3d11Renderer']

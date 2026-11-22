@@ -15,5 +15,7 @@ for mode in ('off','on'):
     outputs.append((folder/'frame-hashes.txt').read_bytes())
     logs='\n'.join(path.read_text(encoding='utf-8-sig',errors='replace') for path in folder.glob('*.log'))
     assert 'provider_prepare' in logs and '"ported":true' in logs,'real ported provider preparation was not logged'
+    # provkey.1: the alternating-inputs feature kept its XeFG context while a slot's input copy followed the game.
+    assert 'd3d12_provider_inputs' in logs and '"context_kept":true' in logs,'an input format change did not keep the XeFG context'
 assert outputs[0]==outputs[1],'on/off generated output hashes differ'
 print('D3D12_PROVIDER_ON_OFF_EQUIVALENCE_PASS outputs',len(outputs[0].splitlines()))

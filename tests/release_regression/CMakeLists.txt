@@ -189,6 +189,23 @@ set_target_properties(SlInitHotpatchFixture PROPERTIES OUTPUT_NAME "sl.interpose
     PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/hotpatch"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# sl1pass.1: a Streamline 1.x shaped interposer (Dead Space, A Plague Tale: Requiem), built into a streamline1/
+# subdirectory so it can be named sl.interposer.dll as well.
+add_library(StreamlineOneFixture SHARED streamline_one_fixture.cpp)
+target_compile_features(StreamlineOneFixture PRIVATE cxx_std_20)
+target_compile_definitions(StreamlineOneFixture PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+set_target_properties(StreamlineOneFixture PROPERTIES OUTPUT_NAME "sl.interposer"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/streamline1"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/streamline1"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/streamline1"
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_executable(StreamlineOneTests streamline_one_tests.cpp)
+target_compile_features(StreamlineOneTests PRIVATE cxx_std_20)
+target_include_directories(StreamlineOneTests PRIVATE "${NATIVE_SOURCE}")
+target_compile_definitions(StreamlineOneTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+set_target_properties(StreamlineOneTests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_dependencies(StreamlineOneTests StreamlineOneFixture)
+
 # Dying Light 2 / The Beast renderer model: a DLL that statically imports slInit
 # and resolves the interposer factory exports itself (host), and the same model
 # resolving slInit dynamically (not a host).

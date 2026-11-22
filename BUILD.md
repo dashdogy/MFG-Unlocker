@@ -1,11 +1,11 @@
-# Building v1.7.1
+# Building v1.7.2
 
-The v1.7.1 release combines the DLSS MFG backend, the built-in menu with its
+The v1.7.2 release combines the DLSS MFG backend, the built-in menu with its
 translations, RTX 50, RTX 30 and experimental RTX 20 support, XeSS Multi Frame
 Generation (XeMFG) standalone, through OptiScaler or as OptiScaler's DLSS Frame
 Generation provider, including the XeMFG tensor-core kernels, the DLSS 5 stage
-and the RTX Hair conversion, in one DLL. ProductVersion is 1.7.1; FileVersion
-is 1.7.1.177.
+and the RTX Hair conversion, in one DLL. ProductVersion is 1.7.2; FileVersion
+is 1.7.2.19.
 
 The release target is `RTXMFGUnified`, producing `Release/MFGUnlocker.dll`.
 Use Windows x64, Visual Studio 2022/MSVC 14.38.33130, Windows SDK
@@ -67,7 +67,7 @@ actual paths and a fresh build directory:
     -NativeCacheRoot 'C:/BuildInputs/rtxmfg-sm86' `
     -XessSdkRoot 'C:/SDKs/xess-sdk-3.0.2' `
     -XessProgramsRoot 'C:/BuildInputs/xess-programs' `
-    -BuildDirectory "$PWD/build/v1.7.1" `
+    -BuildDirectory "$PWD/build/v1.7.2" `
     -EnableNgxCreateResultDiagnostics `
     -EnableSessionDiagnostics
 ```

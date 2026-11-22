@@ -5,6 +5,7 @@
 #include <MinHook.h>
 #include <intrin.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -76,10 +77,15 @@ struct Slot
     std::array<uint8_t, kVerificationBytes> relocatedBytes{};
     std::array<uint8_t, kTailBytes> tailBytes{};
     std::atomic<bool> tailRecorded{false};
+    // slshutdown.1: the owner's host is unloading it (RetireOwner). Set before
+    // the owner reference is released; the target is never read while set.
+    std::atomic<bool> retired{false};
 };
 
 std::array<Slot, kRegistryCapacity> gSlots{};
 std::mutex gInstallMutex;
+// Owners between RetireOwner and ReturnOwner (gInstallMutex): no new entries.
+std::array<HMODULE, 32> gRetiringOwners{};
 std::atomic<uint32_t> gNextSerial{1};
 bool gMinHookInitializationAttempted = false;
 bool gMinHookReady = false;
@@ -439,8 +445,11 @@ bool TargetAlreadyDetouredLocked(HMODULE owner, void* target,
 {
     for (const Slot& slot : gSlots)
     {
+        // A retired entry belongs to an image that was unloaded or is about to
+        // be; a module mapped at its base later is another target.
         if (&slot == requested
-            || !slot.installed.load(std::memory_order_acquire))
+            || !slot.installed.load(std::memory_order_acquire)
+            || slot.retired.load(std::memory_order_acquire))
             continue;
         if (slot.owner.load(std::memory_order_acquire) == owner
             && slot.target.load(std::memory_order_acquire) == target)
@@ -451,7 +460,8 @@ bool TargetAlreadyDetouredLocked(HMODULE owner, void* target,
 
 bool Current(const Slot& slot) noexcept
 {
-    if (!slot.installed.load(std::memory_order_acquire))
+    if (!slot.installed.load(std::memory_order_acquire)
+        || slot.retired.load(std::memory_order_acquire))
         return false;
     auto* entry = static_cast<uint8_t*>(
         slot.target.load(std::memory_order_acquire));
@@ -502,6 +512,8 @@ void RecordTail(Slot& slot, const uint8_t* entry) noexcept
 // failure is sticky).
 bool Overlaid(const Slot& slot) noexcept
 {
+    if (slot.retired.load(std::memory_order_acquire))
+        return false;
     const Method method = static_cast<Method>(slot.method.load(std::memory_order_acquire));
     const bool resumesPastEntry = method == Method::eRelocated ? slot.relocatedBytes[0] == 0xE9
         : method == Method::eHotpatch
@@ -762,6 +774,14 @@ bool ValidateTarget(Slot& slot, DeferredOwnerRelease& release) noexcept
         SetFailure(slot, Failure::eUnsupportedMitigation);
         return false;
     }
+    // slshutdown.1: its host is unloading this owner; a new reference now would
+    // keep it loaded past the host's shutdown.
+    if (std::find(gRetiringOwners.begin(), gRetiringOwners.end(), owner)
+        != gRetiringOwners.end())
+    {
+        SetFailure(slot, Failure::eTargetPinFailed);
+        return false;
+    }
     if (!PinOwner(slot, release))
     {
         SetFailure(slot, Failure::eTargetPinFailed);
@@ -853,7 +873,8 @@ Snapshot SnapshotFor(size_t index, const Slot& slot) noexcept
     Snapshot snapshot{};
     if (!slot.claimed.load(std::memory_order_acquire))
         return snapshot;
-    snapshot.installed = slot.installed.load(std::memory_order_acquire);
+    snapshot.installed = slot.installed.load(std::memory_order_acquire)
+        && !slot.retired.load(std::memory_order_acquire);
     snapshot.failure = static_cast<Failure>(
         slot.failure.load(std::memory_order_acquire));
     snapshot.method = static_cast<Method>(
@@ -1092,6 +1113,88 @@ Snapshot ReadSnapshot(Kind kind, HMODULE owner) noexcept
     selected.matchingEntries = matching;
     selected.currentEntries = current;
     return selected;
+}
+
+size_t RetireOwner(HMODULE owner) noexcept
+{
+    if (!owner)
+        return 0;
+    std::array<HMODULE, kRegistryCapacity> released{};
+    size_t releasedCount = 0;
+    size_t retired = 0;
+    {
+        std::lock_guard lock(gInstallMutex);
+        if (std::find(gRetiringOwners.begin(), gRetiringOwners.end(), owner)
+            == gRetiringOwners.end())
+        {
+            const auto free = std::find(gRetiringOwners.begin(),
+                gRetiringOwners.end(), nullptr);
+            if (free != gRetiringOwners.end())
+                *free = owner;
+        }
+        for (Slot& slot : gSlots)
+        {
+            if (!slot.claimed.load(std::memory_order_acquire)
+                || slot.owner.load(std::memory_order_acquire) != owner
+                || slot.retired.load(std::memory_order_acquire))
+                continue;
+            // Retired first: once the reference goes, the image may unmap.
+            slot.retired.store(true, std::memory_order_release);
+            ++retired;
+            if (HMODULE held = slot.retainedOwner.exchange(
+                    nullptr, std::memory_order_acq_rel))
+                released[releasedCount++] = held;
+        }
+    }
+    // Outside the install lock, as DeferredOwnerRelease. The host still holds
+    // its own reference here, so none of these is the final one.
+    for (size_t index = 0; index < releasedCount; ++index)
+        FreeLibrary(released[index]);
+    return retired;
+}
+
+size_t ReturnOwner(HMODULE owner, bool stillMapped) noexcept
+{
+    if (!owner)
+        return 0;
+    size_t returned = 0;
+    std::array<HMODULE, kRegistryCapacity> mismatched{};
+    size_t mismatchedCount = 0;
+    {
+        std::lock_guard lock(gInstallMutex);
+        std::replace(gRetiringOwners.begin(), gRetiringOwners.end(), owner,
+            static_cast<HMODULE>(nullptr));
+        for (Slot& slot : gSlots)
+        {
+            if (!slot.claimed.load(std::memory_order_acquire)
+                || slot.owner.load(std::memory_order_acquire) != owner
+                || !slot.retired.load(std::memory_order_acquire))
+                continue;
+            // An unloaded owner's entries stay retired: their slots are never
+            // recycled, and their target is gone.
+            if (!stillMapped)
+                continue;
+            if (slot.installed.load(std::memory_order_acquire))
+            {
+                HMODULE retained = nullptr;
+                if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                        reinterpret_cast<LPCWSTR>(slot.target.load(std::memory_order_acquire)),
+                        &retained) || retained != owner)
+                {
+                    // Not the image these entries were installed in: stay retired.
+                    if (retained)
+                        mismatched[mismatchedCount++] = retained;
+                    continue;
+                }
+                slot.retainedOwner.store(retained, std::memory_order_release);
+            }
+            slot.retired.store(false, std::memory_order_release);
+            ++returned;
+        }
+    }
+    for (size_t index = 0; index < mismatchedCount; ++index)
+        FreeLibrary(mismatched[index]);
+    return returned;
 }
 
 size_t RegistryCapacity() noexcept

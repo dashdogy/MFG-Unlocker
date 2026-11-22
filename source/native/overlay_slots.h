@@ -47,6 +47,14 @@ inline bool ImageEntry(HMODULE image, void* entry) noexcept
         && (m.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
 }
 
+inline bool ReShadeFactoryExports(HMODULE image) noexcept
+{
+    for (const char* name : {"CreateDXGIFactory", "CreateDXGIFactory1", "CreateDXGIFactory2",
+                            "ReShadeRegisterAddon", "ReShadeUnregisterAddon"})
+        if (!ImageEntry(image, reinterpret_cast<void*>(GetProcAddress(image, name)))) return false;
+    return true;
+}
+
 // Windows may report WRITECOPY for an image page requested as READWRITE (and
 // READWRITE for its already-private copy). Both are writable data protections;
 // restoring the precise original protection is still mandatory.

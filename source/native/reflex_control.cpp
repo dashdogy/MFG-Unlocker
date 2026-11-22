@@ -40,13 +40,18 @@ struct ThreadStamp
 
 struct Route
 {
-    // Immutable after owner is published. An installed entry pins this image.
+    // Immutable after owner is published, until ReturnModule finds the image
+    // unloaded. The route holds a loader reference on it (retained).
     std::atomic<HMODULE> owner{nullptr};
     uint64_t generation = 0;
     std::array<uint32_t, 4> version{};
     std::array<void*, kEntryCount> targets{};
     std::atomic<bool> stale{false};
     std::atomic_flag inCall = ATOMIC_FLAG_INIT;
+    // slshutdown.1: the route's own reference on owner, released by
+    // RetireModule; retired while the host's slShutdown may unload owner.
+    std::atomic<HMODULE> retained{nullptr};
+    std::atomic<bool> retired{false};
 
     // All fields below are protected by gStateMutex, never held over a call.
     Snapshot state{};
@@ -71,6 +76,8 @@ struct Desired
 std::array<Route, kRouteCount> gRoutes{};
 std::mutex gStateMutex;
 std::mutex gDiscoveryMutex;
+// Modules between RetireModule and ReturnModule (gDiscoveryMutex): no new route.
+std::array<HMODULE, kRouteCount> gRetiring{};
 Desired gDesired{};
 std::atomic<RuntimeValidator> gRuntimeValidator{nullptr};
 size_t gSelected = kNoRoute;
@@ -293,7 +300,8 @@ bool Current(size_t index, Snapshot* output = nullptr) noexcept
         if (entry.failure != entry_detour::Failure::eNone)
             failure = static_cast<uint32_t>(entry.failure);
     }
-    const bool stale = gRoutes[index].stale.load(std::memory_order_acquire);
+    const bool stale = gRoutes[index].stale.load(std::memory_order_acquire)
+        || gRoutes[index].retired.load(std::memory_order_acquire);
     if (output)
     {
         output->installedHookMask = installed;
@@ -637,7 +645,8 @@ sl::Result HookGetState(sl::ReflexState& state) noexcept
     // unsafe to replay. Actual contending writers still call Concurrent.
     CallScope scope(Index);
     const auto result = reinterpret_cast<PFun_slReflexGetState*>(entry.original)(state);
-    if (entry.current && !gRoutes[Index].stale.load(std::memory_order_acquire))
+    if (entry.current && !gRoutes[Index].stale.load(std::memory_order_acquire)
+        && !gRoutes[Index].retired.load(std::memory_order_acquire))
         RecordAvailability(Index, result, &state);
     return result;
 }
@@ -724,12 +733,25 @@ Observation ObserveModule(HMODULE module, const wchar_t* path, uint64_t generati
     if (!versionRead || !SupportedVersion(version))
         return Refuse(module, generation, Status::eUnsupportedModule, version, versionRead)
             ? Observation::eRefusedVersion : Observation::eNone;
-    HMODULE pinned = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            reinterpret_cast<LPCWSTR>(resolver), &pinned) || pinned != module) return Observation::eNone;
+    // slshutdown.1: the route's reference lasts until the host's slShutdown
+    // (RetireModule), not the process: Streamline must unload its own plug-ins.
+    HMODULE held = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(resolver), &held) || held != module)
+    {
+        if (held) FreeLibrary(held);
+        return Observation::eNone;
+    }
+    struct HeldReference
+    {
+        HMODULE module;
+        ~HeldReference() { if (module) FreeLibrary(module); }
+    } heldReference{held};
     size_t index = kNoRoute;
     {
         std::lock_guard lock(gDiscoveryMutex);
+        if (std::find(gRetiring.begin(), gRetiring.end(), module) != gRetiring.end())
+            return Observation::eNone;
         for (size_t i = 0; i < gRoutes.size(); ++i)
         {
             Route& route = gRoutes[i];
@@ -747,6 +769,9 @@ Observation ObserveModule(HMODULE module, const wchar_t* path, uint64_t generati
         route.generation = generation;
         route.version = version;
         route.targets = targets;
+        route.stale.store(false, std::memory_order_release);
+        route.retired.store(false, std::memory_order_release);
+        route.retained.store(std::exchange(heldReference.module, nullptr), std::memory_order_release);
         route.owner.store(module, std::memory_order_release);
     }
     {
@@ -762,6 +787,87 @@ Observation ObserveModule(HMODULE module, const wchar_t* path, uint64_t generati
         entry_detour::Install(kKinds[i], module, targets[i], kThunks[index][i], original, options);
     }
     return Observation::eRouted;
+}
+
+bool RetireModule(HMODULE module) noexcept
+{
+    if (!module) return false;
+    HMODULE held = nullptr;
+    bool routed = false;
+    {
+        std::lock_guard lock(gDiscoveryMutex);
+        if (std::find(gRetiring.begin(), gRetiring.end(), module) == gRetiring.end())
+        {
+            const auto free = std::find(gRetiring.begin(), gRetiring.end(), nullptr);
+            if (free != gRetiring.end()) *free = module;
+        }
+        for (Route& route : gRoutes)
+        {
+            if (route.owner.load(std::memory_order_acquire) != module) continue;
+            // Pass-through from here: no override, no replay, no availability
+            // evidence while the host shuts the plug-in down.
+            route.retired.store(true, std::memory_order_release);
+            held = route.retained.exchange(nullptr, std::memory_order_acq_rel);
+            routed = true;
+            break;
+        }
+    }
+    if (held) FreeLibrary(held);
+    return routed;
+}
+
+void ReturnModule(HMODULE module, bool stillMapped) noexcept
+{
+    if (!module) return;
+    size_t reset = kNoRoute;
+    {
+        std::lock_guard lock(gDiscoveryMutex);
+        std::replace(gRetiring.begin(), gRetiring.end(), module, static_cast<HMODULE>(nullptr));
+        for (size_t i = 0; i < gRoutes.size(); ++i)
+        {
+            Route& route = gRoutes[i];
+            if (route.owner.load(std::memory_order_acquire) != module
+                || !route.retired.load(std::memory_order_acquire)) continue;
+            if (stillMapped)
+            {
+                HMODULE held = nullptr;
+                if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                        reinterpret_cast<LPCWSTR>(module), &held) && held == module)
+                {
+                    route.retained.store(held, std::memory_order_release);
+                    route.retired.store(false, std::memory_order_release);
+                }
+                else if (held)
+                {
+                    FreeLibrary(held);
+                }
+                break;
+            }
+            // The image is gone: free the route for a plug-in mapped later
+            // (a new Streamline session), which gets its own entries.
+            route.owner.store(nullptr, std::memory_order_release);
+            route.generation = 0;
+            route.version = {};
+            route.targets = {};
+            route.stale.store(false, std::memory_order_release);
+            route.retired.store(false, std::memory_order_release);
+            reset = i;
+            break;
+        }
+    }
+    if (reset == kNoRoute) return;
+    std::lock_guard lock(gStateMutex);
+    Route& route = gRoutes[reset];
+    route.state = Snapshot{};
+    route.gameOptions = sl::ReflexOptions{};
+    route.appliedOptions = sl::ReflexOptions{};
+    route.gameThread = ThreadStamp{};
+    route.overrideOwned = false;
+    route.uncertainOverride = false;
+    route.concurrentCalls = false;
+    ++route.operation;
+    route.availabilityTick = 0;
+    if (gSelected == reset) gSelected = kNoRoute;
 }
 
 Snapshot ReadSnapshot() noexcept
@@ -814,6 +920,7 @@ Snapshot ReadSnapshot() noexcept
     {
         result.appliedKnown = false;
         result.status = gRoutes[selected].stale.load(std::memory_order_acquire)
+                || gRoutes[selected].retired.load(std::memory_order_acquire)
             ? Status::eStaleRoute : Status::eHookUnavailable;
     }
     return result;

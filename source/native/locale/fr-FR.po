@@ -312,6 +312,12 @@ msgstr "Passage du DLSS Super Resolution au nouveau préréglage..."
 msgid "Same as Structure"
 msgstr "Comme la Structure"
 
+msgid "Mask"
+msgstr "Masque"
+
+msgid "Detects skin and faces so that Faces & skin applies to them."
+msgstr "Détecte la peau et les visages pour que Visages et peau s'y applique."
+
 msgid "Not set"
 msgstr "Aucune touche"
 
@@ -435,8 +441,17 @@ msgstr ""
 "Exécute le réseau une image sur deux. Les images intermédiaires appliquent son dernier rendu à leur propre image, si bien que les surfaces en mouvement et animées le gardent sans traînées.\n"
 "Environ la moitié du coût GPU. Les détails fins suivent les vecteurs de mouvement du jeu là où une surface s'est seulement déplacée."
 
+msgid "Save"
+msgstr "Enregistrer"
+
+msgid "Share"
+msgstr "Partager"
+
 msgid "%s (changed)"
 msgstr "%s (modifié)"
+
+msgid "Custom"
+msgstr "Personnalisé"
 
 msgid "Preset %u"
 msgstr "Préréglage %u"
@@ -491,20 +506,23 @@ msgstr ""
 "Exporter copie les réglages actuels dans le presse-papiers sous forme de code commençant par DLSS5-, à partager avec d'autres joueurs.\n"
 "Importer applique un code collé et l'enregistre comme préréglage. Si le champ est vide, Importer lit le presse-papiers."
 
+msgid "Subtle"
+msgstr "Subtil"
+
+msgid "Strong"
+msgstr "Prononcé"
+
+msgid "Presets"
+msgstr "Préréglages"
+
 msgid "Delete"
 msgstr "Supprimer"
 
 msgid "Save as"
 msgstr "Enregistrer sous"
 
-msgid "Save"
-msgstr "Enregistrer"
-
 msgid "Name"
 msgstr "Nom"
-
-msgid "Share"
-msgstr "Partager"
 
 msgid "Import"
 msgstr "Importer"
@@ -514,6 +532,42 @@ msgstr "Exporter"
 
 msgid "Paste a code"
 msgstr "Collez un code"
+
+msgid "Look & passes"
+msgstr "Rendu et passes"
+
+msgid "Blend"
+msgstr "Mélange"
+
+msgid "Scaling"
+msgstr "Mise à l'échelle"
+
+msgid "HDR"
+msgstr "HDR"
+
+msgid "Provider"
+msgstr "Fournisseur"
+
+msgid "%.0f%% of each rendered frame"
+msgstr "%.0f%% de chaque image rendue"
+
+msgid "%.1f ms"
+msgstr "%.1f ms"
+
+msgid "Half rate"
+msgstr "Demi-cadence"
+
+msgid "DirectX 11 to DirectX 12"
+msgstr "DirectX 11 vers DirectX 12"
+
+msgid "%ux%u, network %ux%u, passes: %u"
+msgstr "%ux%u, réseau %ux%u, passes : %u"
+
+msgid "Direct provider"
+msgstr "Fournisseur direct"
+
+msgid "Native NGX"
+msgstr "NGX natif"
 
 msgid "Neural Rendering"
 msgstr "Rendu neuronal"
@@ -533,14 +587,17 @@ msgstr "Auto : %s"
 msgid "Hook Method"
 msgstr "Méthode d'accroche"
 
-msgid "Subtle"
-msgstr "Subtil"
+msgid "DLSS 5 settings could not be saved."
+msgstr "Les réglages DLSS 5 n'ont pas pu être enregistrés."
 
-msgid "Strong"
-msgstr "Prononcé"
+msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
+msgstr "Avant la mise à l'échelle et Présentation ne fonctionnent pas encore sous Vulkan. Choisissez Auto ou Après la mise à l'échelle."
 
-msgid "Custom"
-msgstr "Personnalisé"
+msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
+msgstr "Présentation ne fonctionne pas encore sous DirectX 11. Choisissez Auto, Avant la mise à l'échelle ou Après la mise à l'échelle."
+
+msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
+msgstr "La swapchain de ce jeu ne peut pas utiliser la méthode d'accroche Présentation ; le journal en indique la raison. Avant ou après la mise à l'échelle fonctionnent toujours."
 
 msgid "Look"
 msgstr "Rendu"
@@ -575,20 +632,33 @@ msgstr "Auto"
 msgid "up to %.0f%%"
 msgstr "jusqu'à %.0f%%"
 
-msgid "Half rate"
-msgstr "Demi-cadence"
+msgid "Motion tolerance"
+msgstr "Tolérance au mouvement"
 
-msgid "DLSS 5 settings could not be saved."
-msgstr "Les réglages DLSS 5 n'ont pas pu être enregistrés."
+msgid ""
+"How much a surface may change between frames and still keep the carried fine detail.\n"
+"Strict carries it on fewer moving surfaces, which keep the rebuilt look; Loose carries more detail."
+msgstr ""
+"Combien une surface peut changer d'une image à l'autre en gardant les détails fins reportés.\n"
+"Stricte les reporte sur moins de surfaces en mouvement, qui gardent le rendu reconstruit ; Souple reporte plus de détails."
 
-msgid "Before upscaling and Present do not run on Vulkan yet. Choose Auto or After upscaling."
-msgstr "Avant la mise à l'échelle et Présentation ne fonctionnent pas encore sous Vulkan. Choisissez Auto ou Après la mise à l'échelle."
+msgid "Strict"
+msgstr "Stricte"
 
-msgid "Present does not run on DirectX 11 yet. Choose Auto, Before upscaling or After upscaling."
-msgstr "Présentation ne fonctionne pas encore sous DirectX 11. Choisissez Auto, Avant la mise à l'échelle ou Après la mise à l'échelle."
+msgid "Normal"
+msgstr "Normale"
 
-msgid "This game's swapchain cannot use the Present hook method; the log names the reason. Before or after upscaling still work."
-msgstr "La swapchain de ce jeu ne peut pas utiliser la méthode d'accroche Présentation ; le journal en indique la raison. Avant ou après la mise à l'échelle fonctionnent toujours."
+msgid "Loose"
+msgstr "Souple"
+
+msgid "Default"
+msgstr "Par défaut"
+
+msgid "Fast"
+msgstr "Rapide"
+
+msgid "Network"
+msgstr "Réseau"
 
 msgid "Compare"
 msgstr "Comparer"
@@ -596,15 +666,21 @@ msgstr "Comparer"
 msgid "Split view"
 msgstr "Vue partagée"
 
+msgid "Swap sides"
+msgstr "Inverser les côtés"
+
+msgid "Split position"
+msgstr "Position de la séparation"
+
+msgid "Split view shows DLSS 5 on the left and the original on the right."
+msgstr "La vue partagée montre DLSS 5 à gauche et l'original à droite."
+
 msgid ""
 "Shows the original image left of the line and DLSS 5 to its right.\n"
 "Before upscaling draws no line, because the upscaler would treat it as part of the image."
 msgstr ""
 "Affiche l'image d'origine à gauche de la ligne et DLSS 5 à sa droite.\n"
 "Avant la mise à l'échelle ne trace pas de ligne, car l'upscaler la traiterait comme une partie de l'image."
-
-msgid "Split position"
-msgstr "Position de la séparation"
 
 msgid "Hold to show original"
 msgstr "Maintenir pour l'original"
@@ -616,20 +692,30 @@ msgstr ""
 "Tant que cette touche est maintenue, le jeu affiche son image d'origine, pour comparer DLSS 5 en mouvement.\n"
 "DLSS 5 continue de tourner, son coût GPU ne change donc pas, et la touche parvient toujours au jeu."
 
-msgid "Presets"
-msgstr "Préréglages"
+msgid "Network input"
+msgstr "Entrée du réseau"
+
+msgid "Network output"
+msgstr "Sortie du réseau"
+
+msgid "Change (x8)"
+msgstr "Modification (x8)"
+
+msgid "Debug view"
+msgstr "Vue de débogage"
+
+msgid ""
+"Shows what the network is given and returns, or where DLSS 5 changes the image (grey: unchanged; lighter or darker: changed).\n"
+"With Split view, on the DLSS 5 side only."
+msgstr ""
+"Montre ce que reçoit et renvoie le réseau, ou où DLSS 5 modifie l'image (gris : inchangé ; plus clair ou plus sombre : modifié).\n"
+"Avec la vue partagée, seulement du côté DLSS 5."
 
 msgid "Status"
 msgstr "État"
 
 msgid "State"
 msgstr "État"
-
-msgid "%.1f ms"
-msgstr "%.1f ms"
-
-msgid "%.0f%% of each rendered frame"
-msgstr "%.0f%% de chaque image rendue"
 
 msgid "GPU cost"
 msgstr "Coût GPU"
@@ -646,20 +732,8 @@ msgstr "mesure en cours"
 msgid "Auto scale"
 msgstr "Échelle auto"
 
-msgid "%ux%u, network %ux%u, passes: %u"
-msgstr "%ux%u, réseau %ux%u, passes : %u"
-
 msgid "Route"
 msgstr "Chemin"
-
-msgid "Direct provider"
-msgstr "Fournisseur direct"
-
-msgid "Native NGX"
-msgstr "NGX natif"
-
-msgid "DirectX 11 to DirectX 12"
-msgstr "DirectX 11 vers DirectX 12"
 
 msgid "Waiting for DLSS 5 GPU work to complete before applying settings."
 msgstr "En attente de la fin du travail GPU de DLSS 5 avant d'appliquer les réglages."
@@ -699,15 +773,6 @@ msgstr ""
 "Renforcement local des tons et du contraste.\n"
 "Au-delà de 1, dépasse la plage habituelle du fournisseur."
 
-msgid "Character Mask"
-msgstr "Masque des personnages"
-
-msgid "Detects skin and faces so that Faces & skin applies to them."
-msgstr "Détecte la peau et les visages pour que Visages et peau s'y applique."
-
-msgid "Look & passes"
-msgstr "Rendu et passes"
-
 msgid "Pass Count"
 msgstr "Nombre de passes"
 
@@ -730,9 +795,6 @@ msgstr ""
 msgid "Later-pass settings apply when Pass Count is 2 or more."
 msgstr "Les réglages des passes suivantes s'appliquent à partir de 2 passes."
 
-msgid "Blend"
-msgstr "Mélange"
-
 msgid "Blend strength"
 msgstr "Force du mélange"
 
@@ -748,11 +810,11 @@ msgstr "0 garde les couleurs du jeu et ne prend que l'éclairage et les détails
 msgid "Highlight guard"
 msgstr "Protection des hautes lumières"
 
-msgid "Limits how far DLSS 5 may brighten a pixel, as a multiple of its original brightness, so lights do not turn into bright speckles."
-msgstr "Limite l'éclaircissement d'un pixel par DLSS 5, en multiple de sa luminosité d'origine, pour que les lumières ne se changent pas en points brillants."
-
 msgid "Brightening limit"
 msgstr "Limite d'éclaircissement"
+
+msgid "Limits how far DLSS 5 may brighten a pixel, as a multiple of its original brightness, so lights do not turn into bright speckles."
+msgstr "Limite l'éclaircissement d'un pixel par DLSS 5, en multiple de sa luminosité d'origine, pour que les lumières ne se changent pas en points brillants."
 
 msgid "Dark halo reduction"
 msgstr "Réduction des halos sombres"
@@ -771,9 +833,6 @@ msgstr "Rayon des halos"
 
 msgid "How far from each pixel to look for the edge, in network pixels."
 msgstr "Distance à laquelle chercher le bord autour de chaque pixel, en pixels du réseau."
-
-msgid "Scaling"
-msgstr "Mise à l'échelle"
 
 msgid "Signed PQ"
 msgstr "PQ signé"
@@ -832,9 +891,6 @@ msgid ""
 msgstr ""
 "Résidu RVB ajoute la modification du réseau à l'image en pleine résolution.\n"
 "Image traitée utilise directement la sortie du réseau mise à l'échelle."
-
-msgid "HDR"
-msgstr "HDR"
 
 msgid "Linear BT.709"
 msgstr "BT.709 linéaire"
@@ -897,30 +953,18 @@ msgstr "Activé applique la texture d'exposition DLSS du jeu avant le rendu neur
 msgid "Adaptive exposure"
 msgstr "Exposition adaptative"
 
-msgid ""
-"Keeps the scene the network sees at a steady brightness in HDR games, so the same settings suit games with different exposure.\n"
-"The game's own brightness is unchanged. SDR color is left as it is."
-msgstr ""
-"Maintient une luminosité stable de la scène vue par le réseau dans les jeux HDR, pour que les mêmes réglages conviennent à des jeux d'exposition différente.\n"
-"La luminosité du jeu lui-même reste inchangée. La couleur SDR n'est pas modifiée."
-
 msgid "Adaptive target"
 msgstr "Cible adaptative"
 
 msgid "The average brightness Adaptive exposure gives the scene the network sees (0.18 is middle grey). Higher shows it a brighter scene."
 msgstr "Luminosité moyenne que l'exposition adaptative donne à la scène vue par le réseau (0.18 = gris moyen). Plus haut lui montre une scène plus claire."
 
-msgid "Provider"
-msgstr "Fournisseur"
-
-msgid "Default"
-msgstr "Par défaut"
-
-msgid "Fast"
-msgstr "Rapide"
-
-msgid "Network"
-msgstr "Réseau"
+msgid ""
+"Keeps the scene the network sees at a steady brightness in HDR games, so the same settings suit games with different exposure.\n"
+"The game's own brightness is unchanged. SDR color is left as it is."
+msgstr ""
+"Maintient une luminosité stable de la scène vue par le réseau dans les jeux HDR, pour que les mêmes réglages conviennent à des jeux d'exposition différente.\n"
+"La luminosité du jeu lui-même reste inchangée. La couleur SDR n'est pas modifiée."
 
 msgid "UI Correction"
 msgstr "Correction de l'interface"
@@ -931,25 +975,6 @@ msgid ""
 msgstr ""
 "Auto active la correction de l'interface du fournisseur en Présentation, dont l'image contient l'interface du jeu, et la laisse désactivée pour l'entrée et la sortie DLSS.\n"
 "Désactivé ne l'utilise jamais. Activé l'utilise toujours."
-
-msgid "Strict"
-msgstr "Stricte"
-
-msgid "Normal"
-msgstr "Normale"
-
-msgid "Loose"
-msgstr "Souple"
-
-msgid "Motion tolerance"
-msgstr "Tolérance au mouvement"
-
-msgid ""
-"How much a surface may change between frames and still keep the carried fine detail.\n"
-"Strict carries it on fewer moving surfaces, which keep the rebuilt look; Loose carries more detail."
-msgstr ""
-"Combien une surface peut changer d'une image à l'autre en gardant les détails fins reportés.\n"
-"Stricte les reporte sur moins de surfaces en mouvement, qui gardent le rendu reconstruit ; Souple reporte plus de détails."
 
 msgid "Never"
 msgstr "Jamais"
@@ -975,34 +1000,6 @@ msgstr "Bloquer l'image sans HUD"
 
 msgid "Present only: keeps the game's HUD-less image from DLSS frame generation, so generated frames match processed ones."
 msgstr "Présentation uniquement : retire l'image sans HUD du jeu de la génération d'images DLSS, pour que les images générées correspondent aux images traitées."
-
-msgid "Mask"
-msgstr "Masque"
-
-msgid "Network input"
-msgstr "Entrée du réseau"
-
-msgid "Network output"
-msgstr "Sortie du réseau"
-
-msgid "Change (x8)"
-msgstr "Modification (x8)"
-
-msgid "Debug view"
-msgstr "Vue de débogage"
-
-msgid ""
-"Shows what the network is given and returns, or where DLSS 5 changes the image (grey: unchanged; lighter or darker: changed).\n"
-"With Split view, on the DLSS 5 side only."
-msgstr ""
-"Montre ce que reçoit et renvoie le réseau, ou où DLSS 5 modifie l'image (gris : inchangé ; plus clair ou plus sombre : modifié).\n"
-"Avec la vue partagée, seulement du côté DLSS 5."
-
-msgid "Swap sides"
-msgstr "Inverser les côtés"
-
-msgid "Split view shows DLSS 5 on the left and the original on the right."
-msgstr "La vue partagée montre DLSS 5 à gauche et l'original à droite."
 
 msgid "Reset to defaults"
 msgstr "Rétablir les valeurs par défaut"
@@ -1386,6 +1383,9 @@ msgstr "Placez libxess_fg.dll et libxell.dll du SDK XeSS %s d'Intel dans %s, pui
 msgid "Restart the game to start XeMFG."
 msgstr "Redémarrez le jeu pour lancer XeMFG."
 
+msgid "XeMFG starts once DLSS frame generation is turned off and on again in the game's settings, or after a restart."
+msgstr "XeMFG démarre dès que la génération d'images DLSS est désactivée puis réactivée dans les réglages du jeu, ou après un redémarrage."
+
 msgid "This game ignores window size changes, so XeMFG starts after a restart. From then on, XeMFG switches on and off in this game without a restart."
 msgstr "Ce jeu ignore les changements de taille de fenêtre, XeMFG démarre donc après un redémarrage. Ensuite, XeMFG s'active et se désactive dans ce jeu sans redémarrage."
 
@@ -1401,11 +1401,17 @@ msgstr "XeMFG n'a pas pu reprendre la chaîne d'échange du jeu en cours (%s). R
 msgid "The XeMFG setting could not be saved."
 msgstr "Le réglage XeMFG n'a pas pu être enregistré."
 
+msgid "XeMFG is off, but it keeps generating until DLSS frame generation is turned off and on again in the game's settings, or a restart."
+msgstr "XeMFG est désactivé, mais il continue de générer jusqu'à ce que la génération d'images DLSS soit désactivée puis réactivée dans les réglages du jeu, ou jusqu'à un redémarrage."
+
 msgid "XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or window-mode change, or a restart."
 msgstr "XeMFG est désactivé, mais XeFG garde la chaîne d'échange du jeu jusqu'au prochain changement de résolution ou de mode d'affichage du jeu, ou jusqu'à un redémarrage."
 
 msgid "XeMFG is off. The game's DLSS frame generation comes back after a restart: it cannot start again in this session once XeMFG has taken over its swap chain."
 msgstr "XeMFG est désactivé. La génération d'images DLSS du jeu revient après un redémarrage : elle ne peut pas redémarrer dans cette session une fois que XeMFG a repris sa chaîne d'échange."
+
+msgid "Switching the game's frame generation to XeMFG..."
+msgstr "Passage de la génération d'images du jeu à XeMFG..."
 
 msgid "Moving the game's swap chain to XeMFG..."
 msgstr "Transfert de la chaîne d'échange du jeu vers XeMFG..."
@@ -1415,6 +1421,9 @@ msgstr "XeMFG n'a pas pu démarrer : %s"
 
 msgid "Turn on DLSS frame generation in the game's settings. XeMFG replaces it."
 msgstr "Activez la génération d'images DLSS dans les réglages du jeu. XeMFG la remplace."
+
+msgid "Dynamic MFG does not apply while XeMFG runs as the game's DLSS frame generation. The frame count above is used."
+msgstr "La MFG dynamique ne s'applique pas quand XeMFG fonctionne comme génération d'images DLSS du jeu. Le nombre d'images ci-dessus est utilisé."
 
 msgid "Turn off the game's FSR frame generation. XeMFG does not run on top of it."
 msgstr "Désactivez la génération d'images FSR du jeu. XeMFG ne fonctionne pas par-dessus."
@@ -1437,11 +1446,11 @@ msgstr "Démarrage"
 msgid "Waiting for a resize"
 msgstr "En attente d'un redimensionnement"
 
-msgid "Restart needed"
-msgstr "Redémarrage requis"
-
 msgid "Waiting"
 msgstr "En attente"
+
+msgid "Restart needed"
+msgstr "Redémarrage requis"
 
 msgid "Inputs"
 msgstr "Entrées"
@@ -1491,12 +1500,6 @@ msgstr "Portage multi-images de MFG Unlocker"
 
 msgid "Intel 2x model"
 msgstr "Modèle Intel 2x"
-
-msgid "No generated frames"
-msgstr "Aucune image générée"
-
-msgid "the provider is failing; see the RTXMFG log"
-msgstr "le fournisseur échoue ; voir le journal RTXMFG"
 
 msgid "Frame generation"
 msgstr "Génération d'images"
@@ -1573,6 +1576,9 @@ msgstr "La génération d'images se règle dans le menu d'OptiScaler. Ce menu pr
 msgid "DLSS 5"
 msgstr "DLSS 5"
 
+msgid "Character Mask"
+msgstr "Masque des personnages"
+
 msgid "Present does not run from OptiScaler's menu. Choose Auto, Before upscaling or After upscaling."
 msgstr "Présentation ne fonctionne pas depuis le menu d'OptiScaler. Choisissez Auto, Avant la mise à l'échelle ou Après la mise à l'échelle."
 
@@ -1590,6 +1596,12 @@ msgstr "Portage XMX"
 
 msgid "on the shader cores"
 msgstr "sur les cœurs de shader"
+
+msgid "No generated frames"
+msgstr "Aucune image générée"
+
+msgid "the provider is failing; see the RTXMFG log"
+msgstr "le fournisseur échoue ; voir le journal RTXMFG"
 
 msgid "XMX port: MFG Unlocker's port of Intel's multi-frame XMX model, run as DXIL shaders on any GPU. CUDA port: the same model with its int8 layers run as CUDA kernels on RTX tensor cores."
 msgstr "Portage XMX : le portage par MFG Unlocker du modèle multi-images XMX d'Intel, exécuté en shaders DXIL sur n'importe quel GPU. Portage CUDA : le même modèle, dont les couches int8 tournent en noyaux CUDA sur les cœurs Tensor RTX."
