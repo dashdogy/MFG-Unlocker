@@ -1,0 +1,138 @@
+name: Bug report
+description: Report a crash, glitch, pacing problem, or other bug in MFG Unlocker. Log files are required.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > **Log files are required. Reports without them are closed without investigation.**
+        > Attach the actual `RTXMFG-*.log` and `RTXMFG-Universal.status.json` files from a run that shows the problem. Screenshots and video are very welcome too, but they go alongside the logs, not instead of them. Copied lines or "n/a" do not count.
+        > If no `RTXMFG-*.log` was written beside the game's executable or in `%TEMP%`, the mod is not loading: fix the filename using the compatibility page before you report.
+
+        If the mod does not work in a game at all (no menu, no Frame Generation, stuck waiting), use the [game compatibility report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=game-compatibility.yml) instead. Check [Troubleshooting](https://github.com/dashdogy/MFG-Unlocker/blob/main/docs/troubleshooting.md) first. Do not upload NVIDIA or game DLL files.
+
+  - type: input
+    id: mod_version
+    attributes:
+      label: Mod version
+      description: State the release version or commit used.
+      placeholder: v1.7.2
+    validations:
+      required: true
+
+  - type: input
+    id: game
+    attributes:
+      label: Game and build
+      description: The game where it happens, with store and game version or build number.
+      placeholder: Cyberpunk 2077, Steam, build 2.3
+    validations:
+      required: true
+
+  - type: input
+    id: install_name
+    attributes:
+      label: Filename and folder
+      description: The name you gave MFGUnlocker.dll (or OptiScaler plugin), and the folder it is in.
+      placeholder: version.dll in Phoenix\Binaries\Win64
+    validations:
+      required: true
+
+  - type: textarea
+    id: system
+    attributes:
+      label: System and other mods
+      description: Include GPU model, driver, Windows version, ReShade version, and any other DLSS, Frame Generation or loader mods (OptiScaler, REFramework, CET, ASI loaders) with their filenames.
+      placeholder: RTX 4070, driver 000.00, Windows 11, ReShade 6.8.0 as dxgi.dll
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of bug
+      options:
+        - Crash or hang during play
+        - Crash when closing the game
+        - Visual glitch or artifacts
+        - Frame pacing, stutter, or performance
+        - Wrong multiplier, mode, or preset applied
+        - Menu or settings problem
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: selected_mode
+    attributes:
+      label: Multiplier and preset
+      placeholder: 4X, Dynamic, Preset C
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Describe the shortest reliable sequence from a full game restart.
+      placeholder: |
+        1. Start the game.
+        2. Select 4X in the DLSS MFG tab.
+        3. Drive through the city for a minute.
+        4. Observe the result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log files (required)
+      description: >-
+        Drag the files themselves into this box, or zip them first. Reports without the files are
+        closed, and pasted excerpts do not replace them.
+        Attach `RTXMFG-<game>-<path-hash>.log`, `RTXMFG-<game>-<path-hash>.previous.log` and
+        `RTXMFG-Universal.status.json` from the game folder, beside the game's executable, plus
+        `RTXMFG-<game>-<path-hash>-intervals.csv` if there is one. If the game folder cannot be written,
+        the logs are in `%TEMP%` instead. With OptiScaler, also attach `OptiScaler.log`.
+        Keep **Write log file** ticked under **Diagnostics** in the menu, and attach the logs from
+        the run that shows the problem. You may redact your user name in paths.
+      placeholder: Drag and drop RTXMFG-*.log, RTXMFG-*.previous.log and RTXMFG-Universal.status.json here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots and video
+      description: >-
+        Strongly encouraged. Add screenshots of the problem and of the menu's Debug panel, and a short
+        video for visual or pacing problems. They help a lot, but they go with the log files above,
+        not in place of them.
+      placeholder: Drag and drop screenshots or a short video here.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Final checks
+      options:
+        - label: I attached the actual RTXMFG log and status files from a run that shows the problem. Screenshots are welcome as well, but not instead. I understand that reports without the logs are closed.
+          required: true
+        - label: I reproduced the issue after a full game restart.
+          required: true
+        - label: I removed older MFG Unlocker and RTX40MFG files before testing (see Upgrade in the install guide).
+          required: true
+        - label: I listed any NVIDIA OTA override, OptiScaler, DLL swapper, or other Frame Generation mod above.
+          required: true

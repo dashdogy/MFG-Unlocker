@@ -66,10 +66,13 @@ The full list, and every earlier release, is in the [changelog](CHANGELOG.md).
 
 ## Reporting problems
 
-Read [Troubleshooting](docs/troubleshooting.md) first. Report bugs in
-[Issues](https://github.com/dashdogy/MFG-Unlocker/issues), with the log files
-listed there. To report how a game works, use the
+Read [Troubleshooting](docs/troubleshooting.md) first. Report bugs with the
+[bug report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=bug-report.yml),
+and a game where the mod does not work with the
 [game compatibility report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=game-compatibility.yml).
+Both need the log files listed in Troubleshooting: reports without them are
+closed. Feature requests and translations have their own
+[form](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=feature-request.yml).
 
 ## Translation credits
 

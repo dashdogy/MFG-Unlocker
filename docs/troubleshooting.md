@@ -59,7 +59,7 @@ report it to the vendor as a false positive, for Defender through Microsoft's
 
 ## Reporting a bug
 
-Open a [bug report](https://github.com/dashdogy/MFG-Unlocker/issues) with:
+Open a [bug report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=bug-report.yml) with:
 
 - the game, GPU and driver;
 - the proxy filename (or OptiScaler plugin);
@@ -80,6 +80,10 @@ Unlocker's tab in OptiScaler's menu. It is saved as `[Diagnostics] Logging=0`
 in `RTX40MFG-UI.ini` beside the game. The change applies at the next game
 start. Tick it again before you report a bug.
 
+Attach the files themselves, not copied lines: reports without the log and
+status files are closed. Screenshots and video are welcome alongside them.
+
 For a game that does not work at all, use the
 [game compatibility report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=game-compatibility.yml)
-instead.
+instead; it needs the same files. Feature requests and translations have their
+own [form](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=feature-request.yml).

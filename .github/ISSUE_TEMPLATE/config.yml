@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting and antivirus warnings
+    url: https://github.com/dashdogy/MFG-Unlocker/blob/main/docs/troubleshooting.md
+    about: Menu not appearing, frozen picture, anti-cheat, and Windows Defender or antivirus warnings. Check here before you report.
+  - name: Game compatibility list
+    url: https://github.com/dashdogy/MFG-Unlocker/blob/main/docs/compatibility.md
+    about: The filename that works in each game, and the games that cannot work.

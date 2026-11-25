@@ -1,0 +1,43 @@
+name: Feature request or translation
+description: Suggest a feature or contribute a translation. Not for bugs, which need a bug report and log files.
+title: "[Request] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > **This form is not for bugs, crashes, or games that do not work.** Use the [bug report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=bug-report.yml) or the [game compatibility report](https://github.com/dashdogy/MFG-Unlocker/issues/new?template=game-compatibility.yml) with your log files instead. Bug reports opened with this form are closed without investigation.
+
+  - type: textarea
+    id: request
+    attributes:
+      label: What would you like?
+      description: Describe the feature, or the language for a translation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: Why it would help
+      description: The game, setup, or situation where it matters.
+    validations:
+      required: false
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Files, screenshots, or mock-ups
+      description: Attach translation catalogs, screenshots, or anything else that helps.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Final check
+      options:
+        - label: This is not a bug report. I understand that bugs opened with this form are closed without investigation.
+          required: true
